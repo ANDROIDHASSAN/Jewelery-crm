@@ -29,3 +29,5 @@ Thumbs.db
 # tool logs
 .client-dev.log
 .npm-install.log
+
+.vercel

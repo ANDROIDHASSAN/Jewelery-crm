@@ -10,8 +10,8 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 
-const ADMIN_EMAIL = import.meta.env.VITE_ADMIN_EMAIL ?? 'admin@goldos.in';
-const ADMIN_PASSWORD = import.meta.env.VITE_ADMIN_PASSWORD ?? 'goldos123';
+const ADMIN_EMAIL = import.meta.env.VITE_ADMIN_EMAIL ?? 'admin@zelora.in';
+const ADMIN_PASSWORD = import.meta.env.VITE_ADMIN_PASSWORD ?? 'zelora123';
 
 export function LoginPage(): JSX.Element {
   const [email, setEmail] = useState('');
@@ -53,8 +53,14 @@ export function LoginPage(): JSX.Element {
               'radial-gradient(120% 80% at 20% 0%, rgba(201,155,42,0.18) 0%, transparent 60%), linear-gradient(180deg, #0F0E0C 0%, #1F1D1A 100%)',
           }}
         />
-        <div className="relative">
-          <div className="font-display text-2xl tracking-tight text-brand-200">Gold OS</div>
+        <div className="relative flex items-center gap-3">
+          <img
+            src="/logo/zelora-mark.png"
+            alt=""
+            aria-hidden="true"
+            className="h-12 w-12 rounded-md object-cover shadow-sm"
+          />
+          <div className="font-display text-2xl tracking-tight text-brand-200">Zelora</div>
         </div>
 
         <div className="relative max-w-md space-y-6">
@@ -91,7 +97,7 @@ export function LoginPage(): JSX.Element {
                 id="email"
                 type="email"
                 autoComplete="email"
-                placeholder="you@goldos.in"
+                placeholder="you@zelora.in"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 required

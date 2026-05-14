@@ -9,7 +9,14 @@
       "Bash(git init *)",
       "Bash(git config *)",
       "Bash(git add *)",
-      "Bash(grep -E \"\\\\.env$\")"
+      "Bash(grep -E \"\\\\.env$\")",
+      "Bash(git commit -m ' *)",
+      "Bash(git remote *)",
+      "Bash(git push *)",
+      "Bash(npx prisma *)",
+      "Read(//d/d/anantkamal/jeweleryos/server/prisma/**)",
+      "Bash(npx vercel *)",
+      "Bash(npx tsc *)"
     ]
   }
 }

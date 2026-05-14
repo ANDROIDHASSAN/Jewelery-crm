@@ -1,5 +1,7 @@
-// Storefront content slice — admin-editable copy/imagery for the public store.
-// Persists to localStorage so changes survive reloads without a backend.
+// Storefront content slice — local cache of the database-backed storefront content.
+// Hydrated from /api/v1/website/storefront via storefrontApi (see StorefrontLayout).
+// Granular update actions mutate the local draft; the Website CMS calls the
+// PUT /api/v1/storefront mutation to persist to the database.
 
 import { createSlice, type PayloadAction } from '@reduxjs/toolkit';
 
@@ -23,6 +25,8 @@ export interface StorefrontContent {
   brand: {
     name: string;
     tagline: string;
+    /** URL or data URL of the storefront logo. Empty string = show wordmark only. */
+    logo: string;
   };
   hero: {
     eyebrow: string;
@@ -59,6 +63,7 @@ export const DEFAULT_CONTENT: StorefrontContent = {
   brand: {
     name: 'Anant Jewellers',
     tagline: 'Family jewellers since 1972. Hallmarked gold. Transparent pricing. Hand-crafted in Pune.',
+    logo: '/logo/zelora-mark.png',
   },
   hero: {
     eyebrow: 'The 2025 Bridal Edit',
@@ -117,67 +122,31 @@ export const DEFAULT_CONTENT: StorefrontContent = {
   whatsappNumber: '919876543210',
 };
 
-const STORAGE_KEY = 'goldos:storefront-content:v1';
-
-function loadInitial(): StorefrontContent {
-  if (typeof window === 'undefined') return DEFAULT_CONTENT;
-  try {
-    const raw = window.localStorage.getItem(STORAGE_KEY);
-    if (!raw) return DEFAULT_CONTENT;
-    const parsed = JSON.parse(raw) as Partial<StorefrontContent>;
-    // shallow-merge so new fields added later keep working
-    return {
-      ...DEFAULT_CONTENT,
-      ...parsed,
-      brand: { ...DEFAULT_CONTENT.brand, ...parsed.brand },
-      hero: { ...DEFAULT_CONTENT.hero, ...parsed.hero },
-      rates: { ...DEFAULT_CONTENT.rates, ...parsed.rates },
-      story: { ...DEFAULT_CONTENT.story, ...parsed.story },
-      testimonial: { ...DEFAULT_CONTENT.testimonial, ...parsed.testimonial },
-      collections: parsed.collections ?? DEFAULT_CONTENT.collections,
-      locations: parsed.locations ?? DEFAULT_CONTENT.locations,
-    };
-  } catch {
-    return DEFAULT_CONTENT;
-  }
-}
-
-function persist(state: StorefrontContent): void {
-  if (typeof window === 'undefined') return;
-  try {
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
-  } catch {
-    /* ignore quota */
-  }
-}
-
 const slice = createSlice({
   name: 'storefrontContent',
-  initialState: loadInitial(),
+  initialState: DEFAULT_CONTENT,
   reducers: {
+    /** Replace the whole content blob — used when API hydration completes. */
+    setContent(_state, action: PayloadAction<StorefrontContent>) {
+      return action.payload;
+    },
     updateBrand(state, action: PayloadAction<Partial<StorefrontContent['brand']>>) {
       state.brand = { ...state.brand, ...action.payload };
-      persist(state);
     },
     updateHero(state, action: PayloadAction<Partial<StorefrontContent['hero']>>) {
       state.hero = { ...state.hero, ...action.payload };
-      persist(state);
     },
     updateRates(state, action: PayloadAction<Partial<StorefrontContent['rates']>>) {
       state.rates = { ...state.rates, ...action.payload };
-      persist(state);
     },
     updateStory(state, action: PayloadAction<Partial<StorefrontContent['story']>>) {
       state.story = { ...state.story, ...action.payload };
-      persist(state);
     },
     updateTestimonial(state, action: PayloadAction<Partial<StorefrontContent['testimonial']>>) {
       state.testimonial = { ...state.testimonial, ...action.payload };
-      persist(state);
     },
     updateWhatsapp(state, action: PayloadAction<string>) {
       state.whatsappNumber = action.payload;
-      persist(state);
     },
     updateCollection(
       state,
@@ -185,18 +154,13 @@ const slice = createSlice({
     ) {
       const { index, patch } = action.payload;
       const existing = state.collections[index];
-      if (existing) {
-        Object.assign(existing, patch);
-        persist(state);
-      }
+      if (existing) Object.assign(existing, patch);
     },
     addCollection(state, action: PayloadAction<CollectionTile>) {
       state.collections.push(action.payload);
-      persist(state);
     },
     removeCollection(state, action: PayloadAction<number>) {
       state.collections.splice(action.payload, 1);
-      persist(state);
     },
     updateLocation(
       state,
@@ -204,27 +168,22 @@ const slice = createSlice({
     ) {
       const { index, patch } = action.payload;
       const existing = state.locations[index];
-      if (existing) {
-        Object.assign(existing, patch);
-        persist(state);
-      }
+      if (existing) Object.assign(existing, patch);
     },
     addLocation(state, action: PayloadAction<StoreLocation>) {
       state.locations.push(action.payload);
-      persist(state);
     },
     removeLocation(state, action: PayloadAction<number>) {
       state.locations.splice(action.payload, 1);
-      persist(state);
     },
     resetContent() {
-      persist(DEFAULT_CONTENT);
       return DEFAULT_CONTENT;
     },
   },
 });
 
 export const {
+  setContent,
   updateBrand,
   updateHero,
   updateRates,

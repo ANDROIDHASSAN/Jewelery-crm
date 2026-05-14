@@ -1,11 +1,24 @@
+import { useEffect } from 'react';
 import { Outlet } from 'react-router-dom';
 import { MessageCircle } from 'lucide-react';
 import { StorefrontHeader } from './StorefrontHeader';
 import { StorefrontFooter } from './StorefrontFooter';
-import { useAppSelector } from '@/app/hooks';
+import { setContent } from './storefrontContentSlice';
+import { useGetPublicStorefrontQuery } from './storefrontApi';
+import { useAppDispatch, useAppSelector } from '@/app/hooks';
 
 export function StorefrontLayout(): JSX.Element {
   const whatsapp = useAppSelector((s) => s.storefrontContent.whatsappNumber);
+  const dispatch = useAppDispatch();
+  const { data } = useGetPublicStorefrontQuery();
+
+  // Hydrate the local slice from the database on mount + whenever the server
+  // version refreshes. Preserves the existing useAppSelector consumers without
+  // requiring a per-component refactor.
+  useEffect(() => {
+    if (data?.content) dispatch(setContent(data.content));
+  }, [data, dispatch]);
+
   return (
     <div className="min-h-screen flex flex-col bg-ink-0">
       <StorefrontHeader />

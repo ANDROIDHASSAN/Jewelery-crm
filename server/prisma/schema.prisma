@@ -56,6 +56,7 @@ model Tenant {
   products      Product[]
   orders        Order[]
   auditLogs     AuditLog[]
+  storefrontContent StorefrontContent?
 
   @@index([ownerEmail])
 }
@@ -595,6 +596,24 @@ model OrderItem {
 // --------------------------------------------------------------------------
 // Audit
 // --------------------------------------------------------------------------
+
+// --------------------------------------------------------------------------
+// Storefront content (CMS-driven public website)
+// One row per tenant. Content is a single JSON blob whose shape lives in
+// shared/schemas.ts as StorefrontContentSchema. Keeps the editorial surface
+// (hero, brand, rates, collections, story, testimonial, locations, whatsapp)
+// editable without per-section migrations during the build phase.
+// --------------------------------------------------------------------------
+
+model StorefrontContent {
+  tenantId  String   @id
+  content   Json
+  version   Int      @default(1)
+  updatedAt DateTime @updatedAt
+  updatedBy String?
+
+  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+}
 
 model AuditLog {
   id          String   @id @default(cuid())

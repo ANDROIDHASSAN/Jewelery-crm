@@ -81,14 +81,27 @@ export function StorefrontHeader(): JSX.Element {
 
           <Link
             to="/store"
-            className="font-display tracking-tight text-ink-900 leading-none"
-            aria-label="{brand.name} — home"
+            className="font-display tracking-tight text-ink-900 leading-none flex items-center gap-3"
+            aria-label={`${brand.name} — home`}
           >
-            <span className={cn('block transition-[font-size] duration-200', scrolled ? 'text-xl' : 'text-2xl')}>
-              {brand.name}
-            </span>
-            <span className="hidden md:block text-[10px] tracking-[0.22em] uppercase text-ink-400 mt-0.5 font-sans">
-              Pune · Since 1972
+            {brand.logo && (
+              <img
+                src={brand.logo}
+                alt=""
+                aria-hidden="true"
+                className={cn(
+                  'rounded-md object-cover transition-[height,width] duration-200 shrink-0',
+                  scrolled ? 'h-8 w-8' : 'h-10 w-10',
+                )}
+              />
+            )}
+            <span className="block">
+              <span className={cn('block transition-[font-size] duration-200', scrolled ? 'text-xl' : 'text-2xl')}>
+                {brand.name}
+              </span>
+              <span className="hidden md:block text-[10px] tracking-[0.22em] uppercase text-ink-400 mt-0.5 font-sans">
+                Pune · Since 1972
+              </span>
             </span>
           </Link>
 
@@ -180,7 +193,12 @@ export function StorefrontHeader(): JSX.Element {
           />
           <div className="absolute inset-y-0 left-0 w-[85%] max-w-sm bg-ink-0 flex flex-col">
             <div className="flex items-center justify-between h-16 px-6 border-b border-ink-100">
-              <span className="font-display text-xl text-ink-900">{brand.name}</span>
+              <span className="font-display text-xl text-ink-900 flex items-center gap-2">
+                {brand.logo && (
+                  <img src={brand.logo} alt="" aria-hidden="true" className="h-8 w-8 rounded-md object-cover" />
+                )}
+                {brand.name}
+              </span>
               <button
                 type="button"
                 onClick={() => setMobileOpen(false)}

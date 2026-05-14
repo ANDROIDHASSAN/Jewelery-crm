@@ -26,11 +26,14 @@ const items = [
 export function Sidebar(): JSX.Element {
   return (
     <aside className="hidden lg:flex flex-col w-[240px] shrink-0 h-screen sticky top-0 bg-ink-0 border-r border-ink-100">
-      <div className="px-5 py-5 flex items-center gap-2">
-        <div className="h-7 w-7 rounded-md bg-brand-400 flex items-center justify-center text-ink-900 font-display font-medium">
-          G
-        </div>
-        <span className="font-display text-md text-ink-900">Gold OS</span>
+      <div className="px-5 py-5 flex items-center gap-2.5">
+        <img
+          src="/logo/zelora-mark.png"
+          alt=""
+          aria-hidden="true"
+          className="h-8 w-8 rounded-md object-cover"
+        />
+        <span className="font-display text-md text-ink-900">Zelora</span>
       </div>
       <nav className="px-3 pt-2 flex-1 space-y-0.5" aria-label="Primary">
         {items.map((it) => (

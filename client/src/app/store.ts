@@ -78,6 +78,7 @@ export const baseApi = createApi({
     'Page',
     'Enquiry',
     'GoldRate',
+    'StorefrontContent',
   ],
   endpoints: () => ({}),
 });

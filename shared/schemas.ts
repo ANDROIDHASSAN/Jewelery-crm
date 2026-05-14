@@ -315,6 +315,64 @@ export const OrderSchema = z.object({
   createdAt: z.coerce.date(),
 });
 
+// --- Storefront content (public website CMS) ---
+// One row per tenant; the entire homepage is driven from this blob.
+
+export const StoreLocationSchema = z.object({
+  id: z.string().min(1).max(80),
+  name: z.string().min(1).max(120),
+  address: z.string().min(1).max(400),
+  phone: z.string().min(1).max(60),
+  hours: z.string().min(1).max(120),
+  image: z.string().min(1).max(2048),
+});
+
+export const CollectionTileSchema = z.object({
+  slug: z.string().min(1).max(80),
+  name: z.string().min(1).max(80),
+  tagline: z.string().min(1).max(200),
+  img: z.string().min(1).max(2048),
+});
+
+export const StorefrontContentSchema = z.object({
+  brand: z.object({
+    name: z.string().min(1).max(120),
+    tagline: z.string().min(1).max(400),
+    logo: z.string().max(2_500_000).default(''),
+  }),
+  hero: z.object({
+    eyebrow: z.string().max(120),
+    title: z.string().min(1).max(240),
+    subtitle: z.string().max(600),
+    ctaLabel: z.string().max(60),
+    ctaHref: z.string().max(2048),
+    secondaryCtaLabel: z.string().max(60),
+    secondaryCtaHref: z.string().max(2048),
+    image: z.string().max(2048),
+  }),
+  rates: z.object({
+    g22: z.string().max(40),
+    g18: z.string().max(40),
+    silver: z.string().max(40),
+    updatedAt: z.string().max(80),
+  }),
+  collections: z.array(CollectionTileSchema).max(20),
+  story: z.object({
+    eyebrow: z.string().max(80),
+    title: z.string().max(240),
+    body: z.string().max(2000),
+    image: z.string().max(2048),
+  }),
+  testimonial: z.object({
+    quote: z.string().max(1200),
+    author: z.string().max(160),
+  }),
+  locations: z.array(StoreLocationSchema).max(20),
+  whatsappNumber: z.string().regex(/^\d{0,15}$/, 'Digits only, up to 15'),
+});
+
+export type StorefrontContent = z.infer<typeof StorefrontContentSchema>;
+
 // --- API response envelopes ---
 
 export const ApiErrorSchema = z.object({

@@ -2,7 +2,7 @@
    Overridable per tenant by setting CSS vars at :root after auth. */
 
 :root {
-  /* Brand ramp — "Gold OS gold". */
+  /* Brand ramp — "Zelora gold". */
   --brand-50:  #FAF5E8;
   --brand-100: #F1E5BE;
   --brand-200: #E6D08D;

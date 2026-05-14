@@ -34,6 +34,7 @@ const TENANT_SCOPED_MODELS = new Set<string>([
   'Product',
   'Order',
   'AuditLog',
+  'StorefrontContent',
 ]);
 
 /** Raw client without tenant extension — for super-admin and the tenant-scope middleware itself. */

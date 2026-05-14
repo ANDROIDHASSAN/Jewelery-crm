@@ -22,6 +22,7 @@ import { crmRouter } from './modules/crm/crm.routes.js';
 import { ecommerceRouter } from './modules/ecommerce/ecommerce.routes.js';
 import { analyticsRouter } from './modules/analytics/analytics.routes.js';
 import { websiteRouter } from './modules/website/website.routes.js';
+import { storefrontRouter } from './modules/storefront/storefront.routes.js';
 
 export function createApp(): express.Express {
   const app = express();
@@ -58,6 +59,7 @@ export function createApp(): express.Express {
   protectedRouter.use('/crm', crmRouter);
   protectedRouter.use('/ecommerce', ecommerceRouter);
   protectedRouter.use('/analytics', analyticsRouter);
+  protectedRouter.use('/storefront', storefrontRouter);
   app.use('/api/v1', protectedRouter);
 
   app.use(errorHandler);

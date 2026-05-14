@@ -1,9 +1,11 @@
 // Website admin — edits the public storefront content (hero, rates, collections, story, locations).
-// Reads from / writes to the storefrontContent slice. Persisted in localStorage so a refresh keeps changes.
+// Local edits flow through the Redux slice for instant feedback; clicking
+// "Publish" PUTs the full content blob to /api/v1/storefront and invalidates
+// the public storefront cache so visitors see the change.
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { toast } from 'sonner';
-import { ExternalLink, Plus, Trash2, RotateCcw } from 'lucide-react';
+import { ExternalLink, Plus, Trash2, RotateCcw, CloudUpload } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -14,6 +16,7 @@ import {
   removeCollection,
   removeLocation,
   resetContent,
+  setContent,
   updateBrand,
   updateCollection,
   updateHero,
@@ -23,6 +26,10 @@ import {
   updateTestimonial,
   updateWhatsapp,
 } from '@/features/storefront/storefrontContentSlice';
+import {
+  useGetAdminStorefrontQuery,
+  useUpdateStorefrontMutation,
+} from '@/features/storefront/storefrontApi';
 
 type TabKey = 'brand' | 'hero' | 'rates' | 'collections' | 'story' | 'testimonial' | 'locations' | 'contact';
 
@@ -41,9 +48,33 @@ export function WebsiteAdminPage(): JSX.Element {
   const dispatch = useAppDispatch();
   const content = useAppSelector((s) => s.storefrontContent);
   const [tab, setTab] = useState<TabKey>('brand');
+  const [isDirty, setIsDirty] = useState(false);
+  const { data: serverData, isLoading } = useGetAdminStorefrontQuery();
+  const [publish, { isLoading: isPublishing }] = useUpdateStorefrontMutation();
+
+  // Hydrate the local draft from the database on first load. We only do this
+  // once (or when the server changes from null) so user edits aren't trampled.
+  useEffect(() => {
+    if (serverData?.content && !isDirty) {
+      dispatch(setContent(serverData.content));
+    }
+  }, [serverData, isDirty, dispatch]);
 
   function notify(): void {
-    toast.success('Saved · storefront updated');
+    setIsDirty(true);
+  }
+
+  async function handlePublish(): Promise<void> {
+    try {
+      await publish(content).unwrap();
+      setIsDirty(false);
+      toast.success('Published · live on the storefront');
+    } catch (err) {
+      const message =
+        (err as { data?: { error?: { message?: string } } })?.data?.error?.message ??
+        'Could not publish. Check the server logs.';
+      toast.error(message);
+    }
   }
 
   return (
@@ -53,27 +84,38 @@ export function WebsiteAdminPage(): JSX.Element {
           <p className="text-eyebrow uppercase text-ink-500">Business website</p>
           <h1 className="font-display text-display-sm text-ink-900">Pages & content</h1>
           <p className="text-sm text-ink-500 mt-1">
-            Everything you change here goes live on the storefront immediately.
+            Edits stay local until you click <span className="font-medium text-ink-800">Publish</span>.
+            {isLoading && ' Loading saved content…'}
           </p>
         </div>
         <div className="flex items-center gap-2">
           <Button
             variant="ghost"
             onClick={() => {
-              if (confirm('Reset all storefront content to defaults?')) {
-                dispatch(resetContent());
-                toast.message('Storefront content reset to defaults');
+              if (confirm('Discard local edits and reload the published version?')) {
+                if (serverData?.content) dispatch(setContent(serverData.content));
+                else dispatch(resetContent());
+                setIsDirty(false);
+                toast.message('Reverted to published');
               }
             }}
           >
             <RotateCcw className="h-4 w-4" />
-            Reset
+            Revert
           </Button>
           <Button variant="outline" asChild>
             <a href="/store" target="_blank" rel="noreferrer">
               View live site
               <ExternalLink className="h-4 w-4" />
             </a>
+          </Button>
+          <Button
+            onClick={handlePublish}
+            disabled={isPublishing || !isDirty}
+            aria-disabled={isPublishing || !isDirty}
+          >
+            <CloudUpload className="h-4 w-4" />
+            {isPublishing ? 'Publishing…' : isDirty ? 'Publish' : 'Published'}
           </Button>
         </div>
       </header>
@@ -104,7 +146,75 @@ export function WebsiteAdminPage(): JSX.Element {
       <div className="grid grid-cols-1 lg:grid-cols-[1fr_360px] gap-8">
         <div className="space-y-6 max-w-2xl">
           {tab === 'brand' && (
-            <Card title="Brand identity" desc="Shop name and one-line tagline used in header, footer, and meta.">
+            <Card title="Brand identity" desc="Logo, shop name and tagline used in the header and footer.">
+              <Field
+                label="Logo"
+                hint="Square works best (≤ 256×256). Upload a file or paste a URL."
+              >
+                <div className="flex items-start gap-4">
+                  <div
+                    className="h-16 w-16 rounded-md bg-ink-50 border border-ink-100 flex items-center justify-center overflow-hidden shrink-0"
+                    aria-hidden="true"
+                  >
+                    {content.brand.logo ? (
+                      <img src={content.brand.logo} alt="" className="h-full w-full object-cover" />
+                    ) : (
+                      <span className="text-xs text-ink-400">No logo</span>
+                    )}
+                  </div>
+                  <div className="flex-1 space-y-2">
+                    <Input
+                      placeholder="https://… or /logo/your-mark.png"
+                      value={content.brand.logo}
+                      onChange={(e) => dispatch(updateBrand({ logo: e.target.value }))}
+                      onBlur={notify}
+                    />
+                    <div className="flex items-center gap-2">
+                      <label
+                        htmlFor="logo-upload"
+                        className="inline-flex items-center gap-1.5 h-8 px-3 rounded-md border border-ink-200 bg-ink-0 text-xs text-ink-700 hover:bg-ink-50 cursor-pointer"
+                      >
+                        Upload image
+                      </label>
+                      <input
+                        id="logo-upload"
+                        type="file"
+                        accept="image/png,image/jpeg,image/svg+xml,image/webp"
+                        className="sr-only"
+                        onChange={(e) => {
+                          const file = e.target.files?.[0];
+                          if (!file) return;
+                          if (file.size > 512 * 1024) {
+                            toast.error('Logo must be under 512 KB');
+                            e.target.value = '';
+                            return;
+                          }
+                          const reader = new FileReader();
+                          reader.onload = () => {
+                            dispatch(updateBrand({ logo: String(reader.result ?? '') }));
+                            notify();
+                          };
+                          reader.onerror = () => toast.error('Could not read file');
+                          reader.readAsDataURL(file);
+                          e.target.value = '';
+                        }}
+                      />
+                      {content.brand.logo && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            dispatch(updateBrand({ logo: '' }));
+                            notify();
+                          }}
+                          className="inline-flex items-center gap-1.5 h-8 px-3 rounded-md text-xs text-ink-600 hover:text-ink-900 hover:bg-ink-50"
+                        >
+                          <Trash2 className="h-3.5 w-3.5" /> Remove
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              </Field>
               <Field label="Shop name">
                 <Input
                   value={content.brand.name}

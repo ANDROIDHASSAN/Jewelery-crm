@@ -40,7 +40,12 @@ export function StorefrontFooter(): JSX.Element {
       {/* Main footer */}
       <div className="max-w-[1280px] mx-auto px-6 py-14 md:py-16 grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-10">
         <div className="col-span-2 max-w-sm">
-          <Link to="/store" className="font-display text-[22px] text-ink-900">{brand.name}</Link>
+          <Link to="/store" className="font-display text-[22px] text-ink-900 inline-flex items-center gap-2.5">
+            {brand.logo && (
+              <img src={brand.logo} alt="" aria-hidden="true" className="h-9 w-9 rounded-md object-cover" />
+            )}
+            {brand.name}
+          </Link>
           <p className="mt-3 text-sm text-ink-600 leading-relaxed">
             {brand.tagline}
           </p>
@@ -96,7 +101,7 @@ export function StorefrontFooter(): JSX.Element {
           <div className="flex items-center gap-4">
             <Link to="/store/privacy" className="hover:text-ink-700">Privacy</Link>
             <Link to="/store/terms" className="hover:text-ink-700">Terms</Link>
-            <span className="text-ink-400">Powered by Gold OS</span>
+            <span className="text-ink-400">Powered by Zelora</span>
           </div>
         </div>
       </div>
