@@ -257,41 +257,134 @@ async function main(): Promise<void> {
     };
     await tx.product.createMany({
       data: [
+        // ── Bridal (22K, statement) ────────────────────────────────────────
         {
-          tenantId: tenant.id, categoryId: category.id, slug: 'mira-bangle', name: 'Mira bangle',
+          tenantId: tenant.id, categoryId: catBridal.id, slug: 'mira-bangle', name: 'Mira bangle',
           descriptionMd: 'Hand-set 22K bangle from the 2025 Bridal Edit. BIS hallmarked, weighed in front of you.',
           images: PRODUCT_IMG.bangle, weightMg: 12_450, purityCaratX100: 2200,
           makingChargeBps: 1325, basePricePaise: 86_366_00, stoneChargePaise: 0, isPublished: true,
         },
         {
-          tenantId: tenant.id, categoryId: category.id, slug: 'tara-mangalsutra', name: 'Tara mangalsutra',
+          tenantId: tenant.id, categoryId: catBridal.id, slug: 'niya-haar', name: 'Niya haar',
+          descriptionMd: 'Statement bridal haar with kundan and pearl drops. Made-to-order, ~6 weeks.',
+          images: PRODUCT_IMG.haar, weightMg: 65_000, purityCaratX100: 2200,
+          makingChargeBps: 1800, basePricePaise: 4_85_000_00, stoneChargePaise: 1_25_000_00, isPublished: true,
+        },
+        {
+          tenantId: tenant.id, categoryId: catBridal.id, slug: 'isha-bridal-set', name: 'Isha bridal set',
+          descriptionMd: 'Matched necklace + jhumka + maang-tikka. 22K, kundan & uncut accents.',
+          images: PRODUCT_IMG.haar, weightMg: 82_000, purityCaratX100: 2200,
+          makingChargeBps: 1900, basePricePaise: 6_85_000_00, stoneChargePaise: 1_45_000_00, isPublished: true,
+        },
+        {
+          tenantId: tenant.id, categoryId: catBridal.id, slug: 'kavya-choker', name: 'Kavya choker',
+          descriptionMd: 'Polki-set 22K choker. Adjustable dori, paired naturally with the Isha haar.',
+          images: PRODUCT_IMG.haar, weightMg: 38_000, purityCaratX100: 2200,
+          makingChargeBps: 1750, basePricePaise: 2_45_000_00, stoneChargePaise: 65_000_00, isPublished: true,
+        },
+
+        // ── Daily Wear (light 22K) ─────────────────────────────────────────
+        {
+          tenantId: tenant.id, categoryId: catDaily.id, slug: 'tara-mangalsutra', name: 'Tara mangalsutra',
           descriptionMd: 'Lightweight 22K mangalsutra with black-bead accents. Everyday-wear length.',
           images: PRODUCT_IMG.mangalsutra, weightMg: 8_100, purityCaratX100: 2200,
           makingChargeBps: 1100, basePricePaise: 62_200_00, stoneChargePaise: 0, isPublished: true,
         },
         {
-          tenantId: tenant.id, categoryId: category.id, slug: 'aarya-ring', name: 'Aarya solitaire',
-          descriptionMd: '0.32ct lab-grown solitaire set in 18K white gold. Certified, sized to order.',
-          images: PRODUCT_IMG.ring, weightMg: 4_200, purityCaratX100: 1800,
-          makingChargeBps: 1500, basePricePaise: 48_900_00, stoneChargePaise: 18_000_00, isPublished: true,
-        },
-        {
-          tenantId: tenant.id, categoryId: category.id, slug: 'riya-jhumka', name: 'Riya jhumkas',
-          descriptionMd: 'Classic 22K jhumkas with hand-set pearls. A festive everyday.',
-          images: PRODUCT_IMG.jhumka, weightMg: 5_200, purityCaratX100: 2200,
-          makingChargeBps: 1250, basePricePaise: 31_400_00, stoneChargePaise: 0, isPublished: true,
-        },
-        {
-          tenantId: tenant.id, categoryId: category.id, slug: 'diya-chain', name: 'Diya chain',
+          tenantId: tenant.id, categoryId: catDaily.id, slug: 'diya-chain', name: 'Diya chain',
           descriptionMd: '18-inch 22K chain with a fine rope link. BIS hallmarked.',
           images: PRODUCT_IMG.chain, weightMg: 7_400, purityCaratX100: 2200,
           makingChargeBps: 1050, basePricePaise: 54_800_00, stoneChargePaise: 0, isPublished: true,
         },
         {
-          tenantId: tenant.id, categoryId: category.id, slug: 'niya-haar', name: 'Niya haar',
-          descriptionMd: 'Statement bridal haar with kundan and pearl drops. Made-to-order, ~6 weeks.',
-          images: PRODUCT_IMG.haar, weightMg: 65_000, purityCaratX100: 2200,
-          makingChargeBps: 1800, basePricePaise: 4_85_000_00, stoneChargePaise: 1_25_000_00, isPublished: true,
+          tenantId: tenant.id, categoryId: catDaily.id, slug: 'sara-studs', name: 'Sara studs',
+          descriptionMd: 'Classic 22K studs — the everyday earring. Screw-back, hypoallergenic post.',
+          images: PRODUCT_IMG.jhumka, weightMg: 2_400, purityCaratX100: 2200,
+          makingChargeBps: 1000, basePricePaise: 18_400_00, stoneChargePaise: 0, isPublished: true,
+        },
+        {
+          tenantId: tenant.id, categoryId: catDaily.id, slug: 'meera-nose-pin', name: 'Meera nose pin',
+          descriptionMd: 'Single-stone 22K nose pin. Screw-fit. Tiny, all-day comfort.',
+          images: PRODUCT_IMG.ring, weightMg: 900, purityCaratX100: 2200,
+          makingChargeBps: 1100, basePricePaise: 7_900_00, stoneChargePaise: 0, isPublished: true,
+        },
+
+        // ── Festive (22K, mid-weight, statement-but-wearable) ──────────────
+        {
+          tenantId: tenant.id, categoryId: catFestive.id, slug: 'riya-jhumka', name: 'Riya jhumkas',
+          descriptionMd: 'Classic 22K jhumkas with hand-set pearls. A festive everyday.',
+          images: PRODUCT_IMG.jhumka, weightMg: 5_200, purityCaratX100: 2200,
+          makingChargeBps: 1250, basePricePaise: 31_400_00, stoneChargePaise: 0, isPublished: true,
+        },
+        {
+          tenantId: tenant.id, categoryId: catFestive.id, slug: 'aanya-temple-haar', name: 'Aanya temple haar',
+          descriptionMd: 'South-Indian temple-style 22K haar. Lakshmi coin pendant.',
+          images: PRODUCT_IMG.haar, weightMg: 28_000, purityCaratX100: 2200,
+          makingChargeBps: 1450, basePricePaise: 1_82_000_00, stoneChargePaise: 0, isPublished: true,
+        },
+        {
+          tenantId: tenant.id, categoryId: catFestive.id, slug: 'vanya-bangle-pair', name: 'Vanya bangle pair',
+          descriptionMd: 'Pair of 22K patterned bangles. Karva Chauth-ready, photographs beautifully.',
+          images: PRODUCT_IMG.bangle, weightMg: 22_000, purityCaratX100: 2200,
+          makingChargeBps: 1300, basePricePaise: 1_42_000_00, stoneChargePaise: 0, isPublished: true,
+        },
+        {
+          tenantId: tenant.id, categoryId: catFestive.id, slug: 'priya-jhumka-medium', name: 'Priya jhumkas',
+          descriptionMd: 'Mid-size 22K jhumkas with ruby drops. For festive evenings.',
+          images: PRODUCT_IMG.jhumka, weightMg: 8_600, purityCaratX100: 2200,
+          makingChargeBps: 1350, basePricePaise: 58_900_00, stoneChargePaise: 12_000_00, isPublished: true,
+        },
+
+        // ── Diamond (18K, certified) ───────────────────────────────────────
+        {
+          tenantId: tenant.id, categoryId: catDiamond.id, slug: 'aarya-ring', name: 'Aarya solitaire',
+          descriptionMd: '0.32ct lab-grown solitaire set in 18K white gold. Certified, sized to order.',
+          images: PRODUCT_IMG.ring, weightMg: 4_200, purityCaratX100: 1800,
+          makingChargeBps: 1500, basePricePaise: 48_900_00, stoneChargePaise: 18_000_00, isPublished: true,
+        },
+        {
+          tenantId: tenant.id, categoryId: catDiamond.id, slug: 'nyra-tennis', name: 'Nyra tennis bracelet',
+          descriptionMd: '18K white-gold tennis bracelet, 2.4ct total. IGI certified.',
+          images: PRODUCT_IMG.bangle, weightMg: 9_800, purityCaratX100: 1800,
+          makingChargeBps: 1500, basePricePaise: 1_85_000_00, stoneChargePaise: 95_000_00, isPublished: true,
+        },
+        {
+          tenantId: tenant.id, categoryId: catDiamond.id, slug: 'zara-halo-ring', name: 'Zara halo ring',
+          descriptionMd: '0.50ct halo solitaire in 18K rose gold. Sized to order.',
+          images: PRODUCT_IMG.ring, weightMg: 3_800, purityCaratX100: 1800,
+          makingChargeBps: 1600, basePricePaise: 92_000_00, stoneChargePaise: 38_000_00, isPublished: true,
+        },
+        {
+          tenantId: tenant.id, categoryId: catDiamond.id, slug: 'rhea-studs-diamond', name: 'Rhea diamond studs',
+          descriptionMd: 'Round-brilliant 0.20ct diamond studs in 18K. Everyday brilliance.',
+          images: PRODUCT_IMG.jhumka, weightMg: 1_900, purityCaratX100: 1800,
+          makingChargeBps: 1400, basePricePaise: 42_500_00, stoneChargePaise: 14_000_00, isPublished: true,
+        },
+
+        // ── Silver (sterling, gifting) ─────────────────────────────────────
+        {
+          tenantId: tenant.id, categoryId: catSilver.id, slug: 'tia-silver-anklet', name: 'Tia silver anklet',
+          descriptionMd: '92.5 sterling silver anklet, hallmarked. Light & wearable.',
+          images: PRODUCT_IMG.chain, weightMg: 18_000, purityCaratX100: 925,
+          makingChargeBps: 800, basePricePaise: 3_400_00, stoneChargePaise: 0, isPublished: true,
+        },
+        {
+          tenantId: tenant.id, categoryId: catSilver.id, slug: 'maya-silver-bangle', name: 'Maya silver bangle',
+          descriptionMd: 'Oxidised silver bangle with hand-engraved motifs. 92.5 sterling.',
+          images: PRODUCT_IMG.bangle, weightMg: 24_000, purityCaratX100: 925,
+          makingChargeBps: 900, basePricePaise: 4_900_00, stoneChargePaise: 0, isPublished: true,
+        },
+        {
+          tenantId: tenant.id, categoryId: catSilver.id, slug: 'leela-silver-jhumka', name: 'Leela silver jhumkas',
+          descriptionMd: 'Temple-style silver jhumkas. Lightweight, anti-tarnish polished.',
+          images: PRODUCT_IMG.jhumka, weightMg: 12_000, purityCaratX100: 925,
+          makingChargeBps: 900, basePricePaise: 2_800_00, stoneChargePaise: 0, isPublished: true,
+        },
+        {
+          tenantId: tenant.id, categoryId: catSilver.id, slug: 'aria-silver-chain', name: 'Aria silver chain',
+          descriptionMd: '20-inch sterling silver chain. Gift-boxed.',
+          images: PRODUCT_IMG.chain, weightMg: 14_500, purityCaratX100: 925,
+          makingChargeBps: 700, basePricePaise: 2_200_00, stoneChargePaise: 0, isPublished: true,
         },
       ],
     });
