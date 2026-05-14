@@ -33,7 +33,7 @@ import {
 import { useGetDashboardSummaryQuery } from '@/features/dashboard/dashboardApi';
 import { useGetPlQuery, useGetExpensesByCategoryQuery } from '@/features/finance/financeApi';
 import { useGetLeadsQuery } from '@/features/crm/crmApi';
-import { useGetOrdersQuery } from '@/features/ecommerce/ecommerceApi';
+import { useGetOrdersQuery, type AdminOrder } from '@/features/ecommerce/ecommerceApi';
 import { useGetBillsQuery } from '@/features/pos/posApi';
 import {
   useGetLowStockQuery,
@@ -123,7 +123,8 @@ const ORDER_STATUS_TONE: Record<string, 'success' | 'info' | 'warning' | 'neutra
 };
 
 export function DashboardPage(): JSX.Element {
-  const range = monthRange();
+  // Stable per-day reference — see monthRange() comment for why.
+  const range = useMemo(() => monthRange(), []);
   const { data: summaryRes, isLoading, isError } = useGetDashboardSummaryQuery(undefined, {
     pollingInterval: 60_000,
   });
@@ -313,7 +314,7 @@ export function DashboardPage(): JSX.Element {
       </section>
 
       {/* ---- 3a. Recent storefront reservations — high-priority, kept above the fold ---- */}
-      <RecentReservations />
+      <RecentReservations orders={orders} />
 
       {/* ---- 4. Sales chart + Gold rate ---- */}
       <section className="grid grid-cols-1 lg:grid-cols-3 gap-4">
@@ -787,16 +788,12 @@ function QuickLink({
   );
 }
 
-// Storefront reservations — leads created from PDP "Reserve at store" or the
-// cart's Reserve dialog. Polls 15s so newly-placed reservations show up fast.
-const STOREFRONT_SOURCES = new Set(['store-reservation', 'newsletter', 'storefront']);
-
-function RecentReservations(): JSX.Element {
-  const { data: leadsRes, isLoading } = useGetLeadsQuery(undefined, {
-    pollingInterval: 15_000,
-  });
-  const reservations = (leadsRes?.data ?? [])
-    .filter((l) => STOREFRONT_SOURCES.has(l.source))
+// Storefront reservations — orders placed via "Reserve at store" (paymentMethod
+// === 'reserve-at-store'). Sourced from the same orders feed as the rest of the
+// dashboard so we don't depend on the Lead-mirror succeeding on checkout.
+function RecentReservations({ orders }: { orders: AdminOrder[] }): JSX.Element {
+  const reservations = orders
+    .filter((o) => o.paymentMethod === 'reserve-at-store')
     .slice(0, 6);
 
   return (
@@ -805,49 +802,38 @@ function RecentReservations(): JSX.Element {
         <div className="flex items-center gap-2">
           <ShoppingBag className="h-4 w-4 text-brand-500" />
           <h3 className="text-md text-ink-900 font-medium">Recent storefront reservations</h3>
-          <span className="text-xs text-ink-500">· live (polling 15s)</span>
+          <span className="text-xs text-ink-500">· live (polling 60s)</span>
         </div>
         <Link to="/admin/ecommerce" className="text-xs text-ink-500 hover:text-ink-900 inline-flex items-center gap-1">
           All reservations <ArrowRight className="h-3 w-3" />
         </Link>
       </div>
-      {isLoading && <p className="px-5 pb-5 text-sm text-ink-500">Loading…</p>}
-      {!isLoading && reservations.length === 0 && (
+      {reservations.length === 0 ? (
         <p className="px-5 pb-5 text-sm text-ink-500">
           No reservations yet. Place one from the storefront and refresh.
         </p>
-      )}
-      {reservations.length > 0 && (
+      ) : (
         <ul className="divide-y divide-ink-100">
-          {reservations.map((l) => {
-            // Reservation interest is formatted as "RESERVE: <name> · …"
-            const parts = (l.interest ?? '').split(' · ');
-            const piece = (parts[0] ?? '').replace(/^RESERVE:\s*/i, '') || 'Reservation';
-            const total = parts.find((p) => p.toLowerCase().startsWith('total ')) ?? null;
-            return (
-              <li key={l.id}>
-                <Link
-                  to="/admin/ecommerce"
-                  className="px-5 py-3 flex items-center justify-between gap-3 hover:bg-ink-25"
-                >
-                  <div className="min-w-0 flex-1">
-                    <p className="text-sm text-ink-900 truncate">{piece}</p>
-                    <p className="text-xs text-ink-500 mt-0.5">
-                      {l.name} · <span className="font-mono">{l.phone}</span> · {shortTime(l.createdAt)}
-                    </p>
-                  </div>
-                  <Badge tone={l.status === 'CONVERTED' ? 'success' : l.status === 'LOST' ? 'danger' : 'warning'}>
-                    {l.status.toLowerCase()}
-                  </Badge>
-                  {total && (
-                    <span className="font-mono tabular-nums text-sm text-ink-900">
-                      {total.replace(/^total\s*/i, '')}
-                    </span>
-                  )}
-                </Link>
-              </li>
-            );
-          })}
+          {reservations.map((o) => (
+            <li key={o.id}>
+              <Link
+                to="/admin/ecommerce"
+                className="px-5 py-3 flex items-center justify-between gap-3 hover:bg-ink-25"
+              >
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm text-ink-900 truncate">
+                    {o.customer?.name ?? 'Guest'} · #{o.id.slice(-8).toUpperCase()}
+                  </p>
+                  <p className="text-xs text-ink-500 mt-0.5">
+                    {o.customer?.phone && <span className="font-mono">{o.customer.phone} · </span>}
+                    {shortTime(o.createdAt)}
+                  </p>
+                </div>
+                <Badge tone={ORDER_STATUS_TONE[o.status] ?? 'neutral'}>{o.status.toLowerCase()}</Badge>
+                <Money paise={o.totalPaise} className="font-mono tabular-nums text-sm" />
+              </Link>
+            </li>
+          ))}
         </ul>
       )}
     </section>
