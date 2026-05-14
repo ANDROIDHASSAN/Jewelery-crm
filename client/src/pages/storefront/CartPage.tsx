@@ -28,7 +28,7 @@ export function CartPage(): JSX.Element {
         </div>
         <h1 className="font-display text-[32px] mt-6 text-ink-900">Your bag is empty</h1>
         <p className="mt-2 text-ink-600 text-sm">
-          Reserve a piece online or browse our collections — every order is hand-finished in Haryana.
+          Add a piece to your bag or browse our collections — every order is hand-finished in Haryana.
         </p>
         <Link
           to="/store/collections/bridal"
@@ -45,7 +45,7 @@ export function CartPage(): JSX.Element {
       <header className="mb-10">
         <p className="text-eyebrow uppercase text-ink-500">Your bag</p>
         <h1 className="font-display text-[34px] md:text-[40px] text-ink-900 mt-2">
-          {cart.length} {cart.length === 1 ? 'piece' : 'pieces'} reserved
+          {cart.length} {cart.length === 1 ? 'piece' : 'pieces'} in your bag
         </h1>
       </header>
 
@@ -120,7 +120,7 @@ export function CartPage(): JSX.Element {
               onClick={() => setCheckoutOpen(true)}
               className="w-full h-12 mt-4 rounded-full bg-brand-400 text-ink-900 text-sm font-medium hover:bg-brand-300 transition-colors"
             >
-              Reserve at store
+              Place order
             </button>
             <p className="text-[11px] text-ink-500 leading-relaxed">
               We&apos;ll confirm the day&apos;s gold rate on WhatsApp before billing. No card charged today.
@@ -187,11 +187,20 @@ function CheckoutDialog({ open, onClose }: { open: boolean; onClose: () => void 
       const res = await createOrder({
         customer: { name: name.trim(), phone: `+91${local}` },
         items,
-        paymentMethod: 'reserve-at-store',
+        paymentMethod: 'cod',
       }).unwrap();
+      const eta = res.expectedDeliveryAt
+        ? new Date(res.expectedDeliveryAt).toLocaleDateString('en-IN', {
+            weekday: 'long',
+            day: 'numeric',
+            month: 'short',
+          })
+        : null;
       toast.success(`Order placed! Confirmation ZL-${res.id.slice(-6).toUpperCase()}`, {
-        description: 'We\'ve held these pieces for 48 hours. Our team will WhatsApp you shortly.',
-        duration: 8000,
+        description: eta
+          ? `Arrives by ${eta}. We'll WhatsApp tracking once the courier picks up.`
+          : `We'll WhatsApp tracking once the courier picks up.`,
+        duration: 9000,
       });
       dispatch(clearCart());
       onClose();
@@ -212,7 +221,7 @@ function CheckoutDialog({ open, onClose }: { open: boolean; onClose: () => void 
             <div className="flex items-start justify-between gap-4">
               <div>
                 <Dialog.Title className="font-display text-[22px] leading-tight text-ink-900">
-                  Reserve at store
+                  Place your order
                 </Dialog.Title>
                 <Dialog.Description className="text-xs text-ink-500 mt-1">
                   {cart.length} piece{cart.length === 1 ? '' : 's'} ·{' '}
@@ -271,7 +280,7 @@ function CheckoutDialog({ open, onClose }: { open: boolean; onClose: () => void 
             </div>
 
             <p className="text-[11px] text-ink-500 text-center leading-relaxed">
-              We&apos;ll hold these pieces for 48 hours. No payment online — pay in store at today&apos;s gold rate.
+              Pay cash on delivery, or via UPI when the courier arrives. Estimated arrival: 5 business days, tracked on WhatsApp.
             </p>
           </form>
         </Dialog.Content>

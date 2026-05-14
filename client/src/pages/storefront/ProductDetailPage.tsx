@@ -8,7 +8,7 @@ import { cn } from '@/lib/cn';
 import { useAppDispatch, useAppSelector } from '@/app/hooks';
 import { addToCart, toggleWishlist } from '@/features/storefront/shopSlice';
 import {
-  useCreateEnquiryMutation,
+  useCreatePublicOrderMutation,
   useGetPublicProductsQuery,
   useGetPublicCollectionsQuery,
   type PublicProduct,
@@ -213,7 +213,7 @@ export function ProductDetailPage(): JSX.Element {
               onClick={() => setReserveOpen(true)}
               className="flex-1 h-12 px-7 rounded-full bg-brand-400 text-ink-900 text-sm font-medium hover:bg-brand-300 transition-colors duration-fast"
             >
-              Reserve at store
+              Buy now
             </button>
             <button
               type="button"
@@ -373,13 +373,14 @@ export function ProductDetailPage(): JSX.Element {
           onClick={() => setReserveOpen(true)}
           className="flex-1 max-w-[220px] h-11 px-5 rounded-full bg-brand-400 text-ink-900 text-sm font-medium"
         >
-          Reserve
+          Buy now
         </button>
       </div>
 
       <ReserveModal
         open={reserveOpen}
         onClose={() => setReserveOpen(false)}
+        productId={product.id}
         productName={product.name}
         purity={purity}
         size={size}
@@ -393,6 +394,7 @@ export function ProductDetailPage(): JSX.Element {
 interface ReserveModalProps {
   open: boolean;
   onClose: () => void;
+  productId: string;
   productName: string;
   purity: string;
   size: string;
@@ -400,17 +402,11 @@ interface ReserveModalProps {
   totalPaise: number;
 }
 
-function ReserveModal({ open, onClose, productName, purity, size, qty, totalPaise }: ReserveModalProps): JSX.Element {
+function ReserveModal({ open, onClose, productId, productName, purity, size, qty, totalPaise }: ReserveModalProps): JSX.Element {
   const [name, setName] = useState('');
   const [phone, setPhone] = useState('+91 ');
-  const [store, setStore] = useState<'main-showroom' | 'karnal-branch'>('main-showroom');
-  const [date, setDate] = useState(() => {
-    const t = new Date();
-    t.setDate(t.getDate() + 1);
-    return t.toISOString().slice(0, 10);
-  });
   const [notes, setNotes] = useState('');
-  const [createEnquiry, { isLoading: submitting }] = useCreateEnquiryMutation();
+  const [createOrder, { isLoading: submitting }] = useCreatePublicOrderMutation();
 
   const handleSubmit = async (e: React.FormEvent): Promise<void> => {
     e.preventDefault();
@@ -426,31 +422,24 @@ function ReserveModal({ open, onClose, productName, purity, size, qty, totalPais
     }
     const e164 = `+91${local}`;
 
-    const storeLabel = store === 'main-showroom' ? 'Main Showroom — Gurugram' : 'Karnal Branch';
-    const dateLabel = new Date(date).toLocaleDateString('en-IN', { weekday: 'long', day: 'numeric', month: 'short' });
-    const priceLabel = `₹${(totalPaise / 100).toLocaleString('en-IN')}`;
-    const interest = [
-      `RESERVE: ${productName}`,
-      `${purity} · Size ${size}″ · Qty ${qty}`,
-      `Total ${priceLabel}`,
-      `Store: ${storeLabel}`,
-      `Visit by: ${dateLabel}`,
-      notes.trim() && `Notes: ${notes.trim()}`,
-    ]
-      .filter(Boolean)
-      .join(' · ')
-      .slice(0, 400);
-
     try {
-      const res = await createEnquiry({
-        source: 'store-reservation',
-        name: name.trim(),
-        phone: e164,
-        interest,
+      const res = await createOrder({
+        customer: { name: name.trim(), phone: e164 },
+        items: [{ productId, qty }],
+        paymentMethod: 'cod',
       }).unwrap();
       const id = res.id.slice(-6).toUpperCase();
-      toast.success(`Reserved! Confirmation ZL-${id}`, {
-        description: `We've held ${productName} for 48 hours. Visit ${storeLabel} by ${dateLabel}. We'll WhatsApp you a reminder.`,
+      const eta = res.expectedDeliveryAt
+        ? new Date(res.expectedDeliveryAt).toLocaleDateString('en-IN', {
+            weekday: 'long',
+            day: 'numeric',
+            month: 'short',
+          })
+        : null;
+      toast.success(`Order placed! Confirmation ZL-${id}`, {
+        description: eta
+          ? `${productName} arrives by ${eta}. We'll WhatsApp tracking once the courier picks up.`
+          : `We'll WhatsApp tracking once the courier picks up.`,
         duration: 9000,
       });
       onClose();
@@ -460,7 +449,7 @@ function ReserveModal({ open, onClose, productName, purity, size, qty, totalPais
     } catch (err) {
       const message =
         (err as { data?: { error?: { message?: string } } }).data?.error?.message ??
-        'Could not save reservation. Please try again.';
+        'Could not place order. Please try again.';
       toast.error(message);
     }
   };
@@ -473,7 +462,7 @@ function ReserveModal({ open, onClose, productName, purity, size, qty, totalPais
           <form onSubmit={handleSubmit} className="p-6 space-y-5">
             <div className="flex items-start justify-between gap-4">
               <div>
-                <Dialog.Title className="font-display text-[22px] leading-tight text-ink-900">Reserve {productName}</Dialog.Title>
+                <Dialog.Title className="font-display text-[22px] leading-tight text-ink-900">Buy {productName}</Dialog.Title>
                 <Dialog.Description className="text-xs text-ink-500 mt-1">
                   {purity} · Size {size}″ · Qty {qty} · <Money paise={totalPaise} className="font-mono" />
                 </Dialog.Description>
@@ -510,37 +499,6 @@ function ReserveModal({ open, onClose, productName, purity, size, qty, totalPais
                 />
               </label>
 
-              <fieldset>
-                <legend className="text-[11px] uppercase tracking-wider text-ink-500">Preferred store</legend>
-                <div className="mt-1 space-y-2">
-                  <label className={cn(
-                    'flex items-center gap-2.5 cursor-pointer rounded-lg border px-3 py-2.5 transition-colors',
-                    store === 'main-showroom' ? 'border-brand-500 bg-brand-50' : 'border-ink-200 hover:bg-ink-50',
-                  )}>
-                    <input type="radio" name="store" value="main-showroom" checked={store === 'main-showroom'} onChange={() => setStore('main-showroom')} className="accent-brand-500" />
-                    <span className="text-sm text-ink-900">Main Showroom — Gurugram</span>
-                  </label>
-                  <label className={cn(
-                    'flex items-center gap-2.5 cursor-pointer rounded-lg border px-3 py-2.5 transition-colors',
-                    store === 'karnal-branch' ? 'border-brand-500 bg-brand-50' : 'border-ink-200 hover:bg-ink-50',
-                  )}>
-                    <input type="radio" name="store" value="karnal-branch" checked={store === 'karnal-branch'} onChange={() => setStore('karnal-branch')} className="accent-brand-500" />
-                    <span className="text-sm text-ink-900">Karnal Branch — Haryana</span>
-                  </label>
-                </div>
-              </fieldset>
-
-              <label className="block">
-                <span className="text-[11px] uppercase tracking-wider text-ink-500">Visit by</span>
-                <input
-                  type="date"
-                  value={date}
-                  onChange={(e) => setDate(e.target.value)}
-                  min={new Date().toISOString().slice(0, 10)}
-                  className="mt-1 w-full h-11 px-3 rounded-lg border border-ink-200 focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500 text-sm"
-                />
-              </label>
-
               <label className="block">
                 <span className="text-[11px] uppercase tracking-wider text-ink-500">Notes (optional)</span>
                 <textarea
@@ -567,12 +525,12 @@ function ReserveModal({ open, onClose, productName, purity, size, qty, totalPais
                 disabled={submitting}
                 className="flex-[2] h-11 rounded-full bg-brand-400 text-ink-900 text-sm font-medium hover:bg-brand-300 disabled:opacity-60 transition-colors duration-fast"
               >
-                {submitting ? 'Reserving…' : 'Confirm reservation'}
+                {submitting ? 'Placing order…' : 'Place order'}
               </button>
             </div>
 
             <p className="text-[11px] text-ink-500 text-center leading-relaxed">
-              We'll hold this piece for 48 hours. No payment online — pay in store at the current-day gold rate.
+              Pay cash on delivery (or UPI when the courier arrives). Estimated arrival in 5 business days. We&apos;ll WhatsApp tracking as soon as the courier picks up.
             </p>
           </form>
         </Dialog.Content>
