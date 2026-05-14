@@ -71,6 +71,15 @@ async function main(): Promise<void> {
       ],
     });
 
+    // Re-fetch the cashier users so we can attribute seeded bills to them —
+    // the analytics /staff endpoint filters out bills with createdByUserId
+    // IS NULL, so without this the leaderboard would render empty even on a
+    // freshly-seeded DB.
+    const cashiers = await tx.user.findMany({
+      where: { tenantId: tenant.id, role: 'BILLING' },
+      select: { id: true, shopId: true },
+    });
+
     // Multiple categories so every storefront collection tab has products.
     // The `Item` table (physical inventory) keeps pointing at "Daily Wear"
     // for simplicity; the storefront `Product` rows fan out across all five.
@@ -211,6 +220,10 @@ async function main(): Promise<void> {
       data: sampleBills.map((b, i) => {
         const subtotal = b.paise - Math.round(b.paise * 300 / 10300); // back out 3% GST
         const gst = b.paise - subtotal;
+        // Attribute each bill to a cashier from the matching shop so the
+        // /analytics/staff leaderboard has signal. Round-robin within shop.
+        const shopCashiers = cashiers.filter((c) => c.shopId === b.shop);
+        const cashier = shopCashiers[i % Math.max(1, shopCashiers.length)];
         return {
           tenantId: tenant.id,
           shopId: b.shop,
@@ -227,6 +240,7 @@ async function main(): Promise<void> {
           totalPaise: b.paise,
           paymentStatus: b.status,
           idempotencyKey: `seed-bill-${i + 1}-${tenant.id.slice(-6)}`,
+          createdByUserId: cashier?.id ?? null,
           createdAt: daysAgo(b.days),
         };
       }),

@@ -17,9 +17,7 @@ import {
   type AdminOrder,
 } from '@/features/ecommerce/ecommerceApi';
 import { useGetCategoriesQuery } from '@/features/inventory/inventoryApi';
-import { useGetLeadsQuery, useUpdateLeadMutation } from '@/features/crm/crmApi';
 import { ORDER_STATUSES, type OrderStatus } from '@goldos/shared/constants';
-import type { Lead } from '@goldos/shared/types';
 
 const STATUS_TONE: Record<string, 'success' | 'info' | 'warning' | 'neutral'> = {
   DELIVERED: 'success',
@@ -31,10 +29,10 @@ const STATUS_TONE: Record<string, 'success' | 'info' | 'warning' | 'neutral'> = 
   RETURNED: 'neutral',
 };
 
-// Storefront-sourced lead sources that should surface in the E-Commerce module.
-// PDP "Reserve at store" emits `store-reservation`; the footer newsletter emits
-// `newsletter`. Anything else (walk-in, instagram, etc.) stays in CRM only.
-const STOREFRONT_SOURCES = new Set(['store-reservation', 'newsletter', 'storefront']);
+// Reservations = storefront orders placed with paymentMethod === 'reserve-at-store'.
+// The order itself is the source of truth (a Lead-mirror is best-effort and can
+// silently fail), so the Reservations tab reads directly from the orders feed.
+const RESERVATION_PAYMENT_METHOD = 'reserve-at-store';
 
 export function EcommerceAdminPage(): JSX.Element {
   const [tab, setTab] = useState<'products' | 'orders' | 'reservations'>('products');
@@ -47,14 +45,10 @@ export function EcommerceAdminPage(): JSX.Element {
     { pollingInterval: 30_000 },
   );
   const { data: productRes, isLoading: productsLoading } = useGetAdminProductsQuery();
-  // Poll leads on 15s so a newly-placed reservation appears within a screen blink.
-  const { data: leadsRes, isLoading: leadsLoading } = useGetLeadsQuery(undefined, {
-    pollingInterval: 15_000,
-  });
 
   const orders = orderRes?.data ?? [];
   const products = productRes?.data ?? [];
-  const reservations = (leadsRes?.data ?? []).filter((l) => STOREFRONT_SOURCES.has(l.source));
+  const reservations = orders.filter((o) => o.paymentMethod === RESERVATION_PAYMENT_METHOD);
 
   return (
     <div className="space-y-4">
@@ -74,7 +68,7 @@ export function EcommerceAdminPage(): JSX.Element {
         <KPI label="Open orders"
           value={ordersLoading ? '…' : String(orders.filter((o) => !['DELIVERED', 'CANCELLED', 'RETURNED'].includes(o.status)).length)} />
         <KPI label="Open reservations"
-          value={leadsLoading ? '…' : String(reservations.filter((l) => !['CONVERTED', 'LOST'].includes(l.status)).length)}
+          value={ordersLoading ? '…' : String(reservations.filter((o) => !['DELIVERED', 'CANCELLED', 'RETURNED'].includes(o.status)).length)}
           sub={`${reservations.length} total · storefront`} />
         <KPI label="Revenue (this page)"
           value={<Money paise={orders.reduce((s, o) => s + o.totalPaise, 0)} />} />
@@ -112,7 +106,7 @@ export function EcommerceAdminPage(): JSX.Element {
       )}
 
       {tab === 'reservations' && (
-        <ReservationsTable reservations={reservations} loading={leadsLoading} />
+        <ReservationsTable reservations={reservations} loading={ordersLoading} />
       )}
 
       <ProductDialog
@@ -672,59 +666,19 @@ function Row({ label, children }: { label: string; children: React.ReactNode }):
   );
 }
 
-// Storefront reservations live in the `Lead` table with source = 'store-reservation'.
-// We parse the freeform `interest` field (formatted by the PDP modal as
-// "RESERVE: <name> · <weight/purity> · Size … · Qty … · Total … · Store: … · Visit by: …")
-// so each row can show the actual reserved piece, total, and visit date.
-function parseReservation(interest: string | null | undefined): {
-  product: string;
-  details: string;
-  totalLabel: string | null;
-  store: string | null;
-  visitBy: string | null;
-} {
-  if (!interest) return { product: '—', details: '', totalLabel: null, store: null, visitBy: null };
-  const parts = interest.split(' · ').map((p) => p.trim());
-  const productPart = parts[0] ?? '';
-  const product = productPart.replace(/^RESERVE:\s*/i, '') || productPart;
-  const details = parts[1] ?? '';
-  const total = parts.find((p) => p.toLowerCase().startsWith('total ')) ?? null;
-  const store = parts.find((p) => p.toLowerCase().startsWith('store:'))?.replace(/^store:\s*/i, '') ?? null;
-  const visitBy = parts.find((p) => p.toLowerCase().startsWith('visit by:'))?.replace(/^visit by:\s*/i, '') ?? null;
-  return { product, details, totalLabel: total, store, visitBy };
-}
-
-const LEAD_STATUS_TONE: Record<string, 'success' | 'info' | 'warning' | 'neutral'> = {
-  NEW: 'warning',
-  CONTACTED: 'info',
-  INTERESTED: 'info',
-  NEGOTIATION: 'info',
-  CONVERTED: 'success',
-  LOST: 'neutral',
-};
-
 function ReservationsTable({
   reservations,
   loading,
 }: {
-  reservations: Lead[];
+  reservations: AdminOrder[];
   loading: boolean;
 }): JSX.Element {
-  const [updateLead, { isLoading: updating }] = useUpdateLeadMutation();
+  const [updateOrder, { isLoading: updating }] = useUpdateOrderMutation();
 
-  async function markConverted(id: string): Promise<void> {
+  async function setStatus(id: string, status: OrderStatus, msg: string): Promise<void> {
     try {
-      await updateLead({ id, status: 'CONVERTED' }).unwrap();
-      toast.success('Marked converted');
-    } catch {
-      toast.error('Could not update reservation');
-    }
-  }
-
-  async function markLost(id: string): Promise<void> {
-    try {
-      await updateLead({ id, status: 'LOST' }).unwrap();
-      toast.success('Marked lost');
+      await updateOrder({ id, patch: { status } }).unwrap();
+      toast.success(msg);
     } catch {
       toast.error('Could not update reservation');
     }
@@ -751,20 +705,20 @@ function ReservationsTable({
             <tr>
               <th className="text-left px-4 py-2">When</th>
               <th className="text-left px-4 py-2">Customer</th>
-              <th className="text-left px-4 py-2">Piece reserved</th>
-              <th className="text-left px-4 py-2">Visit by · Store</th>
+              <th className="text-left px-4 py-2">Order</th>
               <th className="text-right px-4 py-2">Total</th>
               <th className="text-left px-4 py-2">Status</th>
               <th className="px-4 py-2" />
             </tr>
           </thead>
           <tbody className="divide-y divide-ink-100">
-            {reservations.map((l) => {
-              const p = parseReservation(l.interest);
+            {reservations.map((o) => {
+              const phone = o.customer?.phone ?? '';
+              const open = !['DELIVERED', 'CANCELLED', 'RETURNED'].includes(o.status);
               return (
-                <tr key={l.id} className="hover:bg-ink-25">
+                <tr key={o.id} className="hover:bg-ink-25">
                   <td className="px-4 py-3 font-mono text-xs text-ink-700 whitespace-nowrap">
-                    {new Date(l.createdAt).toLocaleString('en-IN', {
+                    {new Date(o.createdAt).toLocaleString('en-IN', {
                       day: '2-digit',
                       month: 'short',
                       hour: '2-digit',
@@ -772,50 +726,50 @@ function ReservationsTable({
                     })}
                   </td>
                   <td className="px-4 py-3">
-                    <p className="text-ink-900">{l.name}</p>
-                    <p className="font-mono text-xs text-ink-500">{l.phone}</p>
+                    <p className="text-ink-900">{o.customer?.name ?? 'Guest'}</p>
+                    {phone && <p className="font-mono text-xs text-ink-500">{phone}</p>}
                   </td>
                   <td className="px-4 py-3">
-                    <p className="text-ink-900">{p.product}</p>
-                    {p.details && <p className="text-xs text-ink-500">{p.details}</p>}
+                    <p className="font-mono text-xs text-ink-700">#{o.id.slice(-8).toUpperCase()}</p>
+                    <p className="text-xs text-ink-500">
+                      {o.items?.length ?? 0} item{(o.items?.length ?? 0) === 1 ? '' : 's'}
+                    </p>
                   </td>
-                  <td className="px-4 py-3 text-xs text-ink-600">
-                    {p.visitBy && <p>{p.visitBy}</p>}
-                    {p.store && <p className="text-ink-500">{p.store}</p>}
-                  </td>
-                  <td className="px-4 py-3 text-right font-mono tabular-nums text-ink-900">
-                    {p.totalLabel?.replace(/^total\s*/i, '') ?? '—'}
+                  <td className="px-4 py-3 text-right">
+                    <Money paise={o.totalPaise} className="font-mono tabular-nums text-ink-900" />
                   </td>
                   <td className="px-4 py-3">
-                    <Badge tone={LEAD_STATUS_TONE[l.status] ?? 'neutral'}>{l.status.toLowerCase()}</Badge>
+                    <Badge tone={STATUS_TONE[o.status] ?? 'neutral'}>{o.status.toLowerCase()}</Badge>
                   </td>
                   <td className="px-4 py-3 text-right whitespace-nowrap">
                     <div className="inline-flex gap-1">
-                      <a
-                        href={`https://wa.me/${l.phone.replace(/\D/g, '')}`}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="text-xs text-brand-700 hover:underline"
-                      >
-                        WhatsApp
-                      </a>
-                      {l.status !== 'CONVERTED' && l.status !== 'LOST' && (
+                      {phone && (
+                        <a
+                          href={`https://wa.me/${phone.replace(/\D/g, '')}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-xs text-brand-700 hover:underline"
+                        >
+                          WhatsApp
+                        </a>
+                      )}
+                      {open && (
                         <>
-                          <span className="text-ink-300">·</span>
+                          {phone && <span className="text-ink-300">·</span>}
                           <button
-                            onClick={() => void markConverted(l.id)}
+                            onClick={() => void setStatus(o.id, 'DELIVERED', 'Marked picked up')}
                             disabled={updating}
                             className="text-xs text-success-700 hover:underline"
                           >
-                            Convert
+                            Picked up
                           </button>
                           <span className="text-ink-300">·</span>
                           <button
-                            onClick={() => void markLost(l.id)}
+                            onClick={() => void setStatus(o.id, 'CANCELLED', 'Marked cancelled')}
                             disabled={updating}
                             className="text-xs text-ink-500 hover:underline"
                           >
-                            Lost
+                            Cancel
                           </button>
                         </>
                       )}

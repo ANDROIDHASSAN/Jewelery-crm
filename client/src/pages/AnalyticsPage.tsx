@@ -12,16 +12,23 @@ import { useGetDashboardSummaryQuery } from '@/features/dashboard/dashboardApi';
 type Period = 'week' | 'month' | 'quarter';
 
 function rangeFor(period: Period): { from: string; to: string } {
-  const to = new Date();
-  const from = new Date(to);
+  // CRITICAL: do not return a moving `to` (e.g. `new Date().toISOString()`).
+  // RTK Query keys queries by JSON-serialised args; a millisecond-shifting
+  // `to` makes every render produce a new cache key, cancelling the in-flight
+  // request and firing a new one — so /analytics/staff and /analytics/top-products
+  // never resolved while other args-less queries on the page worked. Anchor
+  // both ends to UTC day boundaries so the cache key is stable for the day.
+  const now = new Date();
+  const to = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), 23, 59, 59, 999));
   const days = period === 'week' ? 7 : period === 'month' ? 30 : 90;
-  from.setUTCDate(from.getUTCDate() - days);
+  const from = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() - days, 0, 0, 0, 0));
   return { from: from.toISOString(), to: to.toISOString() };
 }
 
 export function AnalyticsPage(): JSX.Element {
   const [period, setPeriod] = useState<Period>('week');
-  const range = rangeFor(period);
+  // Stable per-day reference — recomputes only when `period` toggles.
+  const range = useMemo(() => rangeFor(period), [period]);
   const { data: todayRes, isLoading: todayLoading } = useGetAnalyticsDashboardQuery(
     { period: 'today' },
     { pollingInterval: 60_000 },
