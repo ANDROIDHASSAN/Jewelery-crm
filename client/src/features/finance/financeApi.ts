@@ -34,8 +34,40 @@ export interface ExpenseByCategory {
   count: number;
 }
 
+// Single-trip dashboard summary returned by GET /finance/summary. Replaces
+// the prior 9-query waterfall (1 P&L + 6 monthly P&Ls + GST + by-category)
+// with one cached round trip.
+export interface FinanceSummary {
+  asOf: string;
+  mtd: {
+    revenuePaise: number;
+    expensePaise: number;
+    gstPaise: number;
+    netPaise: number;
+    billCount: number;
+    expenseCount: number;
+    from: string;
+    to: string;
+  };
+  lastMonthGst: {
+    month: string;
+    cgstPaise: number;
+    sgstPaise: number;
+    igstPaise: number;
+    taxableRevenuePaise: number;
+    billCount: number;
+  };
+  trend: Array<{ month: string; label: string; revenuePaise: number; expensePaise: number }>;
+  expensesByCategory: ExpenseByCategory[];
+  recentExpenses: ExpenseRow[];
+}
+
 export const financeApi = baseApi.injectEndpoints({
   endpoints: (b) => ({
+    getFinanceSummary: b.query<ApiOne<FinanceSummary>, { shopId?: string } | void>({
+      query: (params) => ({ url: '/finance/summary', params: params ?? undefined }),
+      providesTags: ['Bill', 'Expense', 'GstSummary'],
+    }),
     getPl: b.query<ApiOne<PlSummary>, { from: string; to: string; shopId?: string }>({
       query: (params) => ({ url: '/finance/pl', params }),
       providesTags: ['Bill', 'Expense'],
@@ -63,6 +95,7 @@ export const financeApi = baseApi.injectEndpoints({
 });
 
 export const {
+  useGetFinanceSummaryQuery,
   useGetPlQuery,
   useGetGstSummaryQuery,
   useGetExpensesQuery,

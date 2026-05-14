@@ -116,8 +116,8 @@ export function DashboardPage(): JSX.Element {
   const { data: summaryRes, isLoading, isError } = useGetDashboardSummaryQuery(undefined, {
     pollingInterval: 60_000,
   });
-  const { data: plRes } = useGetPlQuery(range, { pollingInterval: 60_000 });
-  const { data: expensesByCatRes } = useGetExpensesByCategoryQuery(range);
+  const { data: plRes, isLoading: plLoading, isError: plError, error: plErrorObj } = useGetPlQuery(range, { pollingInterval: 60_000 });
+  const { data: expensesByCatRes, isLoading: expCatLoading, isError: expCatError, error: expCatErrorObj } = useGetExpensesByCategoryQuery(range);
   const { data: leadsRes } = useGetLeadsQuery(undefined, { pollingInterval: 60_000 });
   const { data: ordersRes } = useGetOrdersQuery(undefined, { pollingInterval: 60_000 });
   const { data: billsRes } = useGetBillsQuery({}, { pollingInterval: 60_000 });
@@ -498,7 +498,13 @@ export function DashboardPage(): JSX.Element {
       {/* ---- 7. Finance — revenue/expense + GST + expense breakdown ---- */}
       <section className="grid grid-cols-1 lg:grid-cols-3 gap-4">
         <ChartCard className="lg:col-span-2" title="Revenue vs expenses (MTD)" eyebrow="Finance">
-          {monthBar.length > 0 ? (
+          {plLoading ? (
+            <p className="text-sm text-ink-500">Loading P&L…</p>
+          ) : plError ? (
+            <p className="text-sm text-rose-600" title={JSON.stringify(plErrorObj)}>
+              Failed to load P&L ({(plErrorObj as { status?: number | string })?.status ?? 'network'})
+            </p>
+          ) : monthBar.length > 0 ? (
             <CurrencyBarChart
               data={monthBar}
               series={[
@@ -508,7 +514,7 @@ export function DashboardPage(): JSX.Element {
               height={220}
             />
           ) : (
-            <p className="text-sm text-ink-500">Loading…</p>
+            <p className="text-sm text-ink-500">No revenue or expense activity this month yet.</p>
           )}
           {pl && (
             <div className="mt-3 grid grid-cols-3 gap-3 text-xs">
@@ -524,7 +530,13 @@ export function DashboardPage(): JSX.Element {
         </ChartCard>
 
         <ChartCard title="Expenses by category" eyebrow="MTD">
-          {expenseDonut.length === 0 ? (
+          {expCatLoading ? (
+            <p className="text-sm text-ink-500">Loading expenses…</p>
+          ) : expCatError ? (
+            <p className="text-sm text-rose-600" title={JSON.stringify(expCatErrorObj)}>
+              Failed to load expenses ({(expCatErrorObj as { status?: number | string })?.status ?? 'network'})
+            </p>
+          ) : expenseDonut.length === 0 ? (
             <p className="text-sm text-ink-500">No expenses logged this month.</p>
           ) : (
             <CurrencyDonutChart

@@ -1,4 +1,11 @@
-import { useMemo, useState } from 'react';
+// Finance & accounting — P&L, GST, expenses.
+//
+// All KPI data comes from ONE cached endpoint (`GET /finance/summary`)
+// instead of the previous 9-query waterfall. Server aggregates everything
+// in SQL (no per-row JS sums) and caches the result for 60s per tenant ×
+// shop. Target render time: <2s cold, <100ms warm-cache.
+
+import { useEffect, useMemo, useState } from 'react';
 import { Download, Plus, X } from 'lucide-react';
 import * as Dialog from '@radix-ui/react-dialog';
 import { toast } from 'sonner';
@@ -7,67 +14,36 @@ import { Money } from '@/components/ui/money';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import {
-  useGetPlQuery,
-  useGetGstSummaryQuery,
-  useGetExpensesQuery,
+  useGetFinanceSummaryQuery,
   useCreateExpenseMutation,
 } from '@/features/finance/financeApi';
 import { useGetShopsQuery } from '@/features/shops/shopsApi';
 import { ChartCard, CurrencyBarChart, CurrencyDonutChart } from '@/components/ui/charts';
 
-function isoMonthAgo(months: number): string {
-  const d = new Date();
-  d.setUTCMonth(d.getUTCMonth() - months);
-  return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}`;
-}
-
-function monthRange(): { from: string; to: string } {
-  const now = new Date();
-  const from = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
-  return { from: from.toISOString(), to: now.toISOString() };
-}
-
-function rangeForMonth(offset: number): { from: string; to: string; label: string } {
-  const d = new Date();
-  d.setUTCMonth(d.getUTCMonth() - offset, 1);
-  const from = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), 1));
-  const to = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 1));
-  return {
-    from: from.toISOString(),
-    to: to.toISOString(),
-    label: from.toLocaleDateString('en-IN', { month: 'short' }),
-  };
-}
-
 export function FinancePage(): JSX.Element {
-  const range = monthRange();
-  const { data: plRes, isLoading: plLoading } = useGetPlQuery(range, { pollingInterval: 60_000 });
-  const lastMonth = isoMonthAgo(1);
-  const { data: gstRes, isLoading: gstLoading } = useGetGstSummaryQuery({ month: lastMonth });
+  // Single cached round trip. Poll every 60s — server has its own 60s cache,
+  // so this acts as a heartbeat.
+  const { data: summaryRes, isLoading, isError } = useGetFinanceSummaryQuery(undefined, {
+    pollingInterval: 60_000,
+  });
+  const summary = summaryRes?.data;
   const [addExpenseOpen, setAddExpenseOpen] = useState(false);
 
-  const m0 = useGetPlQuery(rangeForMonth(5));
-  const m1 = useGetPlQuery(rangeForMonth(4));
-  const m2 = useGetPlQuery(rangeForMonth(3));
-  const m3 = useGetPlQuery(rangeForMonth(2));
-  const m4 = useGetPlQuery(rangeForMonth(1));
-  const m5 = useGetPlQuery(rangeForMonth(0));
+  const mtd = summary?.mtd;
+  const trend = summary?.trend ?? [];
+  const gst = summary?.lastMonthGst;
+  const expensesByCat = summary?.expensesByCategory ?? [];
+  const recentExpenses = summary?.recentExpenses ?? [];
 
-  const trendData = useMemo(() => {
-    const series = [m0, m1, m2, m3, m4, m5];
-    return series.map((q, i) => {
-      const r = rangeForMonth(5 - i);
-      const d = q.data?.data;
-      return {
-        label: r.label,
-        revenue: d?.revenuePaise ?? 0,
-        expense: d?.expensePaise ?? 0,
-      };
-    });
-  }, [m0.data, m1.data, m2.data, m3.data, m4.data, m5.data]);
-
-  const pl = plRes?.data;
-  const gst = gstRes?.data;
+  const trendData = useMemo(
+    () =>
+      trend.map((t) => ({
+        label: t.label,
+        revenue: t.revenuePaise,
+        expense: t.expensePaise,
+      })),
+    [trend],
+  );
 
   const gstSplit = useMemo(() => {
     if (!gst) return [];
@@ -81,8 +57,9 @@ export function FinancePage(): JSX.Element {
   const gstTotal = gst ? gst.cgstPaise + gst.sgstPaise + gst.igstPaise : 0;
 
   async function handleTallyExport(): Promise<void> {
-    const fromParam = encodeURIComponent(range.from);
-    const toParam = encodeURIComponent(range.to);
+    if (!mtd) return;
+    const fromParam = encodeURIComponent(mtd.from);
+    const toParam = encodeURIComponent(mtd.to);
     try {
       const res = await fetch(`/api/v1/finance/tally-export?from=${fromParam}&to=${toParam}`, {
         credentials: 'include',
@@ -92,7 +69,7 @@ export function FinancePage(): JSX.Element {
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `tally-${range.from.slice(0, 10)}-to-${range.to.slice(0, 10)}.csv`;
+      a.download = `tally-${mtd.from.slice(0, 10)}-to-${mtd.to.slice(0, 10)}.csv`;
       document.body.appendChild(a);
       a.click();
       a.remove();
@@ -119,23 +96,50 @@ export function FinancePage(): JSX.Element {
           </Button>
         </div>
       </header>
+
+      {isError && (
+        <div className="rounded-md border border-danger-500/40 bg-danger-50/40 px-4 py-3 text-sm text-danger-700">
+          Couldn&apos;t load the finance summary. Retrying every minute.
+        </div>
+      )}
+
       <section className="grid grid-cols-1 md:grid-cols-4 gap-4">
         <MetricCard
           label="Revenue (MTD)"
-          value={pl ? <Money paise={pl.revenuePaise} /> : plLoading ? '…' : '—'}
+          value={mtd ? <Money paise={mtd.revenuePaise} /> : isLoading ? '…' : '—'}
+          delta={
+            mtd
+              ? { value: `${mtd.billCount} bill${mtd.billCount === 1 ? '' : 's'}`, direction: 'flat' }
+              : undefined
+          }
+          tone={mtd && mtd.revenuePaise > 0 ? 'success' : 'neutral'}
         />
         <MetricCard
           label="Expenses (MTD)"
-          value={pl ? <Money paise={pl.expensePaise} /> : plLoading ? '…' : '—'}
+          value={mtd ? <Money paise={mtd.expensePaise} /> : isLoading ? '…' : '—'}
+          delta={
+            mtd
+              ? { value: `${mtd.expenseCount} entries`, direction: 'flat' }
+              : undefined
+          }
+          tone={mtd && mtd.expensePaise > 0 ? 'warning' : 'neutral'}
         />
         <MetricCard
           label="Net"
-          value={pl ? <Money paise={pl.netPaise} /> : plLoading ? '…' : '—'}
-          tone={pl && pl.netPaise >= 0 ? 'success' : undefined}
+          value={mtd ? <Money paise={mtd.netPaise} /> : isLoading ? '…' : '—'}
+          delta={
+            mtd
+              ? {
+                  value: mtd.netPaise >= 0 ? 'Profitable MTD' : 'Loss MTD',
+                  direction: mtd.netPaise >= 0 ? 'up' : 'down',
+                }
+              : undefined
+          }
+          tone={mtd ? (mtd.netPaise >= 0 ? 'success' : 'danger') : 'neutral'}
         />
         <MetricCard
           label="GST collected (MTD)"
-          value={pl ? <Money paise={pl.gstPaise} /> : plLoading ? '…' : '—'}
+          value={mtd ? <Money paise={mtd.gstPaise} /> : isLoading ? '…' : '—'}
           delta={{ value: 'Filing due 11th', direction: 'flat' }}
         />
       </section>
@@ -146,18 +150,22 @@ export function FinancePage(): JSX.Element {
           title="Revenue vs expenses — last 6 months"
           eyebrow="Trend"
         >
-          <CurrencyBarChart
-            data={trendData}
-            series={[
-              { key: 'revenue', name: 'Revenue', color: '#C99B2A' },
-              { key: 'expense', name: 'Expenses', color: '#6E695F' },
-            ]}
-            height={260}
-          />
+          {trendData.length === 0 ? (
+            <p className="text-sm text-ink-500">Loading…</p>
+          ) : (
+            <CurrencyBarChart
+              data={trendData}
+              series={[
+                { key: 'revenue', name: 'Revenue', color: '#C99B2A' },
+                { key: 'expense', name: 'Expenses', color: '#6E695F' },
+              ]}
+              height={260}
+            />
+          )}
         </ChartCard>
 
-        <ChartCard title={`GST split — ${lastMonth}`} eyebrow="Tax">
-          {gstLoading ? (
+        <ChartCard title={`GST split — ${gst?.month ?? ''}`} eyebrow="Tax">
+          {!gst ? (
             <p className="text-sm text-ink-500">Loading…</p>
           ) : gstSplit.length === 0 ? (
             <p className="text-sm text-ink-500">No GST collected last month.</p>
@@ -177,16 +185,31 @@ export function FinancePage(): JSX.Element {
         </ChartCard>
       </section>
 
-      <ExpensesList />
+      {expensesByCat.length > 0 && (
+        <ChartCard title="Expenses by category — this month" eyebrow="Breakdown">
+          <CurrencyDonutChart
+            data={expensesByCat.map((c) => ({ label: c.category, value: c.amountPaise }))}
+            height={220}
+            centerLabel="Total"
+            centerValue={`₹${(mtd?.expensePaise ?? 0) / 100}`}
+          />
+        </ChartCard>
+      )}
+
+      <ExpensesList rows={recentExpenses} loading={isLoading} />
 
       <AddExpenseDialog open={addExpenseOpen} onClose={() => setAddExpenseOpen(false)} />
     </div>
   );
 }
 
-function ExpensesList(): JSX.Element {
-  const { data, isLoading } = useGetExpensesQuery({ limit: 30 });
-  const rows = data?.data ?? [];
+function ExpensesList({
+  rows,
+  loading,
+}: {
+  rows: NonNullable<ReturnType<typeof useGetFinanceSummaryQuery>['data']>['data']['recentExpenses'];
+  loading: boolean;
+}): JSX.Element {
   const { data: shopsRes } = useGetShopsQuery();
   const shopsById = new Map((shopsRes?.data ?? []).map((s) => [s.id, s.name]));
 
@@ -196,8 +219,8 @@ function ExpensesList(): JSX.Element {
         <h2 className="text-md font-medium text-ink-900">Recent expenses</h2>
         <p className="text-xs text-ink-500 mt-0.5">{rows.length} most recent</p>
       </header>
-      {isLoading && <p className="px-4 py-3 text-sm text-ink-500">Loading…</p>}
-      {!isLoading && rows.length === 0 && (
+      {loading && <p className="px-4 py-3 text-sm text-ink-500">Loading…</p>}
+      {!loading && rows.length === 0 && (
         <p className="px-4 py-3 text-sm text-ink-500">No expenses yet. Click <strong>Add expense</strong>.</p>
       )}
       {rows.length > 0 && (
@@ -235,7 +258,7 @@ function ExpensesList(): JSX.Element {
 const CATEGORIES = ['Rent', 'Salaries', 'Electricity', 'Marketing', 'Repairs', 'Insurance', 'Travel', 'Misc'];
 
 function AddExpenseDialog({ open, onClose }: { open: boolean; onClose: () => void }): JSX.Element {
-  const { data: shopsRes } = useGetShopsQuery();
+  const { data: shopsRes, isLoading: shopsLoading, isError: shopsError, refetch: refetchShops } = useGetShopsQuery();
   const shops = shopsRes?.data ?? [];
   const [shopId, setShopId] = useState('');
   const [category, setCategory] = useState(CATEGORIES[0]!);
@@ -244,10 +267,11 @@ function AddExpenseDialog({ open, onClose }: { open: boolean; onClose: () => voi
   const [notes, setNotes] = useState('');
   const [createExpense, { isLoading }] = useCreateExpenseMutation();
 
-  // Default shop to the first one once shops load.
-  if (!shopId && shops[0]) {
-    setShopId(shops[0].id);
-  }
+  // Default the shop to the first one as soon as the query resolves. useEffect
+  // (not setState during render) avoids React warnings + infinite re-renders.
+  useEffect(() => {
+    if (!shopId && shops[0]) setShopId(shops[0].id);
+  }, [shopId, shops]);
 
   async function handleSubmit(e: React.FormEvent): Promise<void> {
     e.preventDefault();
@@ -299,14 +323,34 @@ function AddExpenseDialog({ open, onClose }: { open: boolean; onClose: () => voi
                 <select
                   value={shopId}
                   onChange={(e) => setShopId(e.target.value)}
-                  className="mt-1 w-full h-11 px-3 rounded-md border border-ink-200 text-sm"
+                  className="mt-1 w-full h-11 px-3 rounded-md border border-ink-200 text-sm disabled:opacity-60"
                   required
+                  disabled={shopsLoading || shopsError || shops.length === 0}
                 >
-                  <option value="">Select…</option>
-                  {shops.map((s) => (
-                    <option key={s.id} value={s.id}>{s.name}</option>
-                  ))}
+                  {shopsLoading ? (
+                    <option value="">Loading shops…</option>
+                  ) : shopsError ? (
+                    <option value="">Could not load shops</option>
+                  ) : shops.length === 0 ? (
+                    <option value="">No shops configured — seed the DB first</option>
+                  ) : (
+                    <>
+                      <option value="">Select…</option>
+                      {shops.map((s) => (
+                        <option key={s.id} value={s.id}>{s.name}</option>
+                      ))}
+                    </>
+                  )}
                 </select>
+                {shopsError && (
+                  <button
+                    type="button"
+                    onClick={() => refetchShops()}
+                    className="mt-1 text-[11px] text-brand-700 hover:text-brand-800 underline decoration-brand-300 underline-offset-2"
+                  >
+                    Retry
+                  </button>
+                )}
               </label>
 
               <label className="block text-sm">
