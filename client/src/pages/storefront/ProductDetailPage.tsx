@@ -1,6 +1,8 @@
 import { useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
-import { Heart, ShieldCheck, Truck, RotateCcw, ChevronDown, Minus, Plus } from 'lucide-react';
+import { Heart, ShieldCheck, Truck, RotateCcw, ChevronDown, Minus, Plus, X } from 'lucide-react';
+import * as Dialog from '@radix-ui/react-dialog';
+import { toast } from 'sonner';
 import { Money } from '@/components/ui/money';
 import { cn } from '@/lib/cn';
 
@@ -36,6 +38,7 @@ export function ProductDetailPage(): JSX.Element {
   const [size, setSize] = useState(SIZES[1]);
   const [qty, setQty] = useState(1);
   const [openSection, setOpenSection] = useState<string | null>('details');
+  const [reserveOpen, setReserveOpen] = useState(false);
 
   const gold = Math.round((PRODUCT.weightG * 1000 * PRODUCT.ratePerGram * 2200) / (1000 * 2400));
   const making = Math.round((PRODUCT.weightG * 1000 * PRODUCT.makingPerGram) / 1000);
@@ -146,7 +149,11 @@ export function ProductDetailPage(): JSX.Element {
                 <Plus className="h-4 w-4" />
               </button>
             </div>
-            <button className="flex-1 h-12 px-7 rounded-full bg-brand-400 text-ink-900 text-sm font-medium hover:bg-brand-300 transition-colors duration-fast">
+            <button
+              type="button"
+              onClick={() => setReserveOpen(true)}
+              className="flex-1 h-12 px-7 rounded-full bg-brand-400 text-ink-900 text-sm font-medium hover:bg-brand-300 transition-colors duration-fast"
+            >
               Reserve at store
             </button>
             <button className="h-12 px-5 rounded-full border border-ink-200 text-ink-900 text-sm hover:bg-ink-50 transition-colors duration-fast inline-flex items-center justify-center gap-2" aria-label="Add to wishlist">
@@ -250,9 +257,190 @@ export function ProductDetailPage(): JSX.Element {
           <p className="text-[10px] uppercase tracking-wider text-ink-500">Total</p>
           <Money paise={total} className="text-lg font-mono tabular-nums" />
         </div>
-        <button className="flex-1 max-w-[220px] h-11 px-5 rounded-full bg-brand-400 text-ink-900 text-sm font-medium">Reserve</button>
+        <button
+          type="button"
+          onClick={() => setReserveOpen(true)}
+          className="flex-1 max-w-[220px] h-11 px-5 rounded-full bg-brand-400 text-ink-900 text-sm font-medium"
+        >
+          Reserve
+        </button>
       </div>
+
+      <ReserveModal
+        open={reserveOpen}
+        onClose={() => setReserveOpen(false)}
+        productName={PRODUCT.name}
+        purity={PRODUCT.purity}
+        size={size}
+        qty={qty}
+        totalPaise={total}
+      />
     </div>
+  );
+}
+
+interface ReserveModalProps {
+  open: boolean;
+  onClose: () => void;
+  productName: string;
+  purity: string;
+  size: string;
+  qty: number;
+  totalPaise: number;
+}
+
+function ReserveModal({ open, onClose, productName, purity, size, qty, totalPaise }: ReserveModalProps): JSX.Element {
+  const [name, setName] = useState('');
+  const [phone, setPhone] = useState('+91 ');
+  const [store, setStore] = useState<'main-showroom' | 'camp-branch'>('main-showroom');
+  const [date, setDate] = useState(() => {
+    const t = new Date();
+    t.setDate(t.getDate() + 1);
+    return t.toISOString().slice(0, 10);
+  });
+  const [notes, setNotes] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+
+  const handleSubmit = async (e: React.FormEvent): Promise<void> => {
+    e.preventDefault();
+    if (!name.trim()) {
+      toast.error('Please enter your name');
+      return;
+    }
+    const phoneDigits = phone.replace(/\D/g, '');
+    if (!/^91?[6-9]\d{9}$/.test(phoneDigits)) {
+      toast.error('Please enter a valid Indian phone number');
+      return;
+    }
+    setSubmitting(true);
+    await new Promise((r) => setTimeout(r, 600));
+    const id = 'ZL-' + Math.random().toString(36).slice(2, 8).toUpperCase();
+    const storeLabel = store === 'main-showroom' ? 'Main Showroom — Pune' : 'Camp Branch — Pune';
+    const dateLabel = new Date(date).toLocaleDateString('en-IN', { weekday: 'long', day: 'numeric', month: 'short' });
+    toast.success(`Reserved! Confirmation ${id}`, {
+      description: `We've held ${productName} for 48 hours. Visit ${storeLabel} by ${dateLabel}. We'll WhatsApp you a reminder.`,
+      duration: 9000,
+    });
+    setSubmitting(false);
+    onClose();
+    setName('');
+    setPhone('+91 ');
+    setNotes('');
+  };
+
+  return (
+    <Dialog.Root open={open} onOpenChange={(next) => { if (!next) onClose(); }}>
+      <Dialog.Portal>
+        <Dialog.Overlay className="fixed inset-0 z-50 bg-ink-900/40 data-[state=open]:animate-in data-[state=open]:fade-in-0" />
+        <Dialog.Content className="fixed left-1/2 top-1/2 z-50 -translate-x-1/2 -translate-y-1/2 w-[92vw] max-w-md max-h-[90vh] overflow-y-auto bg-ink-0 rounded-lg shadow-xl border border-ink-100 data-[state=open]:animate-in data-[state=open]:zoom-in-95">
+          <form onSubmit={handleSubmit} className="p-6 space-y-5">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <Dialog.Title className="font-display text-[22px] leading-tight text-ink-900">Reserve {productName}</Dialog.Title>
+                <Dialog.Description className="text-xs text-ink-500 mt-1">
+                  {purity} · Size {size}″ · Qty {qty} · <Money paise={totalPaise} className="font-mono" />
+                </Dialog.Description>
+              </div>
+              <Dialog.Close className="text-ink-500 hover:text-ink-900 p-1 -mr-1 -mt-1 rounded-md hover:bg-ink-50" aria-label="Close">
+                <X className="h-4 w-4" />
+              </Dialog.Close>
+            </div>
+
+            <div className="space-y-3">
+              <label className="block">
+                <span className="text-[11px] uppercase tracking-wider text-ink-500">Your name</span>
+                <input
+                  type="text"
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
+                  required
+                  autoFocus
+                  className="mt-1 w-full h-11 px-3 rounded-lg border border-ink-200 focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500 text-sm"
+                  placeholder="Full name"
+                />
+              </label>
+
+              <label className="block">
+                <span className="text-[11px] uppercase tracking-wider text-ink-500">Phone</span>
+                <input
+                  type="tel"
+                  value={phone}
+                  onChange={(e) => setPhone(e.target.value)}
+                  required
+                  inputMode="tel"
+                  className="mt-1 w-full h-11 px-3 rounded-lg border border-ink-200 focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500 text-sm font-mono"
+                  placeholder="+91 98XXX XXXXX"
+                />
+              </label>
+
+              <fieldset>
+                <legend className="text-[11px] uppercase tracking-wider text-ink-500">Preferred store</legend>
+                <div className="mt-1 space-y-2">
+                  <label className={cn(
+                    'flex items-center gap-2.5 cursor-pointer rounded-lg border px-3 py-2.5 transition-colors',
+                    store === 'main-showroom' ? 'border-brand-500 bg-brand-50' : 'border-ink-200 hover:bg-ink-50',
+                  )}>
+                    <input type="radio" name="store" value="main-showroom" checked={store === 'main-showroom'} onChange={() => setStore('main-showroom')} className="accent-brand-500" />
+                    <span className="text-sm text-ink-900">Main Showroom — Pune</span>
+                  </label>
+                  <label className={cn(
+                    'flex items-center gap-2.5 cursor-pointer rounded-lg border px-3 py-2.5 transition-colors',
+                    store === 'camp-branch' ? 'border-brand-500 bg-brand-50' : 'border-ink-200 hover:bg-ink-50',
+                  )}>
+                    <input type="radio" name="store" value="camp-branch" checked={store === 'camp-branch'} onChange={() => setStore('camp-branch')} className="accent-brand-500" />
+                    <span className="text-sm text-ink-900">Camp Branch — Pune</span>
+                  </label>
+                </div>
+              </fieldset>
+
+              <label className="block">
+                <span className="text-[11px] uppercase tracking-wider text-ink-500">Visit by</span>
+                <input
+                  type="date"
+                  value={date}
+                  onChange={(e) => setDate(e.target.value)}
+                  min={new Date().toISOString().slice(0, 10)}
+                  className="mt-1 w-full h-11 px-3 rounded-lg border border-ink-200 focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500 text-sm"
+                />
+              </label>
+
+              <label className="block">
+                <span className="text-[11px] uppercase tracking-wider text-ink-500">Notes (optional)</span>
+                <textarea
+                  value={notes}
+                  onChange={(e) => setNotes(e.target.value)}
+                  rows={2}
+                  className="mt-1 w-full px-3 py-2 rounded-lg border border-ink-200 focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500 text-sm resize-none"
+                  placeholder="Size confirmation, engraving requests, etc."
+                />
+              </label>
+            </div>
+
+            <div className="flex gap-2 pt-1">
+              <button
+                type="button"
+                onClick={onClose}
+                disabled={submitting}
+                className="flex-1 h-11 rounded-full border border-ink-200 text-ink-900 text-sm hover:bg-ink-50 disabled:opacity-60 transition-colors duration-fast"
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                disabled={submitting}
+                className="flex-[2] h-11 rounded-full bg-brand-400 text-ink-900 text-sm font-medium hover:bg-brand-300 disabled:opacity-60 transition-colors duration-fast"
+              >
+                {submitting ? 'Reserving…' : 'Confirm reservation'}
+              </button>
+            </div>
+
+            <p className="text-[11px] text-ink-500 text-center leading-relaxed">
+              We'll hold this piece for 48 hours. No payment online — pay in store at the current-day gold rate.
+            </p>
+          </form>
+        </Dialog.Content>
+      </Dialog.Portal>
+    </Dialog.Root>
   );
 }
 
