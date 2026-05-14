@@ -20,9 +20,13 @@ async function main(): Promise<void> {
     let preservedContent: Awaited<ReturnType<typeof tx.storefrontContent.findUnique>> = null;
     if (existing) {
       preservedContent = await tx.storefrontContent.findUnique({ where: { tenantId: existing.id } });
-      // OrderItem.product FK has no `onDelete: Cascade`. Drop dependent OrderItems
-      // first so the tenant cascade can delete Products without an FK violation.
+      // Several child rows have FKs pointing to tenant-owned rows WITHOUT
+      // `onDelete: Cascade` (e.g. OrderItem.product, BillLine.item, ItemMovement.item).
+      // The tenant-level cascade can't reach them, so the parent delete fails
+      // with FK violations. Manually clean them in dependency order first.
       await tx.orderItem.deleteMany({ where: { order: { tenantId: existing.id } } });
+      await tx.billLine.deleteMany({ where: { bill: { tenantId: existing.id } } });
+      await tx.itemMovement.deleteMany({ where: { tenantId: existing.id } });
       await tx.tenant.delete({ where: { id: existing.id } });
     }
 
