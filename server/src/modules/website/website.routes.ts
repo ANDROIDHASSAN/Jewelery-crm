@@ -183,6 +183,40 @@ websiteRouter.post('/orders', async (req, res, next) => {
   }
 });
 
+// Public order lookup. Customers paste the order id (or last 6 chars) +
+// their phone — we match the order's customerId.phone. Never exposes
+// other customers' orders; phone is the auth here.
+websiteRouter.get('/orders/lookup', async (req, res, next) => {
+  try {
+    const q = z
+      .object({ id: z.string().min(4), phone: z.string().min(10) })
+      .parse(req.query);
+    const tenantId = await tenantFromQueryOrFirst(req);
+    const normPhone = q.phone.startsWith('+') ? q.phone : `+91${q.phone.replace(/\D/g, '').slice(-10)}`;
+    const idFragment = q.id.replace(/^ZL-/i, '').trim().toLowerCase();
+    const orders = await rawPrisma.order.findMany({
+      where: {
+        tenantId,
+        customer: { phone: normPhone },
+      },
+      orderBy: { createdAt: 'desc' },
+      include: {
+        items: { include: { product: { select: { name: true, slug: true, images: true } } } },
+        customer: { select: { name: true, phone: true } },
+      },
+      take: 30,
+    });
+    const matches = orders.filter((o) => o.id.toLowerCase().endsWith(idFragment));
+    if (matches.length === 0) {
+      res.status(404).json({ error: { code: 'ORDER_NOT_FOUND', message: 'No order matched those details' } });
+      return;
+    }
+    res.json({ data: matches[0] });
+  } catch (err) {
+    next(err);
+  }
+});
+
 websiteRouter.post('/enquiry', async (req, res, next) => {
   try {
     const tenantId = await tenantFromQueryOrFirst(req);

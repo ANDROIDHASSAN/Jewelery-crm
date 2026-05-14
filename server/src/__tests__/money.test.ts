@@ -28,7 +28,10 @@ describe('formatPaise', () => {
     expect(formatPaise(100_000)).toBe('₹1,000.00');
     expect(formatPaise(99)).toBe('₹0.99');
     expect(formatPaise(0)).toBe('₹0.00');
-    expect(formatPaise(1_00_00_00_000)).toBe('₹10,00,00,000.00'); // ₹10 crore
+    // 1_00_00_00_000 paise = 10,00,00,000 paise × 100 wait no — 1_00_00_00_000
+    // numeric literal = 10,000,000,000 paise = ₹10,00,00,000 = ₹10 crore.
+    // formatPaise divides by 100 → ₹1,00,00,000 (₹1 crore). Fixed expectation.
+    expect(formatPaise(1_00_00_00_000)).toBe('₹1,00,00,000.00'); // ₹1 crore
   });
 });
 

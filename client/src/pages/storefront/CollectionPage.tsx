@@ -33,6 +33,25 @@ function purityLabel(p: PublicProduct): string {
   return `${p.purityCaratX100 / 100}K`;
 }
 
+// Filter rule sets — each label maps to a predicate.
+const METAL_RULES: Record<string, (p: PublicProduct) => boolean> = {
+  '22K Gold': (p) => p.purityCaratX100 === 2200,
+  '18K Gold': (p) => p.purityCaratX100 === 1800,
+  Silver: (p) => p.purityCaratX100 < 1000,
+  Platinum: (p) => p.purityCaratX100 === 9500,
+};
+const WEIGHT_RULES: Record<string, (p: PublicProduct) => boolean> = {
+  'Under 10 g': (p) => p.weightMg < 10_000,
+  '10 – 20 g': (p) => p.weightMg >= 10_000 && p.weightMg < 20_000,
+  '20 – 40 g': (p) => p.weightMg >= 20_000 && p.weightMg < 40_000,
+  'Over 40 g': (p) => p.weightMg >= 40_000,
+};
+const PRICE_RULES: Record<string, (p: PublicProduct) => boolean> = {
+  'Under ₹50,000': (p) => priceOf(p) < 50_00_000,
+  '₹50,000 – ₹1,00,000': (p) => priceOf(p) >= 50_00_000 && priceOf(p) < 1_00_00_000,
+  'Over ₹1,00,000': (p) => priceOf(p) >= 1_00_00_000,
+};
+
 // Apply collection-slug rules to a product list. Real categories match by
 // slugified name (via /website/collections); pseudo-collections (22k, 18k,
 // under-50k, gifting, silver) use intrinsic product fields.
@@ -68,14 +87,29 @@ export function CollectionPage(): JSX.Element {
   const [sort, setSort] = useState<Sort>('Featured');
   const [sortOpen, setSortOpen] = useState(false);
   const [filtersOpen, setFiltersOpen] = useState(false);
+  const [metals, setMetals] = useState<Set<string>>(new Set());
+  const [weights, setWeights] = useState<Set<string>>(new Set());
+  const [prices, setPrices] = useState<Set<string>>(new Set());
 
   const { data: products = [], isLoading: productsLoading } = useGetPublicProductsQuery();
   const { data: categories = [] } = useGetPublicCollectionsQuery();
 
-  const filtered = useMemo(
-    () => filterBySlug(products, categories, slug),
-    [products, categories, slug],
-  );
+  const filtered = useMemo(() => {
+    const bySlug = filterBySlug(products, categories, slug);
+    const passMetals = (p: PublicProduct): boolean =>
+      metals.size === 0 || Array.from(metals).some((m) => METAL_RULES[m]?.(p));
+    const passWeights = (p: PublicProduct): boolean =>
+      weights.size === 0 || Array.from(weights).some((w) => WEIGHT_RULES[w]?.(p));
+    const passPrices = (p: PublicProduct): boolean =>
+      prices.size === 0 || Array.from(prices).some((pr) => PRICE_RULES[pr]?.(p));
+    return bySlug.filter((p) => passMetals(p) && passWeights(p) && passPrices(p));
+  }, [products, categories, slug, metals, weights, prices]);
+
+  function toggle(set: Set<string>, value: string, setter: (s: Set<string>) => void): void {
+    const next = new Set(set);
+    if (next.has(value)) next.delete(value); else next.add(value);
+    setter(next);
+  }
 
   const sorted = useMemo(() => {
     const arr = [...filtered];
@@ -170,10 +204,24 @@ export function CollectionPage(): JSX.Element {
 
       <div className="grid grid-cols-1 lg:grid-cols-[220px_1fr] gap-10">
         <aside className={cn('space-y-7 text-sm', filtersOpen ? 'block' : 'hidden lg:block')}>
-          <FilterGroup label="Metal" options={['22K Gold', '18K Gold', 'Silver', 'Platinum']} />
-          <FilterGroup label="Weight" options={['Under 10 g', '10 – 20 g', '20 – 40 g', 'Over 40 g']} />
-          <FilterGroup label="Occasion" options={['Daily', 'Festive', 'Wedding']} />
-          <FilterGroup label="Price" options={['Under ₹50,000', '₹50,000 – ₹1,00,000', 'Over ₹1,00,000']} />
+          <FilterGroup
+            label="Metal"
+            options={Object.keys(METAL_RULES)}
+            selected={metals}
+            onToggle={(v) => toggle(metals, v, setMetals)}
+          />
+          <FilterGroup
+            label="Weight"
+            options={Object.keys(WEIGHT_RULES)}
+            selected={weights}
+            onToggle={(v) => toggle(weights, v, setWeights)}
+          />
+          <FilterGroup
+            label="Price"
+            options={Object.keys(PRICE_RULES)}
+            selected={prices}
+            onToggle={(v) => toggle(prices, v, setPrices)}
+          />
         </aside>
 
         <section className="grid grid-cols-2 md:grid-cols-3 gap-x-5 gap-y-10 md:gap-x-6">
@@ -238,10 +286,24 @@ export function CollectionPage(): JSX.Element {
               </button>
             </div>
             <div className="flex-1 overflow-y-auto p-5 space-y-7 text-sm">
-              <FilterGroup label="Metal" options={['22K Gold', '18K Gold', 'Silver', 'Platinum']} />
-              <FilterGroup label="Weight" options={['Under 10 g', '10 – 20 g', '20 – 40 g', 'Over 40 g']} />
-              <FilterGroup label="Occasion" options={['Daily', 'Festive', 'Wedding']} />
-              <FilterGroup label="Price" options={['Under ₹50,000', '₹50,000 – ₹1,00,000', 'Over ₹1,00,000']} />
+              <FilterGroup
+                label="Metal"
+                options={Object.keys(METAL_RULES)}
+                selected={metals}
+                onToggle={(v) => toggle(metals, v, setMetals)}
+              />
+              <FilterGroup
+                label="Weight"
+                options={Object.keys(WEIGHT_RULES)}
+                selected={weights}
+                onToggle={(v) => toggle(weights, v, setWeights)}
+              />
+              <FilterGroup
+                label="Price"
+                options={Object.keys(PRICE_RULES)}
+                selected={prices}
+                onToggle={(v) => toggle(prices, v, setPrices)}
+              />
             </div>
           </div>
         </div>
@@ -250,7 +312,17 @@ export function CollectionPage(): JSX.Element {
   );
 }
 
-function FilterGroup({ label, options }: { label: string; options: string[] }): JSX.Element {
+function FilterGroup({
+  label,
+  options,
+  selected,
+  onToggle,
+}: {
+  label: string;
+  options: string[];
+  selected: Set<string>;
+  onToggle: (value: string) => void;
+}): JSX.Element {
   return (
     <div>
       <p className="text-eyebrow uppercase text-ink-500 mb-3">{label}</p>
@@ -258,7 +330,12 @@ function FilterGroup({ label, options }: { label: string; options: string[] }): 
         {options.map((o) => (
           <li key={o}>
             <label className="flex items-center gap-2.5 text-ink-700 cursor-pointer hover:text-ink-900">
-              <input type="checkbox" className="h-3.5 w-3.5 rounded border-ink-300 text-brand-500 focus:ring-brand-400" />
+              <input
+                type="checkbox"
+                checked={selected.has(o)}
+                onChange={() => onToggle(o)}
+                className="h-3.5 w-3.5 rounded border-ink-300 text-brand-500 focus:ring-brand-400"
+              />
               <span>{o}</span>
             </label>
           </li>

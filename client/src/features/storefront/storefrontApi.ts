@@ -62,6 +62,27 @@ export const storefrontApi = baseApi.injectEndpoints({
     }),
     // Public storefront checkout. Server computes prices from the DB, so client cart
     // pricing can't be tampered with. Creates Order + OrderItems + (if needed) Customer.
+    lookupOrder: build.query<
+      {
+        id: string;
+        status: string;
+        totalPaise: number;
+        paymentMethod: string;
+        createdAt: string;
+        shiprocketAwb: string | null;
+        items: Array<{
+          id: string;
+          qty: number;
+          pricePaise: number;
+          product?: { name: string; slug: string; images: string[] };
+        }>;
+        customer?: { name: string; phone: string };
+      },
+      { id: string; phone: string }
+    >({
+      query: ({ id, phone }) => ({ url: '/website/orders/lookup', params: { id, phone } }),
+      transformResponse: (raw: { data: never }) => raw.data,
+    }),
     createPublicOrder: build.mutation<
       { id: string; totalPaise: number },
       {
@@ -94,4 +115,5 @@ export const {
   useGetPublicCollectionsQuery,
   useCreateEnquiryMutation,
   useCreatePublicOrderMutation,
+  useLazyLookupOrderQuery,
 } = storefrontApi;

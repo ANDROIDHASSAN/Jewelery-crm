@@ -52,6 +52,13 @@ export const financeApi = baseApi.injectEndpoints({
       query: (params) => ({ url: '/finance/expenses/by-category', params }),
       providesTags: ['Expense'],
     }),
+    createExpense: b.mutation<
+      ApiOne<ExpenseRow>,
+      { shopId: string; category: string; amountPaise: number; paidAt: string; notes?: string }
+    >({
+      query: (body) => ({ url: '/finance/expenses', method: 'POST', body }),
+      invalidatesTags: ['Expense', 'Bill'],
+    }),
   }),
 });
 
@@ -60,4 +67,5 @@ export const {
   useGetGstSummaryQuery,
   useGetExpensesQuery,
   useGetExpensesByCategoryQuery,
+  useCreateExpenseMutation,
 } = financeApi;

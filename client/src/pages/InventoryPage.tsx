@@ -29,7 +29,6 @@ import {
   useGetMovementsQuery,
   useGetVendorsQuery,
   useCreateVendorMutation,
-  useUpdateVendorMutation,
   useDeleteVendorMutation,
   useGetPurchaseOrdersQuery,
   useCreatePurchaseOrderMutation,

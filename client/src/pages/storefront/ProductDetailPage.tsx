@@ -7,7 +7,12 @@ import { Money } from '@/components/ui/money';
 import { cn } from '@/lib/cn';
 import { useAppDispatch, useAppSelector } from '@/app/hooks';
 import { addToCart, toggleWishlist } from '@/features/storefront/shopSlice';
-import { useCreateEnquiryMutation, useGetPublicProductsQuery, type PublicProduct } from '@/features/storefront/storefrontApi';
+import {
+  useCreateEnquiryMutation,
+  useGetPublicProductsQuery,
+  useGetPublicCollectionsQuery,
+  type PublicProduct,
+} from '@/features/storefront/storefrontApi';
 
 // Per-day 22K rate. Lives here for the demo; the storefront content blob also
 // surfaces a *display string* (rates.g22) edited from the CMS. Numeric pricing
@@ -27,8 +32,11 @@ export function ProductDetailPage(): JSX.Element {
   const dispatch = useAppDispatch();
   const wishlisted = useAppSelector((s) => s.shop.wishlist.some((w) => w.slug === slug));
   const { data: products, isLoading } = useGetPublicProductsQuery();
+  const { data: categories = [] } = useGetPublicCollectionsQuery();
+  const contentLocations = useAppSelector((s) => s.storefrontContent.locations);
 
   const product: PublicProduct | undefined = products?.find((p) => p.slug === slug);
+  const category = product ? categories.find((c) => c.id === product.categoryId) : undefined;
   const related: PublicProduct[] = (products ?? []).filter((p) => p.slug !== slug).slice(0, 4);
 
   // Loading + not-found states (early-return AFTER hooks so the React hooks order is stable).
@@ -68,9 +76,13 @@ export function ProductDetailPage(): JSX.Element {
       <nav className="text-xs text-ink-500 mb-6" aria-label="Breadcrumb">
         <Link to="/store" className="hover:text-ink-700">Home</Link>
         <span className="mx-2 text-ink-300">/</span>
-        <Link to="/store/collections/bridal" className="hover:text-ink-700">Bridal</Link>
+        {category ? (
+          <Link to={`/store/collections/${category.slug}`} className="hover:text-ink-700">{category.name}</Link>
+        ) : (
+          <Link to="/store/collections" className="hover:text-ink-700">Collections</Link>
+        )}
         <span className="mx-2 text-ink-300">/</span>
-        <span className="text-ink-700">{slug}</span>
+        <span className="text-ink-700">{product.name}</span>
       </nav>
 
       <div className="grid grid-cols-1 lg:grid-cols-[58%_1fr] gap-10 lg:gap-16">
@@ -100,7 +112,7 @@ export function ProductDetailPage(): JSX.Element {
         {/* Info */}
         <section className="space-y-7">
           <header>
-            <p className="text-eyebrow uppercase text-ink-500">Bridal · Bangle</p>
+            <p className="text-eyebrow uppercase text-ink-500">{category?.name ?? 'Collection'} · {purity}</p>
             <h1 className="font-display text-[34px] md:text-[40px] leading-[1.1] text-ink-900 mt-2">{product.name}</h1>
             <p className="mt-2 text-sm text-ink-600">{weightG.toFixed(2)} g · {purity}</p>
           </header>
@@ -136,7 +148,12 @@ export function ProductDetailPage(): JSX.Element {
           <div>
             <div className="flex items-center justify-between mb-3">
               <span className="text-eyebrow uppercase text-ink-500">Size (inches)</span>
-              <button className="text-xs text-ink-700 underline decoration-ink-200 underline-offset-4 hover:decoration-ink-500">Size guide</button>
+              <a
+                href="/store/help"
+                className="text-xs text-ink-700 underline decoration-ink-200 underline-offset-4 hover:decoration-ink-500"
+              >
+                Size guide
+              </a>
             </div>
             <div className="flex flex-wrap gap-2">
               {SIZES.map((s) => (
@@ -230,9 +247,17 @@ export function ProductDetailPage(): JSX.Element {
             </button>
           </div>
 
-          <p className="text-xs text-ink-500">
-            Available at <span className="text-ink-700">Main Showroom — Gurugram</span> · <span className="text-ink-700">Karnal Branch</span>
-          </p>
+          {contentLocations.length > 0 && (
+            <p className="text-xs text-ink-500">
+              Available at{' '}
+              {contentLocations.map((loc, i) => (
+                <span key={loc.id}>
+                  {i > 0 && ' · '}
+                  <span className="text-ink-700">{loc.name}</span>
+                </span>
+              ))}
+            </p>
+          )}
 
           {/* Trust row */}
           <ul className="grid grid-cols-1 sm:grid-cols-3 gap-4 pt-2 text-xs text-ink-600">
@@ -264,12 +289,21 @@ export function ProductDetailPage(): JSX.Element {
                 <dt className="text-ink-500">Gross weight</dt>
                 <dd className="text-ink-800 tabular-nums">{weightG.toFixed(2)} g</dd>
                 <dt className="text-ink-500">Metal</dt>
-                <dd className="text-ink-800">22K Gold (916 hallmark)</dd>
-                <dt className="text-ink-500">Setting</dt>
-                <dd className="text-ink-800">Hand-set, kundan accents</dd>
+                <dd className="text-ink-800">{purity}</dd>
+                {category && (
+                  <>
+                    <dt className="text-ink-500">Collection</dt>
+                    <dd className="text-ink-800">{category.name}</dd>
+                  </>
+                )}
+                <dt className="text-ink-500">Making charge</dt>
+                <dd className="text-ink-800 tabular-nums">{(product.makingChargeBps / 100).toFixed(2)}%</dd>
                 <dt className="text-ink-500">Made in</dt>
                 <dd className="text-ink-800">Gurugram, Haryana</dd>
               </dl>
+              {product.descriptionMd && (
+                <p className="mt-4 text-sm text-ink-600 leading-relaxed whitespace-pre-line">{product.descriptionMd}</p>
+              )}
             </Accordion>
             <Accordion
               id="cert"

@@ -38,6 +38,7 @@ import {
   useGetLowStockQuery,
   useGetVendorsQuery,
   useGetAuditLogQuery,
+  useGetCategoriesQuery,
 } from '@/features/inventory/inventoryApi';
 import { useGetTopProductsQuery } from '@/features/analytics/analyticsApi';
 import { useGetShopsQuery } from '@/features/shops/shopsApi';
@@ -114,6 +115,15 @@ export function DashboardPage(): JSX.Element {
   const { data: auditRes } = useGetAuditLogQuery(undefined, { pollingInterval: 60_000 });
   const { data: topProductsRes } = useGetTopProductsQuery();
   const { data: shopsRes } = useGetShopsQuery();
+  const { data: catsRes } = useGetCategoriesQuery();
+  const shopsById = useMemo(
+    () => new Map((shopsRes?.data ?? []).map((s) => [s.id, s.name])),
+    [shopsRes],
+  );
+  const catsById = useMemo(
+    () => new Map((catsRes?.data ?? []).map((c) => [c.id, c.name])),
+    [catsRes],
+  );
 
   const summary = summaryRes?.data;
   const pl = plRes?.data;
@@ -389,15 +399,20 @@ export function DashboardPage(): JSX.Element {
           ) : (
             <ul className="divide-y divide-ink-100">
               {orders.slice(0, 6).map((o) => (
-                <li key={o.id} className="px-5 py-3 flex items-center justify-between gap-3">
-                  <div className="min-w-0 flex-1">
-                    <p className="font-mono text-xs text-ink-500 truncate">#{o.id.slice(-8)}</p>
-                    <p className="text-xs text-ink-600 mt-0.5">
-                      {shortTime(o.createdAt)} · {o.paymentMethod.replace(/-/g, ' ')}
-                    </p>
-                  </div>
-                  <Badge tone={ORDER_STATUS_TONE[o.status] ?? 'neutral'}>{o.status.toLowerCase()}</Badge>
-                  <Money paise={o.totalPaise} className="font-mono tabular-nums text-sm" />
+                <li key={o.id}>
+                  <Link
+                    to="/admin/ecommerce"
+                    className="px-5 py-3 flex items-center justify-between gap-3 hover:bg-ink-25"
+                  >
+                    <div className="min-w-0 flex-1">
+                      <p className="font-mono text-xs text-ink-500 truncate">#{o.id.slice(-8).toUpperCase()}</p>
+                      <p className="text-xs text-ink-600 mt-0.5">
+                        {shortTime(o.createdAt)} · {o.paymentMethod.replace(/-/g, ' ')}
+                      </p>
+                    </div>
+                    <Badge tone={ORDER_STATUS_TONE[o.status] ?? 'neutral'}>{o.status.toLowerCase()}</Badge>
+                    <Money paise={o.totalPaise} className="font-mono tabular-nums text-sm" />
+                  </Link>
                 </li>
               ))}
             </ul>
@@ -499,8 +514,10 @@ export function DashboardPage(): JSX.Element {
               <ul className="space-y-2 text-sm">
                 {lowStock.slice(0, 6).map((r, i) => (
                   <li key={i} className="flex items-center justify-between border-b border-ink-50 pb-2 last:border-0">
-                    <span className="text-ink-800 font-mono text-xs">
-                      {r.shopId.slice(-6)} · {r.categoryId.slice(-6)}
+                    <span className="text-ink-800 text-xs">
+                      <span className="text-ink-900">{catsById.get(r.categoryId) ?? r.categoryId.slice(-6)}</span>
+                      <span className="text-ink-400"> · </span>
+                      <span>{shopsById.get(r.shopId) ?? r.shopId.slice(-6)}</span>
                     </span>
                     <Badge tone="warning">{r.itemCount} items</Badge>
                   </li>
@@ -606,9 +623,9 @@ export function DashboardPage(): JSX.Element {
 
       {/* ---- 10. Quick links footer ---- */}
       <section className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        <QuickLink to="/admin/inventory" icon={Package} label="Add item" desc="Stock & inventory" />
-        <QuickLink to="/admin/pos" icon={Receipt} label="New bill" desc="POS / billing" />
-        <QuickLink to="/admin/crm" icon={Users} label="Add lead" desc="Lead CRM" />
+        <QuickLink to="/admin/inventory" icon={Package} label="Open inventory" desc="Stock & SKUs" />
+        <QuickLink to="/admin/pos" icon={Receipt} label="Open POS" desc="Billing counter" />
+        <QuickLink to="/admin/crm" icon={Users} label="Open CRM" desc="Leads & broadcasts" />
         <QuickLink to="/admin/website" icon={ShoppingBag} label="Edit storefront" desc="Website CMS" />
       </section>
     </div>

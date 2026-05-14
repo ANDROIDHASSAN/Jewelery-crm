@@ -11,6 +11,8 @@ export interface AnalyticsDashboard {
 
 export interface StaffRow {
   userId: string | null;
+  userName: string | null;
+  userRole: string | null;
   billCount: number;
   revenuePaise: number;
 }

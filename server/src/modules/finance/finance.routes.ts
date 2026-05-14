@@ -101,6 +101,61 @@ financeRouter.post('/expenses', async (req, res, next) => {
   }
 });
 
+// Tally-importable CSV — bills + expenses for a date range.
+// Tally accepts a generic ledger import: Date, Voucher Type, Voucher No, Ledger, Debit, Credit, Narration.
+financeRouter.get('/tally-export', async (req, res, next) => {
+  try {
+    const q = z.object({ from: z.coerce.date(), to: z.coerce.date() }).parse(req.query);
+    const [bills, expenses] = await Promise.all([
+      prisma.bill.findMany({
+        where: { createdAt: { gte: q.from, lte: q.to } },
+        select: { billNumber: true, createdAt: true, totalPaise: true, cgstPaise: true, sgstPaise: true, igstPaise: true },
+        orderBy: { createdAt: 'asc' },
+      }),
+      prisma.expense.findMany({
+        where: { paidAt: { gte: q.from, lte: q.to } },
+        select: { id: true, category: true, amountPaise: true, paidAt: true, notes: true },
+        orderBy: { paidAt: 'asc' },
+      }),
+    ]);
+
+    const rows: string[][] = [
+      ['Date', 'Voucher Type', 'Voucher No', 'Ledger', 'Debit', 'Credit', 'Narration'],
+    ];
+    const r = (paise: number): string => (paise / 100).toFixed(2);
+
+    for (const b of bills) {
+      const date = b.createdAt.toISOString().slice(0, 10);
+      rows.push([date, 'Sales', b.billNumber, 'Sales A/c', '', r(b.totalPaise - b.cgstPaise - b.sgstPaise - b.igstPaise), 'Jewellery sale']);
+      if (b.cgstPaise + b.sgstPaise > 0) {
+        rows.push([date, 'Sales', b.billNumber, 'CGST Payable', '', r(b.cgstPaise), 'CGST on sale']);
+        rows.push([date, 'Sales', b.billNumber, 'SGST Payable', '', r(b.sgstPaise), 'SGST on sale']);
+      }
+      if (b.igstPaise > 0) {
+        rows.push([date, 'Sales', b.billNumber, 'IGST Payable', '', r(b.igstPaise), 'IGST on sale']);
+      }
+      rows.push([date, 'Sales', b.billNumber, 'Customer / Bank', r(b.totalPaise), '', 'Cash/UPI/Card received']);
+    }
+    for (const e of expenses) {
+      const date = e.paidAt.toISOString().slice(0, 10);
+      rows.push([date, 'Payment', `EXP-${e.id.slice(-6)}`, e.category, r(e.amountPaise), '', e.notes ?? '']);
+      rows.push([date, 'Payment', `EXP-${e.id.slice(-6)}`, 'Bank / Cash', '', r(e.amountPaise), e.notes ?? '']);
+    }
+
+    const csv = rows
+      .map((r) => r.map((cell) => `"${String(cell).replace(/"/g, '""')}"`).join(','))
+      .join('\r\n');
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename="tally-${q.from.toISOString().slice(0, 10)}-to-${q.to.toISOString().slice(0, 10)}.csv"`,
+    );
+    res.send(csv);
+  } catch (err) {
+    next(err);
+  }
+});
+
 financeRouter.get('/gst-summary', async (req, res, next) => {
   try {
     const q = z.object({ month: z.string().regex(/^\d{4}-\d{2}$/) }).parse(req.query);

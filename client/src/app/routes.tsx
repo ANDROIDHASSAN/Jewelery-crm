@@ -21,6 +21,10 @@ import { CartPage } from '@/pages/storefront/CartPage';
 import { WishlistPage } from '@/pages/storefront/WishlistPage';
 import { AccountPage } from '@/pages/storefront/AccountPage';
 import { SearchResultsPage } from '@/pages/storefront/SearchResultsPage';
+import { TrackOrderPage } from '@/pages/storefront/TrackOrderPage';
+import { StaticPage } from '@/pages/storefront/StaticPage';
+
+const STATIC_PATHS = ['story', 'workshop', 'contact', 'help', 'care', 'hallmark', 'privacy', 'terms'];
 
 const router = createBrowserRouter([
   // Storefront at root.
@@ -37,6 +41,8 @@ const router = createBrowserRouter([
       { path: 'wishlist', element: <WishlistPage /> },
       { path: 'account', element: <AccountPage /> },
       { path: 'search', element: <SearchResultsPage /> },
+      { path: 'track', element: <TrackOrderPage /> },
+      ...STATIC_PATHS.map((p) => ({ path: p, element: <StaticPage /> })),
     ],
   },
   // Legacy /store/* paths still work (storefront internal links use them).
@@ -53,6 +59,8 @@ const router = createBrowserRouter([
       { path: 'wishlist', element: <WishlistPage /> },
       { path: 'account', element: <AccountPage /> },
       { path: 'search', element: <SearchResultsPage /> },
+      { path: 'track', element: <TrackOrderPage /> },
+      ...STATIC_PATHS.map((p) => ({ path: p, element: <StaticPage /> })),
     ],
   },
   // Admin login.

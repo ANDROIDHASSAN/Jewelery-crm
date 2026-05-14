@@ -180,12 +180,25 @@ analyticsRouter.get('/staff', async (req, res, next) => {
       _sum: { totalPaise: true },
       _count: { _all: true },
     });
+    const userIds = grouped.map((g) => g.createdByUserId!).filter(Boolean);
+    const users = userIds.length
+      ? await prisma.user.findMany({
+          where: { id: { in: userIds } },
+          select: { id: true, name: true, role: true },
+        })
+      : [];
+    const byId = new Map(users.map((u) => [u.id, u]));
     res.json({
-      data: grouped.map((g) => ({
-        userId: g.createdByUserId,
-        billCount: g._count._all,
-        revenuePaise: g._sum.totalPaise ?? 0,
-      })),
+      data: grouped.map((g) => {
+        const u = g.createdByUserId ? byId.get(g.createdByUserId) : null;
+        return {
+          userId: g.createdByUserId,
+          userName: u?.name ?? null,
+          userRole: u?.role ?? null,
+          billCount: g._count._all,
+          revenuePaise: g._sum.totalPaise ?? 0,
+        };
+      }),
     });
   } catch (err) {
     next(err);

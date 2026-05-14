@@ -17,7 +17,7 @@
 // rows whose amounts sum to the bill total. The server stores each row as a
 // separate Payment record.
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { ScanLine, Search, Trash2, Send, Wifi, WifiOff, X, Plus, RefreshCw } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
@@ -101,7 +101,17 @@ function recomputeLine(line: CartLine): CartLine {
 }
 
 function freshIdempotencyKey(): string {
-  return `pos-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+  // Must match IdempotencyKeySchema (z.string().uuid()). crypto.randomUUID is
+  // available in every modern browser and on Node 19+ — fall back to a v4
+  // shape if it's missing so old WebViews (KaiOS counter tablets etc.) still
+  // generate a valid key.
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
+  }
+  // RFC 4122 v4 fallback.
+  const hex = 'abcdef0123456789';
+  const r = (n: number): string => Array.from({ length: n }, () => hex[Math.floor(Math.random() * 16)]).join('');
+  return `${r(8)}-${r(4)}-4${r(3)}-${'89ab'[Math.floor(Math.random() * 4)]}${r(3)}-${r(12)}`;
 }
 
 function newPaymentRow(mode: PaymentMode, amountPaise = 0): PaymentRow {
