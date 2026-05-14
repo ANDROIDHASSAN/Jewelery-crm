@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { Plus, X, Pencil, Trash2, ChevronRight } from 'lucide-react';
+import { Plus, X, Pencil, Trash2, ChevronRight, List, Kanban as KanbanIcon } from 'lucide-react';
 import * as Dialog from '@radix-ui/react-dialog';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
@@ -39,6 +39,8 @@ export function EcommerceAdminPage(): JSX.Element {
   const [productDialog, setProductDialog] = useState<{ open: boolean; editing?: AdminProduct }>({ open: false });
   const [orderDrawer, setOrderDrawer] = useState<AdminOrder | null>(null);
   const [statusFilter, setStatusFilter] = useState<OrderStatus | ''>('');
+  // Orders sub-view: flat list or kanban board (status pipeline).
+  const [ordersView, setOrdersView] = useState<'list' | 'board'>('list');
 
   const { data: orderRes, isLoading: ordersLoading } = useGetOrdersQuery(
     statusFilter ? { status: statusFilter } : undefined,
@@ -96,13 +98,40 @@ export function EcommerceAdminPage(): JSX.Element {
       )}
 
       {tab === 'orders' && (
-        <OrdersTable
-          orders={orders}
-          loading={ordersLoading}
-          statusFilter={statusFilter}
-          onFilter={setStatusFilter}
-          onOpen={setOrderDrawer}
-        />
+        <div className="space-y-3">
+          {/* List ↔ Board view toggle. Both render the same `orders` array;
+              the board groups by status and supports drag-to-transition. */}
+          <div className="flex items-center justify-end">
+            <div className="inline-flex rounded-md border border-ink-200 overflow-hidden text-sm">
+              <button
+                type="button"
+                onClick={() => setOrdersView('list')}
+                className={`px-3 h-9 inline-flex items-center gap-1.5 ${ordersView === 'list' ? 'bg-ink-900 text-ink-0' : 'text-ink-700 hover:bg-ink-50'}`}
+              >
+                <List className="h-3.5 w-3.5" /> List
+              </button>
+              <button
+                type="button"
+                onClick={() => setOrdersView('board')}
+                className={`px-3 h-9 inline-flex items-center gap-1.5 ${ordersView === 'board' ? 'bg-ink-900 text-ink-0' : 'text-ink-700 hover:bg-ink-50'}`}
+              >
+                <KanbanIcon className="h-3.5 w-3.5" /> Board
+              </button>
+            </div>
+          </div>
+
+          {ordersView === 'list' ? (
+            <OrdersTable
+              orders={orders}
+              loading={ordersLoading}
+              statusFilter={statusFilter}
+              onFilter={setStatusFilter}
+              onOpen={setOrderDrawer}
+            />
+          ) : (
+            <OrdersBoard orders={orders} loading={ordersLoading} onOpen={setOrderDrawer} />
+          )}
+        </div>
       )}
 
       {tab === 'reservations' && (
@@ -281,6 +310,200 @@ function OrdersTable({
         ))}
       </ul>
     </section>
+  );
+}
+
+// --------------------------------------------------------------------------
+// Orders kanban — fulfillment pipeline. Drag a card across columns to
+// transition its status; the existing useUpdateOrderMutation persists.
+//
+// Columns are the fulfillment-forward states. Cancelled / Returned are
+// terminal failure states surfaced in a collapsed tray below so they
+// don't clutter the active pipeline.
+// --------------------------------------------------------------------------
+
+const BOARD_COLUMNS: ReadonlyArray<{
+  status: OrderStatus;
+  label: string;
+  accent: string;
+}> = [
+  { status: 'PENDING',   label: 'Pending',   accent: 'bg-warning-500' },
+  { status: 'CONFIRMED', label: 'Confirmed', accent: 'bg-info-500' },
+  { status: 'PACKED',    label: 'Packed',    accent: 'bg-info-500' },
+  { status: 'SHIPPED',   label: 'Shipped',   accent: 'bg-info-500' },
+  { status: 'DELIVERED', label: 'Delivered', accent: 'bg-success-500' },
+];
+
+const TERMINAL_FAIL: ReadonlyArray<OrderStatus> = ['CANCELLED', 'RETURNED'];
+
+function OrdersBoard({
+  orders,
+  loading,
+  onOpen,
+}: {
+  orders: AdminOrder[];
+  loading: boolean;
+  onOpen: (o: AdminOrder) => void;
+}): JSX.Element {
+  const [updateOrder] = useUpdateOrderMutation();
+  // Visual hint for the column being dragged over.
+  const [hoverStatus, setHoverStatus] = useState<OrderStatus | null>(null);
+  const [showFailed, setShowFailed] = useState(false);
+
+  const byStatus = useMemo(() => {
+    const map = new Map<OrderStatus, AdminOrder[]>();
+    for (const s of ORDER_STATUSES) map.set(s, []);
+    for (const o of orders) map.get(o.status)?.push(o);
+    return map;
+  }, [orders]);
+
+  async function moveTo(orderId: string, status: OrderStatus): Promise<void> {
+    try {
+      await updateOrder({ id: orderId, patch: { status } }).unwrap();
+      toast.success(`Moved to ${status.toLowerCase()}`);
+    } catch {
+      toast.error('Could not update status');
+    }
+  }
+
+  function onDragStart(e: React.DragEvent, orderId: string): void {
+    e.dataTransfer.setData('text/plain', orderId);
+    e.dataTransfer.effectAllowed = 'move';
+  }
+
+  function onDragOver(e: React.DragEvent, status: OrderStatus): void {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    if (hoverStatus !== status) setHoverStatus(status);
+  }
+
+  function onDrop(e: React.DragEvent, status: OrderStatus): void {
+    e.preventDefault();
+    setHoverStatus(null);
+    const orderId = e.dataTransfer.getData('text/plain');
+    const order = orders.find((o) => o.id === orderId);
+    if (!order || order.status === status) return;
+    void moveTo(orderId, status);
+  }
+
+  if (loading) {
+    return <p className="px-4 py-8 text-sm text-ink-500">Loading board…</p>;
+  }
+
+  const failedOrders = TERMINAL_FAIL.flatMap((s) => byStatus.get(s) ?? []);
+
+  return (
+    <div className="space-y-3">
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-3">
+        {BOARD_COLUMNS.map((col) => {
+          const items = byStatus.get(col.status) ?? [];
+          const isHover = hoverStatus === col.status;
+          return (
+            <section
+              key={col.status}
+              onDragOver={(e) => onDragOver(e, col.status)}
+              onDragLeave={() => setHoverStatus(null)}
+              onDrop={(e) => onDrop(e, col.status)}
+              className={`rounded-md border bg-ink-25 min-h-[200px] transition-colors ${
+                isHover ? 'border-brand-500 bg-brand-50' : 'border-ink-100'
+              }`}
+            >
+              <header className="px-3 py-2.5 border-b border-ink-100 flex items-center gap-2">
+                <span className={`h-1.5 w-1.5 rounded-full ${col.accent}`} aria-hidden />
+                <span className="text-eyebrow uppercase text-ink-700 font-semibold flex-1">{col.label}</span>
+                <span className="text-xs text-ink-500 tabular-nums">{items.length}</span>
+              </header>
+              <div className="p-2 space-y-2">
+                {items.length === 0 ? (
+                  <p className="text-xs text-ink-400 px-1 py-3 text-center">No orders</p>
+                ) : (
+                  items.map((o) => (
+                    <OrderCard
+                      key={o.id}
+                      order={o}
+                      onOpen={onOpen}
+                      onDragStart={(e) => onDragStart(e, o.id)}
+                    />
+                  ))
+                )}
+              </div>
+            </section>
+          );
+        })}
+      </div>
+
+      {/* Failure tray — collapsed by default so it doesn't shout. */}
+      {failedOrders.length > 0 && (
+        <details
+          open={showFailed}
+          onToggle={(e) => setShowFailed((e.target as HTMLDetailsElement).open)}
+          className="rounded-md border border-danger-500/30 bg-danger-50/30"
+        >
+          <summary className="cursor-pointer px-4 py-2.5 text-sm flex items-center gap-2 select-none">
+            <span className="h-1.5 w-1.5 rounded-full bg-danger-500" aria-hidden />
+            <span className="text-eyebrow uppercase text-danger-700 font-semibold">Cancelled &amp; returned</span>
+            <span className="text-xs text-ink-500 tabular-nums">{failedOrders.length}</span>
+          </summary>
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2 px-3 pb-3">
+            {failedOrders.map((o) => (
+              <OrderCard
+                key={o.id}
+                order={o}
+                onOpen={onOpen}
+                onDragStart={(e) => onDragStart(e, o.id)}
+                muted
+              />
+            ))}
+          </div>
+        </details>
+      )}
+    </div>
+  );
+}
+
+function OrderCard({
+  order,
+  onOpen,
+  onDragStart,
+  muted,
+}: {
+  order: AdminOrder;
+  onOpen: (o: AdminOrder) => void;
+  onDragStart: (e: React.DragEvent) => void;
+  muted?: boolean;
+}): JSX.Element {
+  const itemCount = order.items?.length ?? 0;
+  const ageMin = Math.floor((Date.now() - new Date(order.createdAt).getTime()) / 60_000);
+  const ageLabel =
+    ageMin < 60
+      ? `${ageMin}m ago`
+      : ageMin < 24 * 60
+        ? `${Math.floor(ageMin / 60)}h ago`
+        : `${Math.floor(ageMin / (24 * 60))}d ago`;
+  return (
+    <article
+      draggable
+      onDragStart={onDragStart}
+      onClick={() => onOpen(order)}
+      className={`group rounded-md border bg-ink-0 px-3 py-2.5 text-left cursor-grab active:cursor-grabbing hover:border-ink-300 transition-colors ${muted ? 'border-ink-100 opacity-80' : 'border-ink-100'}`}
+    >
+      <div className="flex items-center justify-between gap-2">
+        <p className="font-mono text-[10px] text-ink-500">#{order.id.slice(-8).toUpperCase()}</p>
+        <p className="text-[10px] text-ink-400">{ageLabel}</p>
+      </div>
+      <p className="mt-1 text-sm text-ink-900 truncate">
+        {order.customer?.name ?? 'Walk-in'}
+      </p>
+      {order.customer?.phone && (
+        <p className="text-[11px] text-ink-500 font-mono truncate">{order.customer.phone}</p>
+      )}
+      <div className="mt-2 flex items-center justify-between gap-2">
+        <span className="text-[11px] text-ink-500">
+          {itemCount} item{itemCount === 1 ? '' : 's'} · {order.paymentMethod}
+        </span>
+        <Money paise={order.totalPaise} className="font-mono tabular-nums text-xs text-ink-900" />
+      </div>
+    </article>
   );
 }
 
