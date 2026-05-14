@@ -72,10 +72,21 @@ function formatRate(paise: number, stale: boolean): string {
   return `₹${(paise / 100).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}/g`;
 }
 
+// Range for MTD finance queries. CRITICAL: do not include `Date.now()` in the
+// returned values. RTK Query keys queries by JSON-serialised args; if `to`
+// shifted every millisecond the cache key would change every render, every
+// re-render would cancel the in-flight request and fire a new one, and the
+// /finance/pl + /finance/expenses/by-category queries would never resolve
+// (the other dashboard queries don't take args, so they were unaffected —
+// hence "Loading P&L…" forever while the rest of the dashboard worked).
+//
+// We anchor `to` to the END of today (UTC) so the cache key is stable for
+// the rest of the calendar day; the polling interval still drives freshness.
 function monthRange(): { from: string; to: string } {
   const now = new Date();
   const from = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
-  return { from: from.toISOString(), to: now.toISOString() };
+  const to = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), 23, 59, 59, 999));
+  return { from: from.toISOString(), to: to.toISOString() };
 }
 
 function shortTime(d: string | Date): string {
