@@ -33,6 +33,7 @@ import {
 } from '@/features/pos/posApi';
 import { useGetShopsQuery } from '@/features/shops/shopsApi';
 import { pendingCount } from '@/features/pos/offline';
+import { printReceipt } from '@/features/pos/printReceipt';
 import type { PaymentMode } from '@goldos/shared/constants';
 import type { Item } from '@goldos/shared/types';
 import { cn } from '@/lib/cn';
@@ -402,6 +403,25 @@ export function PosPage(): JSX.Element {
       );
       return;
     }
+    // Snapshot the current bill state BEFORE the network round-trip so that
+    // (a) the print receipt has stable data, and (b) the optimistic UI reset
+    // happens immediately after the toast.
+    const snapshotLines = lines;
+    const snapshotPayments = payments;
+    const snapshotCustomer = customer;
+    const snapshotShop = shops.find((s) => s.id === shopId) ?? null;
+    const snapshotTotals = {
+      subtotalPaise: subtotal,
+      makingPaise: making,
+      stonePaise: stone,
+      cgstPaise: Math.round(gst / 2),
+      sgstPaise: gst - Math.round(gst / 2),
+      igstPaise: 0,
+      discountPaise: 0,
+      oldGoldValuePaise: 0,
+      totalPaise: total,
+    };
+
     try {
       const res = await createBill({
         shopId,
@@ -422,11 +442,46 @@ export function PosPage(): JSX.Element {
         })),
         idempotencyKey,
       }).unwrap();
+
+      const doPrint = (): void => {
+        printReceipt({
+          billNumber: res.data.billNumber,
+          createdAt: new Date(),
+          shop: snapshotShop
+            ? { name: snapshotShop.name, address: snapshotShop.address, phone: snapshotShop.phone, gstStateCode: snapshotShop.gstStateCode }
+            : { name: 'Showroom' },
+          customer: snapshotCustomer,
+          lines: snapshotLines.map((l) => ({
+            sku: l.sku,
+            weightMg: l.weightMg,
+            purityCaratX100: l.purityCaratX100,
+            ratePerGramPaise: l.ratePerGramPaise,
+            makingChargeBps: l.makingChargeBps,
+            stoneChargePaise: l.stoneChargePaise,
+            goldValuePaise: l.goldValuePaise,
+            makingPaise: l.makingPaise,
+            linePaise: l.linePaise,
+          })),
+          totals: snapshotTotals,
+          payments: snapshotPayments.map((p) => ({
+            mode: p.mode,
+            amountPaise: p.amountPaise,
+            reference: p.reference.trim() || null,
+          })),
+        });
+      };
+
+      // Fire the print dialog automatically — the cashier's primary expectation.
+      doPrint();
+
       toast.success(`Bill ${res.data.billNumber} created`, {
         description: customer
-          ? `WhatsApp receipt queued for ${customer.name}`
-          : 'Walk-in receipt ready to print',
+          ? `WhatsApp receipt queued for ${customer.name}. Print dialog opened.`
+          : 'Walk-in receipt — print dialog opened.',
+        action: { label: 'Print again', onClick: doPrint },
+        duration: 8000,
       });
+
       // Reset for next bill.
       setLines([]);
       setCustomer(null);
