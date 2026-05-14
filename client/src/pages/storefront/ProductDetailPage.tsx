@@ -35,7 +35,7 @@ const RELATED = [
 export function ProductDetailPage(): JSX.Element {
   const { slug = 'mira-bangle' } = useParams();
   const [imgIdx, setImgIdx] = useState(0);
-  const [size, setSize] = useState(SIZES[1]);
+  const [size, setSize] = useState<string>(SIZES[1] ?? '2.6');
   const [qty, setQty] = useState(1);
   const [openSection, setOpenSection] = useState<string | null>('details');
   const [reserveOpen, setReserveOpen] = useState(false);
