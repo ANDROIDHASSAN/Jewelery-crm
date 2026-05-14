@@ -20,6 +20,9 @@ async function main(): Promise<void> {
     let preservedContent: Awaited<ReturnType<typeof tx.storefrontContent.findUnique>> = null;
     if (existing) {
       preservedContent = await tx.storefrontContent.findUnique({ where: { tenantId: existing.id } });
+      // OrderItem.product FK has no `onDelete: Cascade`. Drop dependent OrderItems
+      // first so the tenant cascade can delete Products without an FK violation.
+      await tx.orderItem.deleteMany({ where: { order: { tenantId: existing.id } } });
       await tx.tenant.delete({ where: { id: existing.id } });
     }
 
