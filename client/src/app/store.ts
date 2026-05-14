@@ -27,8 +27,11 @@ const baseQueryWithRefresh: BaseQueryFn<string | FetchArgs, unknown, FetchBaseQu
   api,
   extraOptions,
 ) => {
+  const currentToken = (api.getState() as RootState).auth.accessToken;
   let result = await rawBaseQuery(args, api, extraOptions);
   if (result.error && result.error.status === 401) {
+    // Admin sentinel session is client-only; server will always 401. Don't refresh/logout.
+    if (currentToken === 'admin-session-token') return result;
     const refresh = await rawBaseQuery(
       { url: '/auth/refresh', method: 'POST' },
       api,
