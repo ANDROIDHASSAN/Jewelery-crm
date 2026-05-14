@@ -4,7 +4,8 @@ import { prisma } from '../../lib/prisma.js';
 import { NotFoundError, BusinessRuleError } from '../../lib/errors.js';
 import { readGoldRatePaise } from '../../lib/redis.js';
 import { computeGoldValuePaise } from '../../lib/money.js';
-import type { ItemInput } from '@goldos/shared/types';
+import { getTenantId } from '../../lib/async-context.js';
+import type { ItemInput, VendorInput, PurchaseOrderCreate } from '@goldos/shared/types';
 
 const DEFAULT_PAGE_LIMIT = 20;
 const MAX_PAGE_LIMIT = 100;
@@ -31,15 +32,27 @@ export async function getItem(id: string) {
   return item;
 }
 
-export async function createItem(input: ItemInput) {
-  return prisma.item.create({ data: input });
+export async function createItem(input: ItemInput, performedByUserId?: string) {
+  const item = await prisma.item.create({ data: input });
+  // Audit + PURCHASE movement on first insert.
+  await prisma.itemMovement.create({
+    data: {
+      itemId: item.id,
+      toShopId: item.shopId,
+      type: 'PURCHASE',
+      reason: 'Item added to inventory',
+      performedByUserId: performedByUserId ?? null,
+    },
+  });
+  await writeAudit('Item', item.id, 'CREATE', null, item, performedByUserId);
+  return item;
 }
 
 export async function transferItem(id: string, toShopId: string, reason: string, performedByUserId?: string) {
   const item = await prisma.item.findUnique({ where: { id } });
   if (!item) throw new NotFoundError();
   if (item.status !== 'IN_STOCK') throw new BusinessRuleError('ITEM_NOT_IN_STOCK', 'Item is not in stock');
-  return prisma.$transaction([
+  const [updated] = await prisma.$transaction([
     prisma.item.update({ where: { id }, data: { status: 'IN_TRANSIT', shopId: toShopId } }),
     prisma.itemMovement.create({
       data: {
@@ -52,10 +65,52 @@ export async function transferItem(id: string, toShopId: string, reason: string,
       },
     }),
   ]);
+  await writeAudit('Item', id, 'TRANSFER', item, updated, performedByUserId);
+  return updated;
+}
+
+export async function recordWastage(id: string, reason: string, performedByUserId?: string) {
+  const item = await prisma.item.findUnique({ where: { id } });
+  if (!item) throw new NotFoundError();
+  if (item.status !== 'IN_STOCK') throw new BusinessRuleError('ITEM_NOT_IN_STOCK', 'Item is not in stock');
+  const [updated, movement] = await prisma.$transaction([
+    prisma.item.update({ where: { id }, data: { status: 'MELTED' } }),
+    prisma.itemMovement.create({
+      data: {
+        itemId: id,
+        fromShopId: item.shopId,
+        type: 'WASTAGE',
+        reason,
+        performedByUserId: performedByUserId ?? null,
+      },
+    }),
+  ]);
+  await writeAudit('Item', id, 'WASTAGE', item, updated, performedByUserId);
+  return movement;
+}
+
+export async function listMovements(opts: { itemId?: string; type?: string; cursor?: string }) {
+  const take = DEFAULT_PAGE_LIMIT;
+  const movements = await prisma.itemMovement.findMany({
+    where: {
+      ...(opts.itemId ? { itemId: opts.itemId } : {}),
+      ...(opts.type ? { type: opts.type as 'PURCHASE' | 'TRANSFER' | 'SALE' | 'RETURN' | 'WASTAGE' | 'ADJUSTMENT' } : {}),
+    },
+    orderBy: { createdAt: 'desc' },
+    take: take + 1,
+    ...(opts.cursor ? { cursor: { id: opts.cursor }, skip: 1 } : {}),
+  });
+  const hasMore = movements.length > take;
+  const page = movements.slice(0, take);
+  return { data: page, page: { nextCursor: hasMore ? page.at(-1)?.id : undefined, hasMore } };
 }
 
 export async function listCategories() {
   return prisma.category.findMany({ orderBy: { name: 'asc' } });
+}
+
+export async function updateCategoryMakingCharge(id: string, bps: number) {
+  return prisma.category.update({ where: { id }, data: { defaultMakingChargeBps: bps } });
 }
 
 export async function computeValuation(opts: { shopId?: string }) {
@@ -64,15 +119,132 @@ export async function computeValuation(opts: { shopId?: string }) {
       status: 'IN_STOCK',
       ...(opts.shopId ? { shopId: opts.shopId } : {}),
     },
-    select: { weightMg: true, purityCaratX100: true },
+    select: { weightMg: true, purityCaratX100: true, shopId: true, categoryId: true },
   });
   let totalPaise = 0;
-  let itemCount = 0;
+  const byShop = new Map<string, { totalPaise: number; itemCount: number }>();
+  const byCategory = new Map<string, { totalPaise: number; itemCount: number }>();
   for (const it of items) {
     const cached = await readGoldRatePaise(it.purityCaratX100);
-    const ratePerGramPaise = cached?.paise ?? 642_000; // dev default ₹6,420/g
-    totalPaise += computeGoldValuePaise(it.weightMg, it.purityCaratX100, ratePerGramPaise);
-    itemCount += 1;
+    const ratePerGramPaise = cached?.paise ?? 642_000;
+    const value = computeGoldValuePaise(it.weightMg, it.purityCaratX100, ratePerGramPaise);
+    totalPaise += value;
+    const shopAgg = byShop.get(it.shopId) ?? { totalPaise: 0, itemCount: 0 };
+    shopAgg.totalPaise += value;
+    shopAgg.itemCount += 1;
+    byShop.set(it.shopId, shopAgg);
+    const catAgg = byCategory.get(it.categoryId) ?? { totalPaise: 0, itemCount: 0 };
+    catAgg.totalPaise += value;
+    catAgg.itemCount += 1;
+    byCategory.set(it.categoryId, catAgg);
   }
-  return { totalPaise, itemCount, asOf: new Date().toISOString() };
+  return {
+    totalPaise,
+    itemCount: items.length,
+    byShop: Array.from(byShop.entries()).map(([shopId, v]) => ({ shopId, ...v })),
+    byCategory: Array.from(byCategory.entries()).map(([categoryId, v]) => ({ categoryId, ...v })),
+    asOf: new Date().toISOString(),
+  };
+}
+
+export async function computeLowStock(threshold: number) {
+  const grouped = await prisma.item.groupBy({
+    by: ['categoryId', 'shopId'],
+    where: { status: 'IN_STOCK' },
+    _count: { _all: true },
+  });
+  const rows = grouped
+    .map((g) => ({
+      categoryId: g.categoryId,
+      shopId: g.shopId,
+      itemCount: g._count._all,
+    }))
+    .filter((r) => r.itemCount <= threshold);
+  return { threshold, rows };
+}
+
+// --- Vendors ---
+
+export async function listVendors() {
+  const vendors = await prisma.vendor.findMany({ orderBy: { name: 'asc' } });
+  return { data: vendors, page: { hasMore: false } };
+}
+
+export async function createVendor(input: VendorInput) {
+  const vendor = await prisma.vendor.create({ data: input });
+  await writeAudit('Vendor', vendor.id, 'CREATE', null, vendor);
+  return vendor;
+}
+
+// --- Purchase Orders ---
+
+export async function listPurchaseOrders() {
+  const pos = await prisma.purchaseOrder.findMany({
+    orderBy: { createdAt: 'desc' },
+    take: 50,
+    include: {
+      items: true,
+      vendor: { select: { id: true, name: true } },
+    },
+  });
+  return { data: pos, page: { hasMore: false } };
+}
+
+export async function createPurchaseOrder(input: PurchaseOrderCreate) {
+  const totalPaise = input.items.reduce((s, i) => s + i.costPaise, 0);
+  const po = await prisma.purchaseOrder.create({
+    data: {
+      vendorId: input.vendorId,
+      totalPaise,
+      items: { create: input.items },
+    },
+    include: { items: true, vendor: { select: { id: true, name: true } } },
+  });
+  await writeAudit('PurchaseOrder', po.id, 'CREATE', null, po);
+  return po;
+}
+
+// --- Audit log ---
+
+export async function listAuditLog(opts: { entityType?: string; entityId?: string; cursor?: string }) {
+  const take = 50;
+  const logs = await prisma.auditLog.findMany({
+    where: {
+      ...(opts.entityType ? { entityType: opts.entityType } : {}),
+      ...(opts.entityId ? { entityId: opts.entityId } : {}),
+    },
+    orderBy: { createdAt: 'desc' },
+    take: take + 1,
+    ...(opts.cursor ? { cursor: { id: opts.cursor }, skip: 1 } : {}),
+  });
+  const hasMore = logs.length > take;
+  const page = logs.slice(0, take);
+  return { data: page, page: { nextCursor: hasMore ? page.at(-1)?.id : undefined, hasMore } };
+}
+
+async function writeAudit(
+  entityType: string,
+  entityId: string,
+  action: string,
+  before: unknown,
+  after: unknown,
+  userId?: string,
+): Promise<void> {
+  try {
+    const tenantId = getTenantId();
+    if (!tenantId) return;
+    await prisma.auditLog.create({
+      data: {
+        tenantId,
+        userId: userId ?? null,
+        entityType,
+        entityId,
+        action,
+        beforeJson: before === null || before === undefined ? null : (before as object),
+        afterJson: after === null || after === undefined ? null : (after as object),
+      },
+    });
+  } catch {
+    // Audit failures must never break the primary mutation.
+  }
 }

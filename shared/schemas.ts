@@ -158,6 +158,12 @@ export const VendorSchema = z.object({
   outstandingPaise: PaiseSchema.default(0),
 });
 
+export const VendorInputSchema = VendorSchema.omit({
+  id: true,
+  tenantId: true,
+  outstandingPaise: true,
+});
+
 export const PurchaseOrderSchema = z.object({
   id: CuidSchema,
   tenantId: CuidSchema,
@@ -165,6 +171,23 @@ export const PurchaseOrderSchema = z.object({
   status: z.enum(PURCHASE_ORDER_STATUSES),
   totalPaise: PaiseSchema,
   createdAt: z.coerce.date(),
+});
+
+export const PurchaseOrderItemInputSchema = z.object({
+  itemSku: z.string().min(2).max(60),
+  weightMg: MgSchema,
+  purity: PuritySchema,
+  costPaise: PaiseSchema,
+});
+
+export const PurchaseOrderCreateSchema = z.object({
+  vendorId: CuidSchema,
+  items: z.array(PurchaseOrderItemInputSchema).min(1).max(200),
+});
+
+export const WastageInputSchema = z.object({
+  itemId: CuidSchema,
+  reason: z.string().min(1).max(400),
 });
 
 // --- POS / Sales ---

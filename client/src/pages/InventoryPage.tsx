@@ -1,19 +1,133 @@
+// Inventory module — full feature surface per Gold OS Module 01 spec.
+// Tabbed shell. Each tab is DB-backed via RTK Query; mutations invalidate caches
+// so adds/edits flow back to the active view (and to dashboard tiles) immediately.
+
 import { useMemo, useState } from 'react';
 import type { ColumnDef } from '@tanstack/react-table';
-import { Plus } from 'lucide-react';
+import {
+  Plus,
+  Boxes,
+  Truck,
+  Flame,
+  FileText,
+  Users,
+  ShieldCheck,
+  TrendingDown,
+  Coins,
+  ScrollText,
+  Sliders,
+} from 'lucide-react';
+import { toast } from 'sonner';
 import type { Item } from '@goldos/shared/types';
-import { useGetItemsQuery, useGetCategoriesQuery } from '@/features/inventory/inventoryApi';
+import {
+  useGetItemsQuery,
+  useGetCategoriesQuery,
+  useCreateItemMutation,
+  useTransferItemMutation,
+  useRecordWastageMutation,
+  useGetValuationQuery,
+  useGetLowStockQuery,
+  useGetMovementsQuery,
+  useGetVendorsQuery,
+  useCreateVendorMutation,
+  useGetPurchaseOrdersQuery,
+  useCreatePurchaseOrderMutation,
+  useGetAuditLogQuery,
+  useUpdateCategoryMakingChargeMutation,
+} from '@/features/inventory/inventoryApi';
+import { useGetShopsQuery } from '@/features/shops/shopsApi';
 import { DataTable } from '@/components/data/DataTable';
 import { Button } from '@/components/ui/button';
 import { Money, Weight, Purity } from '@/components/ui/money';
 import { Badge } from '@/components/ui/badge';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetBody } from '@/components/ui/sheet';
+import { BarcodePreview } from '@/components/ui/BarcodePreview';
+import { cn } from '@/lib/cn';
+
+type Tab =
+  | 'items'
+  | 'transfers'
+  | 'wastage'
+  | 'valuation'
+  | 'low-stock'
+  | 'vendors'
+  | 'purchase-orders'
+  | 'audit'
+  | 'making-charges';
+
+const TABS: Array<{ id: Tab; label: string; icon: typeof Boxes }> = [
+  { id: 'items', label: 'Items', icon: Boxes },
+  { id: 'transfers', label: 'Transfers', icon: Truck },
+  { id: 'wastage', label: 'Wastage & melting', icon: Flame },
+  { id: 'valuation', label: 'Valuation', icon: Coins },
+  { id: 'low-stock', label: 'Low stock', icon: TrendingDown },
+  { id: 'vendors', label: 'Vendors', icon: Users },
+  { id: 'purchase-orders', label: 'Purchase orders', icon: FileText },
+  { id: 'making-charges', label: 'Making charges', icon: Sliders },
+  { id: 'audit', label: 'Audit trail', icon: ScrollText },
+];
 
 export function InventoryPage(): JSX.Element {
+  const [tab, setTab] = useState<Tab>('items');
+  return (
+    <div className="space-y-4">
+      <header className="flex items-end justify-between flex-wrap gap-y-3">
+        <div>
+          <p className="text-eyebrow uppercase text-ink-500">Stock & inventory</p>
+          <h1 className="font-display text-display-sm text-ink-900">Module 01 · Stock & inventory</h1>
+          <p className="mt-1 text-sm text-ink-500 max-w-xl">
+            Live valuation, multi-store sync, vendors, POs, transfers and wastage — all auditable.
+          </p>
+        </div>
+      </header>
+
+      <nav className="flex flex-wrap gap-1 border-b border-ink-100 -mb-px">
+        {TABS.map((t) => {
+          const Icon = t.icon;
+          const active = tab === t.id;
+          return (
+            <button
+              key={t.id}
+              onClick={() => setTab(t.id)}
+              className={cn(
+                'inline-flex items-center gap-1.5 px-3 h-9 text-sm border-b-2 transition-colors',
+                active
+                  ? 'border-brand-500 text-ink-900 font-medium'
+                  : 'border-transparent text-ink-500 hover:text-ink-700',
+              )}
+            >
+              <Icon className="h-3.5 w-3.5" />
+              {t.label}
+            </button>
+          );
+        })}
+      </nav>
+
+      {tab === 'items' && <ItemsTab />}
+      {tab === 'transfers' && <MovementsTab type="TRANSFER" emptyLabel="No transfers yet." />}
+      {tab === 'wastage' && <MovementsTab type="WASTAGE" emptyLabel="No wastage logged." />}
+      {tab === 'valuation' && <ValuationTab />}
+      {tab === 'low-stock' && <LowStockTab />}
+      {tab === 'vendors' && <VendorsTab />}
+      {tab === 'purchase-orders' && <PurchaseOrdersTab />}
+      {tab === 'making-charges' && <MakingChargesTab />}
+      {tab === 'audit' && <AuditTab />}
+    </div>
+  );
+}
+
+// ----------------------------------------------------------------------------
+// Items tab — main list, row click opens detail Sheet with barcode + actions.
+
+function ItemsTab(): JSX.Element {
   const { data, isLoading } = useGetItemsQuery({});
   const { data: catRes } = useGetCategoriesQuery();
+  const { data: shopsRes } = useGetShopsQuery();
   const [selected, setSelected] = useState<Item | null>(null);
+  const [addOpen, setAddOpen] = useState(false);
+  const [transferOpen, setTransferOpen] = useState(false);
+  const [wastageOpen, setWastageOpen] = useState(false);
 
   const categoryNameById = useMemo(() => {
     const map = new Map<string, string>();
@@ -21,18 +135,39 @@ export function InventoryPage(): JSX.Element {
     return map;
   }, [catRes?.data]);
 
+  const shopNameById = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const s of shopsRes?.data ?? []) map.set(s.id, s.name);
+    return map;
+  }, [shopsRes?.data]);
+
   const columns = useMemo<ColumnDef<Item>[]>(
     () => [
-      { accessorKey: 'sku', header: 'SKU', cell: (i) => <span className="font-mono text-xs">{String(i.getValue())}</span> },
+      {
+        accessorKey: 'sku',
+        header: 'SKU',
+        cell: (i) => <span className="font-mono text-xs">{String(i.getValue())}</span>,
+      },
       {
         accessorKey: 'categoryId',
         header: 'Category',
         cell: (i) => categoryNameById.get(String(i.getValue())) ?? '—',
       },
       {
+        accessorKey: 'shopId',
+        header: 'Shop',
+        cell: (i) => (
+          <span className="text-xs text-ink-700">{shopNameById.get(String(i.getValue())) ?? '—'}</span>
+        ),
+      },
+      {
         accessorKey: 'weightMg',
         header: () => <span className="block text-right">Weight</span>,
-        cell: (i) => <div className="text-right"><Weight mg={Number(i.getValue())} /></div>,
+        cell: (i) => (
+          <div className="text-right">
+            <Weight mg={Number(i.getValue())} />
+          </div>
+        ),
       },
       {
         accessorKey: 'purityCaratX100',
@@ -50,41 +185,51 @@ export function InventoryPage(): JSX.Element {
         },
       },
       {
+        accessorKey: 'status',
+        header: 'Status',
+        cell: (i) => {
+          const v = String(i.getValue());
+          const tone =
+            v === 'IN_STOCK' ? 'success' : v === 'IN_TRANSIT' ? 'info' : v === 'SOLD' ? 'neutral' : 'warning';
+          return <Badge tone={tone as 'success' | 'info' | 'neutral' | 'warning'}>{v.replace('_', ' ').toLowerCase()}</Badge>;
+        },
+      },
+      {
         accessorKey: 'costPricePaise',
         header: () => <span className="block text-right">Cost</span>,
-        cell: (i) => <div className="text-right"><Money paise={Number(i.getValue())} /></div>,
+        cell: (i) => (
+          <div className="text-right">
+            <Money paise={Number(i.getValue())} />
+          </div>
+        ),
       },
     ],
-    [categoryNameById],
+    [categoryNameById, shopNameById],
   );
 
   return (
     <>
-      <div className="space-y-4">
-        <header className="flex items-end justify-between">
-          <div>
-            <p className="text-eyebrow uppercase text-ink-500">Stock & inventory</p>
-            <h1 className="font-display text-display-sm text-ink-900">Items</h1>
-          </div>
-          <Button>
-            <Plus className="h-4 w-4" />
-            Add item
-          </Button>
-        </header>
-
-        {isLoading && <p className="text-sm text-ink-500">Loading…</p>}
-        {!isLoading && (!data || data.data.length === 0) && (
-          <EmptyState
-            eyebrow="No items yet"
-            title="Your inventory will appear here."
-            body="Add your first item or bulk-import from Excel. Hallmarking status, weight, purity, and live valuation update automatically."
-            action={<Button>Bulk import from Excel</Button>}
-          />
-        )}
-        {data && data.data.length > 0 && (
-          <DataTable columns={columns} data={data.data} onRowClick={(r) => setSelected(r)} />
-        )}
+      <div className="flex items-center justify-between">
+        <p className="text-sm text-ink-500">
+          {data ? `${data.data.length} item${data.data.length === 1 ? '' : 's'} in view` : '…'}
+        </p>
+        <Button onClick={() => setAddOpen(true)}>
+          <Plus className="h-4 w-4" /> Add item
+        </Button>
       </div>
+
+      {isLoading && <p className="text-sm text-ink-500">Loading…</p>}
+      {!isLoading && (!data || data.data.length === 0) && (
+        <EmptyState
+          eyebrow="No items yet"
+          title="Your inventory will appear here."
+          body="Add your first item or bulk-import from Excel. Hallmarking status, weight, purity, and live valuation update automatically."
+          action={<Button onClick={() => setAddOpen(true)}>Add first item</Button>}
+        />
+      )}
+      {data && data.data.length > 0 && (
+        <DataTable columns={columns} data={data.data} onRowClick={(r) => setSelected(r)} />
+      )}
 
       <Sheet open={!!selected} onOpenChange={(o) => !o && setSelected(null)}>
         <SheetContent>
@@ -94,16 +239,1109 @@ export function InventoryPage(): JSX.Element {
           {selected && (
             <SheetBody>
               <dl className="space-y-3 text-sm">
-                <Row label="Weight"><Weight mg={selected.weightMg} /></Row>
-                <Row label="Purity"><Purity x100={selected.purityCaratX100} /></Row>
-                <Row label="Cost price"><Money paise={selected.costPricePaise} /></Row>
-                <Row label="Hallmark"><Badge tone="success">{selected.hallmarkStatus.toLowerCase()}</Badge></Row>
+                <Row label="Weight">
+                  <Weight mg={selected.weightMg} />
+                </Row>
+                <Row label="Purity">
+                  <Purity x100={selected.purityCaratX100} />
+                </Row>
+                <Row label="Cost price">
+                  <Money paise={selected.costPricePaise} />
+                </Row>
+                <Row label="Stone weight">
+                  {selected.stoneWeightMg ? <Weight mg={selected.stoneWeightMg} /> : '—'}
+                </Row>
+                <Row label="Hallmark">
+                  <Badge tone="success">{selected.hallmarkStatus.toLowerCase()}</Badge>
+                </Row>
+                <Row label="Hallmark ref">
+                  <span className="font-mono text-xs">{selected.hallmarkRef ?? '—'}</span>
+                </Row>
+                <Row label="Status">
+                  <Badge tone="info">{selected.status.replace('_', ' ').toLowerCase()}</Badge>
+                </Row>
+                <Row label="Shop">{shopNameById.get(selected.shopId) ?? selected.shopId}</Row>
+                <Row label="Category">{categoryNameById.get(selected.categoryId) ?? selected.categoryId}</Row>
               </dl>
+
+              <div className="mt-6">
+                <p className="text-eyebrow uppercase text-ink-500 mb-2">Barcode</p>
+                <BarcodePreview value={selected.barcodeData || selected.sku} />
+              </div>
+
+              <div className="mt-6 grid grid-cols-2 gap-2">
+                <Button variant="outline" disabled={selected.status !== 'IN_STOCK'} onClick={() => setTransferOpen(true)}>
+                  <Truck className="h-4 w-4" /> Transfer
+                </Button>
+                <Button variant="outline" disabled={selected.status !== 'IN_STOCK'} onClick={() => setWastageOpen(true)}>
+                  <Flame className="h-4 w-4" /> Wastage
+                </Button>
+              </div>
+
+              <ItemMovementsList itemId={selected.id} />
             </SheetBody>
           )}
         </SheetContent>
       </Sheet>
+
+      <AddItemDialog open={addOpen} onClose={() => setAddOpen(false)} />
+      {selected && (
+        <>
+          <TransferDialog
+            open={transferOpen}
+            onClose={() => setTransferOpen(false)}
+            item={selected}
+          />
+          <WastageDialog
+            open={wastageOpen}
+            onClose={() => setWastageOpen(false)}
+            item={selected}
+          />
+        </>
+      )}
     </>
+  );
+}
+
+function ItemMovementsList({ itemId }: { itemId: string }): JSX.Element {
+  const { data } = useGetMovementsQuery({ itemId });
+  const movements = data?.data ?? [];
+  return (
+    <div className="mt-6">
+      <p className="text-eyebrow uppercase text-ink-500 mb-2">Movement history</p>
+      {movements.length === 0 ? (
+        <p className="text-xs text-ink-400">No movements recorded.</p>
+      ) : (
+        <ul className="space-y-2 text-xs">
+          {movements.map((m) => (
+            <li key={m.id} className="flex items-start justify-between gap-2 border-b border-ink-100 pb-2">
+              <div>
+                <p className="text-ink-800 font-medium">{m.type.toLowerCase()}</p>
+                {m.reason && <p className="text-ink-500">{m.reason}</p>}
+              </div>
+              <span className="text-ink-400 font-mono whitespace-nowrap">
+                {new Date(m.createdAt).toLocaleString('en-IN', { dateStyle: 'short', timeStyle: 'short' })}
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+// ----------------------------------------------------------------------------
+// Movements tab (Transfers / Wastage shared).
+
+function MovementsTab({
+  type,
+  emptyLabel,
+}: {
+  type: 'TRANSFER' | 'WASTAGE';
+  emptyLabel: string;
+}): JSX.Element {
+  const { data, isLoading } = useGetMovementsQuery({ type });
+  const rows = data?.data ?? [];
+  return (
+    <div className="rounded-md border border-ink-100 bg-ink-0">
+      {isLoading && <p className="p-5 text-sm text-ink-500">Loading…</p>}
+      {!isLoading && rows.length === 0 && <p className="p-5 text-sm text-ink-500">{emptyLabel}</p>}
+      {rows.length > 0 && (
+        <table className="w-full text-sm">
+          <thead className="text-eyebrow uppercase text-ink-500">
+            <tr>
+              <th className="text-left px-5 py-3">When</th>
+              <th className="text-left px-5 py-3">Item</th>
+              <th className="text-left px-5 py-3">From</th>
+              <th className="text-left px-5 py-3">To</th>
+              <th className="text-left px-5 py-3">Reason</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-ink-100">
+            {rows.map((m) => (
+              <tr key={m.id}>
+                <td className="px-5 py-3 text-ink-700 font-mono text-xs">
+                  {new Date(m.createdAt).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' })}
+                </td>
+                <td className="px-5 py-3 font-mono text-xs">{m.itemId.slice(-8)}</td>
+                <td className="px-5 py-3 text-xs text-ink-700">{m.fromShopId?.slice(-6) ?? '—'}</td>
+                <td className="px-5 py-3 text-xs text-ink-700">{m.toShopId?.slice(-6) ?? '—'}</td>
+                <td className="px-5 py-3 text-ink-600">{m.reason ?? '—'}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </div>
+  );
+}
+
+// ----------------------------------------------------------------------------
+// Valuation tab — total + by-shop + by-category breakdown.
+
+function ValuationTab(): JSX.Element {
+  const { data, isLoading } = useGetValuationQuery({}, { pollingInterval: 60_000 });
+  const { data: shopsRes } = useGetShopsQuery();
+  const { data: catRes } = useGetCategoriesQuery();
+  const v = data?.data;
+  const shopName = (id: string): string =>
+    shopsRes?.data.find((s) => s.id === id)?.name ?? id.slice(-6);
+  const catName = (id: string): string =>
+    catRes?.data.find((c) => c.id === id)?.name ?? id.slice(-6);
+
+  if (isLoading) return <p className="text-sm text-ink-500">Loading…</p>;
+  if (!v) return <p className="text-sm text-ink-500">No valuation data yet.</p>;
+
+  return (
+    <div className="space-y-4">
+      <div className="rounded-md border border-ink-100 bg-ink-0 p-5 flex items-center justify-between">
+        <div>
+          <p className="text-eyebrow uppercase text-ink-500">Total stock value</p>
+          <p className="font-mono text-3xl text-ink-900 mt-1">
+            <Money paise={v.totalPaise} />
+          </p>
+        </div>
+        <div className="text-right">
+          <p className="text-sm text-ink-700">{v.itemCount} items in stock</p>
+          <p className="text-xs text-ink-400 mt-1">
+            As of {new Date(v.asOf).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })} · MCX
+          </p>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div className="rounded-md border border-ink-100 bg-ink-0 p-5">
+          <p className="text-eyebrow uppercase text-ink-500">By shop</p>
+          <ul className="mt-3 space-y-2 text-sm">
+            {v.byShop.length === 0 && <li className="text-ink-500">—</li>}
+            {v.byShop.map((s) => (
+              <li key={s.shopId} className="flex items-center justify-between border-b border-ink-100 pb-2 last:border-0">
+                <span className="text-ink-800">{shopName(s.shopId)}</span>
+                <span className="text-xs text-ink-500">{s.itemCount} items</span>
+                <Money paise={s.totalPaise} className="font-mono tabular-nums" />
+              </li>
+            ))}
+          </ul>
+        </div>
+        <div className="rounded-md border border-ink-100 bg-ink-0 p-5">
+          <p className="text-eyebrow uppercase text-ink-500">By category</p>
+          <ul className="mt-3 space-y-2 text-sm">
+            {v.byCategory.length === 0 && <li className="text-ink-500">—</li>}
+            {v.byCategory.map((c) => (
+              <li key={c.categoryId} className="flex items-center justify-between border-b border-ink-100 pb-2 last:border-0">
+                <span className="text-ink-800">{catName(c.categoryId)}</span>
+                <span className="text-xs text-ink-500">{c.itemCount} items</span>
+                <Money paise={c.totalPaise} className="font-mono tabular-nums" />
+              </li>
+            ))}
+          </ul>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ----------------------------------------------------------------------------
+// Low-stock tab.
+
+function LowStockTab(): JSX.Element {
+  const [threshold, setThreshold] = useState(3);
+  const { data, isLoading } = useGetLowStockQuery({ threshold });
+  const { data: catRes } = useGetCategoriesQuery();
+  const { data: shopsRes } = useGetShopsQuery();
+  const rows = data?.data?.rows ?? [];
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center gap-3 text-sm">
+        <label className="text-ink-700">Alert threshold (items per category × shop)</label>
+        <input
+          type="number"
+          min={0}
+          max={50}
+          value={threshold}
+          onChange={(e) => setThreshold(Math.max(0, Number(e.target.value) || 0))}
+          className="h-9 w-20 px-2 rounded-md border border-ink-200 font-mono text-sm focus:outline-none focus:border-brand-500"
+        />
+      </div>
+      <div className="rounded-md border border-ink-100 bg-ink-0">
+        {isLoading && <p className="p-5 text-sm text-ink-500">Loading…</p>}
+        {!isLoading && rows.length === 0 && (
+          <p className="p-5 text-sm text-ink-500">No category × shop is at or below {threshold} items. Healthy stock.</p>
+        )}
+        {rows.length > 0 && (
+          <table className="w-full text-sm">
+            <thead className="text-eyebrow uppercase text-ink-500">
+              <tr>
+                <th className="text-left px-5 py-3">Shop</th>
+                <th className="text-left px-5 py-3">Category</th>
+                <th className="text-right px-5 py-3">Items in stock</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-ink-100">
+              {rows.map((r, i) => (
+                <tr key={i}>
+                  <td className="px-5 py-3 text-ink-800">
+                    {shopsRes?.data.find((s) => s.id === r.shopId)?.name ?? r.shopId.slice(-6)}
+                  </td>
+                  <td className="px-5 py-3 text-ink-800">
+                    {catRes?.data.find((c) => c.id === r.categoryId)?.name ?? r.categoryId.slice(-6)}
+                  </td>
+                  <td className="px-5 py-3 text-right font-mono tabular-nums">
+                    <Badge tone="warning">{r.itemCount}</Badge>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ----------------------------------------------------------------------------
+// Vendors tab.
+
+function VendorsTab(): JSX.Element {
+  const { data, isLoading } = useGetVendorsQuery();
+  const [addOpen, setAddOpen] = useState(false);
+  const rows = data?.data ?? [];
+
+  return (
+    <>
+      <div className="flex items-center justify-between">
+        <p className="text-sm text-ink-500">{rows.length} vendor{rows.length === 1 ? '' : 's'}</p>
+        <Button onClick={() => setAddOpen(true)}>
+          <Plus className="h-4 w-4" /> Add vendor
+        </Button>
+      </div>
+      <div className="rounded-md border border-ink-100 bg-ink-0">
+        {isLoading && <p className="p-5 text-sm text-ink-500">Loading…</p>}
+        {!isLoading && rows.length === 0 && (
+          <p className="p-5 text-sm text-ink-500">No vendors yet. Add your first supplier.</p>
+        )}
+        {rows.length > 0 && (
+          <table className="w-full text-sm">
+            <thead className="text-eyebrow uppercase text-ink-500">
+              <tr>
+                <th className="text-left px-5 py-3">Name</th>
+                <th className="text-left px-5 py-3">Phone</th>
+                <th className="text-left px-5 py-3">GSTIN</th>
+                <th className="text-left px-5 py-3">Address</th>
+                <th className="text-right px-5 py-3">Outstanding</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-ink-100">
+              {rows.map((v) => (
+                <tr key={v.id}>
+                  <td className="px-5 py-3 text-ink-900">{v.name}</td>
+                  <td className="px-5 py-3 font-mono text-xs">{v.phone}</td>
+                  <td className="px-5 py-3 font-mono text-xs">{v.gstNumber ?? '—'}</td>
+                  <td className="px-5 py-3 text-ink-600 text-xs max-w-xs truncate">{v.address}</td>
+                  <td className="px-5 py-3 text-right">
+                    <Money paise={v.outstandingPaise} className="font-mono tabular-nums" />
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
+      <AddVendorDialog open={addOpen} onClose={() => setAddOpen(false)} />
+    </>
+  );
+}
+
+// ----------------------------------------------------------------------------
+// Purchase orders tab.
+
+function PurchaseOrdersTab(): JSX.Element {
+  const { data, isLoading } = useGetPurchaseOrdersQuery();
+  const [createOpen, setCreateOpen] = useState(false);
+  const rows = data?.data ?? [];
+
+  return (
+    <>
+      <div className="flex items-center justify-between">
+        <p className="text-sm text-ink-500">{rows.length} PO{rows.length === 1 ? '' : 's'}</p>
+        <Button onClick={() => setCreateOpen(true)}>
+          <Plus className="h-4 w-4" /> Create PO
+        </Button>
+      </div>
+      <div className="rounded-md border border-ink-100 bg-ink-0">
+        {isLoading && <p className="p-5 text-sm text-ink-500">Loading…</p>}
+        {!isLoading && rows.length === 0 && (
+          <p className="p-5 text-sm text-ink-500">No purchase orders yet.</p>
+        )}
+        {rows.length > 0 && (
+          <table className="w-full text-sm">
+            <thead className="text-eyebrow uppercase text-ink-500">
+              <tr>
+                <th className="text-left px-5 py-3">PO #</th>
+                <th className="text-left px-5 py-3">Vendor</th>
+                <th className="text-left px-5 py-3">Created</th>
+                <th className="text-left px-5 py-3">Status</th>
+                <th className="text-right px-5 py-3">Lines</th>
+                <th className="text-right px-5 py-3">Total</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-ink-100">
+              {rows.map((po) => (
+                <tr key={po.id}>
+                  <td className="px-5 py-3 font-mono text-xs">{po.id.slice(-8)}</td>
+                  <td className="px-5 py-3 text-ink-900">{po.vendor?.name ?? '—'}</td>
+                  <td className="px-5 py-3 font-mono text-xs">
+                    {new Date(po.createdAt).toLocaleDateString('en-IN', { dateStyle: 'medium' })}
+                  </td>
+                  <td className="px-5 py-3">
+                    <Badge tone={po.status === 'DRAFT' ? 'neutral' : po.status === 'RECEIVED' ? 'success' : 'info'}>
+                      {po.status.toLowerCase()}
+                    </Badge>
+                  </td>
+                  <td className="px-5 py-3 text-right font-mono tabular-nums">{po.items.length}</td>
+                  <td className="px-5 py-3 text-right">
+                    <Money paise={po.totalPaise} className="font-mono tabular-nums" />
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
+      <CreatePODialog open={createOpen} onClose={() => setCreateOpen(false)} />
+    </>
+  );
+}
+
+// ----------------------------------------------------------------------------
+// Making-charges config (per category).
+
+function MakingChargesTab(): JSX.Element {
+  const { data, isLoading } = useGetCategoriesQuery();
+  const [update, { isLoading: saving }] = useUpdateCategoryMakingChargeMutation();
+  const [draft, setDraft] = useState<Record<string, number>>({});
+
+  if (isLoading) return <p className="text-sm text-ink-500">Loading…</p>;
+  const cats = data?.data ?? [];
+
+  return (
+    <div className="rounded-md border border-ink-100 bg-ink-0">
+      <p className="px-5 pt-5 text-sm text-ink-600">
+        Default making-charge percentage applied at billing time per category. Stored as basis points (1% = 100 bps).
+      </p>
+      {cats.length === 0 ? (
+        <p className="p-5 text-sm text-ink-500">No categories yet. Seed runs the demo set.</p>
+      ) : (
+        <table className="w-full text-sm mt-3">
+          <thead className="text-eyebrow uppercase text-ink-500">
+            <tr>
+              <th className="text-left px-5 py-3">Category</th>
+              <th className="text-left px-5 py-3">Metal</th>
+              <th className="text-right px-5 py-3">Current (%)</th>
+              <th className="text-right px-5 py-3">New (%)</th>
+              <th className="px-5 py-3" />
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-ink-100">
+            {cats.map((c) => {
+              const currentPct = c.defaultMakingChargeBps / 100;
+              const draftPct = draft[c.id] ?? currentPct;
+              const dirty = draftPct !== currentPct;
+              return (
+                <tr key={c.id}>
+                  <td className="px-5 py-3 text-ink-900">{c.name}</td>
+                  <td className="px-5 py-3 text-xs text-ink-700">{c.metalType}</td>
+                  <td className="px-5 py-3 text-right font-mono tabular-nums">{currentPct.toFixed(2)}</td>
+                  <td className="px-5 py-3 text-right">
+                    <input
+                      type="number"
+                      step="0.5"
+                      min={0}
+                      max={100}
+                      value={draftPct}
+                      onChange={(e) =>
+                        setDraft({ ...draft, [c.id]: Math.max(0, Math.min(100, Number(e.target.value) || 0)) })
+                      }
+                      className="h-9 w-24 px-2 rounded-md border border-ink-200 font-mono text-sm text-right focus:outline-none focus:border-brand-500"
+                    />
+                  </td>
+                  <td className="px-5 py-3 text-right">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      disabled={!dirty || saving}
+                      onClick={async () => {
+                        try {
+                          await update({
+                            id: c.id,
+                            defaultMakingChargeBps: Math.round(draftPct * 100),
+                          }).unwrap();
+                          toast.success(`Updated ${c.name}`);
+                          setDraft((d) => {
+                            const next = { ...d };
+                            delete next[c.id];
+                            return next;
+                          });
+                        } catch {
+                          toast.error('Could not save');
+                        }
+                      }}
+                    >
+                      Save
+                    </Button>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      )}
+    </div>
+  );
+}
+
+// ----------------------------------------------------------------------------
+// Audit log tab.
+
+function AuditTab(): JSX.Element {
+  const { data, isLoading } = useGetAuditLogQuery(undefined, { pollingInterval: 30_000 });
+  const rows = data?.data ?? [];
+  return (
+    <div className="rounded-md border border-ink-100 bg-ink-0">
+      {isLoading && <p className="p-5 text-sm text-ink-500">Loading…</p>}
+      {!isLoading && rows.length === 0 && <p className="p-5 text-sm text-ink-500">No audit events yet.</p>}
+      {rows.length > 0 && (
+        <table className="w-full text-sm">
+          <thead className="text-eyebrow uppercase text-ink-500">
+            <tr>
+              <th className="text-left px-5 py-3">When</th>
+              <th className="text-left px-5 py-3">Entity</th>
+              <th className="text-left px-5 py-3">ID</th>
+              <th className="text-left px-5 py-3">Action</th>
+              <th className="text-left px-5 py-3">By</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-ink-100">
+            {rows.map((a) => (
+              <tr key={a.id}>
+                <td className="px-5 py-3 font-mono text-xs text-ink-700">
+                  {new Date(a.createdAt).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' })}
+                </td>
+                <td className="px-5 py-3 text-ink-800">{a.entityType}</td>
+                <td className="px-5 py-3 font-mono text-xs">{a.entityId.slice(-8)}</td>
+                <td className="px-5 py-3">
+                  <Badge tone={a.action === 'CREATE' ? 'success' : 'info'}>{a.action.toLowerCase()}</Badge>
+                </td>
+                <td className="px-5 py-3 font-mono text-xs">{a.userId?.slice(-6) ?? 'system'}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </div>
+  );
+}
+
+// ----------------------------------------------------------------------------
+// Add-item dialog.
+
+function AddItemDialog({ open, onClose }: { open: boolean; onClose: () => void }): JSX.Element {
+  const { data: cats } = useGetCategoriesQuery();
+  const { data: shops } = useGetShopsQuery();
+  const [create, { isLoading }] = useCreateItemMutation();
+  const [form, setForm] = useState({
+    sku: '',
+    shopId: '',
+    categoryId: '',
+    weightG: '',
+    purityCarat: '22',
+    stoneWeightG: '',
+    hallmarkStatus: 'PENDING' as 'PENDING' | 'SUBMITTED' | 'CERTIFIED' | 'EXEMPT',
+    hallmarkRef: '',
+    costPriceRupees: '',
+    makingChargePct: '',
+  });
+
+  // Pre-fill defaults once data lands.
+  if (!form.shopId && shops?.data[0]) setForm((f) => ({ ...f, shopId: shops.data[0]!.id }));
+  if (!form.categoryId && cats?.data[0]) setForm((f) => ({ ...f, categoryId: cats.data[0]!.id }));
+
+  const submit = async (e: React.FormEvent): Promise<void> => {
+    e.preventDefault();
+    const weightMg = Math.round(parseFloat(form.weightG) * 1000);
+    const purityCaratX100 = Math.round(parseFloat(form.purityCarat) * 100);
+    const costPricePaise = Math.round(parseFloat(form.costPriceRupees) * 100);
+    if (!form.sku.trim()) return void toast.error('SKU is required');
+    if (!Number.isFinite(weightMg) || weightMg <= 0) return void toast.error('Weight must be > 0');
+    if (![1400, 1800, 2200, 2400].includes(purityCaratX100)) return void toast.error('Purity must be 14K, 18K, 22K or 24K');
+    if (!Number.isFinite(costPricePaise) || costPricePaise <= 0) return void toast.error('Cost price must be > 0');
+    if (!form.shopId || !form.categoryId) return void toast.error('Pick a shop and category');
+
+    try {
+      await create({
+        sku: form.sku.trim(),
+        barcodeData: form.sku.trim(),
+        shopId: form.shopId,
+        categoryId: form.categoryId,
+        weightMg,
+        purityCaratX100,
+        stoneWeightMg: form.stoneWeightG ? Math.round(parseFloat(form.stoneWeightG) * 1000) : null,
+        hallmarkStatus: form.hallmarkStatus,
+        hallmarkRef: form.hallmarkRef.trim() || null,
+        costPricePaise,
+        makingChargeBps: form.makingChargePct ? Math.round(parseFloat(form.makingChargePct) * 100) : null,
+      }).unwrap();
+      toast.success(`Added ${form.sku}`);
+      onClose();
+    } catch (err) {
+      const message =
+        (err as { data?: { error?: { message?: string } } }).data?.error?.message ?? 'Could not save item.';
+      toast.error(message);
+    }
+  };
+
+  return (
+    <Sheet open={open} onOpenChange={(o) => !o && onClose()}>
+      <SheetContent className="!max-w-lg">
+        <SheetHeader>
+          <SheetTitle>Add item</SheetTitle>
+        </SheetHeader>
+        <SheetBody>
+          <form onSubmit={submit} className="space-y-4 text-sm">
+            <Field label="SKU">
+              <input
+                value={form.sku}
+                onChange={(e) => setForm({ ...form, sku: e.target.value })}
+                className={fieldCls}
+                placeholder="DW-0001"
+                required
+              />
+            </Field>
+            <div className="grid grid-cols-2 gap-3">
+              <Field label="Shop">
+                <select
+                  value={form.shopId}
+                  onChange={(e) => setForm({ ...form, shopId: e.target.value })}
+                  className={fieldCls}
+                  required
+                >
+                  {(shops?.data ?? []).map((s) => (
+                    <option key={s.id} value={s.id}>
+                      {s.name}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+              <Field label="Category">
+                <select
+                  value={form.categoryId}
+                  onChange={(e) => setForm({ ...form, categoryId: e.target.value })}
+                  className={fieldCls}
+                  required
+                >
+                  {(cats?.data ?? []).map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.name}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+            </div>
+            <div className="grid grid-cols-3 gap-3">
+              <Field label="Weight (g)">
+                <input
+                  type="number"
+                  step="0.001"
+                  value={form.weightG}
+                  onChange={(e) => setForm({ ...form, weightG: e.target.value })}
+                  className={fieldCls}
+                  required
+                />
+              </Field>
+              <Field label="Purity">
+                <select
+                  value={form.purityCarat}
+                  onChange={(e) => setForm({ ...form, purityCarat: e.target.value })}
+                  className={fieldCls}
+                >
+                  <option value="24">24K</option>
+                  <option value="22">22K</option>
+                  <option value="18">18K</option>
+                  <option value="14">14K</option>
+                </select>
+              </Field>
+              <Field label="Stone wt (g)">
+                <input
+                  type="number"
+                  step="0.001"
+                  value={form.stoneWeightG}
+                  onChange={(e) => setForm({ ...form, stoneWeightG: e.target.value })}
+                  className={fieldCls}
+                />
+              </Field>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <Field label="Hallmark">
+                <select
+                  value={form.hallmarkStatus}
+                  onChange={(e) =>
+                    setForm({
+                      ...form,
+                      hallmarkStatus: e.target.value as 'PENDING' | 'SUBMITTED' | 'CERTIFIED' | 'EXEMPT',
+                    })
+                  }
+                  className={fieldCls}
+                >
+                  <option value="PENDING">Pending</option>
+                  <option value="SUBMITTED">Submitted</option>
+                  <option value="CERTIFIED">Certified</option>
+                  <option value="EXEMPT">Exempt</option>
+                </select>
+              </Field>
+              <Field label="HUID ref">
+                <input
+                  value={form.hallmarkRef}
+                  onChange={(e) => setForm({ ...form, hallmarkRef: e.target.value })}
+                  className={fieldCls}
+                  placeholder="optional"
+                />
+              </Field>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <Field label="Cost price (₹)">
+                <input
+                  type="number"
+                  step="0.01"
+                  value={form.costPriceRupees}
+                  onChange={(e) => setForm({ ...form, costPriceRupees: e.target.value })}
+                  className={fieldCls}
+                  required
+                />
+              </Field>
+              <Field label="Making charge (%) override">
+                <input
+                  type="number"
+                  step="0.1"
+                  value={form.makingChargePct}
+                  onChange={(e) => setForm({ ...form, makingChargePct: e.target.value })}
+                  className={fieldCls}
+                  placeholder="uses category default"
+                />
+              </Field>
+            </div>
+            <div className="flex gap-2 pt-2">
+              <Button variant="outline" type="button" onClick={onClose} disabled={isLoading}>
+                Cancel
+              </Button>
+              <Button type="submit" className="flex-1" disabled={isLoading}>
+                {isLoading ? 'Saving…' : 'Save item'}
+              </Button>
+            </div>
+          </form>
+        </SheetBody>
+      </SheetContent>
+    </Sheet>
+  );
+}
+
+// ----------------------------------------------------------------------------
+// Transfer dialog.
+
+function TransferDialog({
+  open,
+  onClose,
+  item,
+}: {
+  open: boolean;
+  onClose: () => void;
+  item: Item;
+}): JSX.Element {
+  const { data: shops } = useGetShopsQuery();
+  const [transfer, { isLoading }] = useTransferItemMutation();
+  const others = (shops?.data ?? []).filter((s) => s.id !== item.shopId);
+  const [toShopId, setToShopId] = useState<string>('');
+  const [reason, setReason] = useState('');
+
+  if (!toShopId && others[0]) setToShopId(others[0].id);
+
+  const submit = async (e: React.FormEvent): Promise<void> => {
+    e.preventDefault();
+    if (!toShopId) return void toast.error('Pick a destination shop');
+    if (!reason.trim()) return void toast.error('Reason is required');
+    try {
+      await transfer({ id: item.id, toShopId, reason: reason.trim() }).unwrap();
+      toast.success(`Transferred ${item.sku}`);
+      onClose();
+    } catch (err) {
+      const message =
+        (err as { data?: { error?: { message?: string } } }).data?.error?.message ?? 'Could not transfer.';
+      toast.error(message);
+    }
+  };
+
+  return (
+    <Sheet open={open} onOpenChange={(o) => !o && onClose()}>
+      <SheetContent>
+        <SheetHeader>
+          <SheetTitle>Transfer {item.sku}</SheetTitle>
+        </SheetHeader>
+        <SheetBody>
+          <form onSubmit={submit} className="space-y-4 text-sm">
+            <Field label="Destination shop">
+              <select
+                value={toShopId}
+                onChange={(e) => setToShopId(e.target.value)}
+                className={fieldCls}
+                required
+              >
+                {others.map((s) => (
+                  <option key={s.id} value={s.id}>
+                    {s.name}
+                  </option>
+                ))}
+              </select>
+            </Field>
+            <Field label="Reason">
+              <textarea
+                value={reason}
+                onChange={(e) => setReason(e.target.value)}
+                rows={3}
+                className={fieldCls}
+                placeholder="Customer requested showing at Camp branch"
+                required
+              />
+            </Field>
+            <div className="flex gap-2">
+              <Button variant="outline" type="button" onClick={onClose} disabled={isLoading}>
+                Cancel
+              </Button>
+              <Button type="submit" className="flex-1" disabled={isLoading}>
+                {isLoading ? 'Transferring…' : 'Confirm transfer'}
+              </Button>
+            </div>
+          </form>
+        </SheetBody>
+      </SheetContent>
+    </Sheet>
+  );
+}
+
+// ----------------------------------------------------------------------------
+// Wastage dialog.
+
+function WastageDialog({
+  open,
+  onClose,
+  item,
+}: {
+  open: boolean;
+  onClose: () => void;
+  item: Item;
+}): JSX.Element {
+  const [record, { isLoading }] = useRecordWastageMutation();
+  const [reason, setReason] = useState('');
+
+  const submit = async (e: React.FormEvent): Promise<void> => {
+    e.preventDefault();
+    if (!reason.trim()) return void toast.error('Reason is required');
+    if (!window.confirm(`Mark ${item.sku} as melted/wasted? This cannot be undone.`)) return;
+    try {
+      await record({ id: item.id, reason: reason.trim() }).unwrap();
+      toast.success(`Recorded wastage for ${item.sku}`);
+      onClose();
+    } catch (err) {
+      const message =
+        (err as { data?: { error?: { message?: string } } }).data?.error?.message ?? 'Could not record.';
+      toast.error(message);
+    }
+  };
+
+  return (
+    <Sheet open={open} onOpenChange={(o) => !o && onClose()}>
+      <SheetContent>
+        <SheetHeader>
+          <SheetTitle>Wastage / melting · {item.sku}</SheetTitle>
+        </SheetHeader>
+        <SheetBody>
+          <form onSubmit={submit} className="space-y-4 text-sm">
+            <p className="text-ink-600">
+              The piece will be marked <Badge tone="warning">melted</Badge> and removed from in-stock valuation.
+              The movement stays on the item's audit trail forever.
+            </p>
+            <Field label="Reason">
+              <textarea
+                value={reason}
+                onChange={(e) => setReason(e.target.value)}
+                rows={3}
+                className={fieldCls}
+                placeholder="Re-melted into 22K bar — design discontinued"
+                required
+              />
+            </Field>
+            <div className="flex gap-2">
+              <Button variant="outline" type="button" onClick={onClose} disabled={isLoading}>
+                Cancel
+              </Button>
+              <Button type="submit" className="flex-1" disabled={isLoading}>
+                {isLoading ? 'Recording…' : 'Confirm wastage'}
+              </Button>
+            </div>
+          </form>
+        </SheetBody>
+      </SheetContent>
+    </Sheet>
+  );
+}
+
+// ----------------------------------------------------------------------------
+// Add-vendor dialog.
+
+function AddVendorDialog({ open, onClose }: { open: boolean; onClose: () => void }): JSX.Element {
+  const [create, { isLoading }] = useCreateVendorMutation();
+  const [form, setForm] = useState({ name: '', phone: '+91', gstNumber: '', address: '' });
+
+  const submit = async (e: React.FormEvent): Promise<void> => {
+    e.preventDefault();
+    const digits = form.phone.replace(/\D/g, '');
+    const local = digits.startsWith('91') ? digits.slice(2) : digits;
+    if (form.name.trim().length < 2) return void toast.error('Name is required');
+    if (!/^[6-9]\d{9}$/.test(local)) return void toast.error('Phone must be a valid Indian number');
+    try {
+      await create({
+        name: form.name.trim(),
+        phone: `+91${local}`,
+        gstNumber: form.gstNumber.trim() ? form.gstNumber.trim().toUpperCase() : null,
+        address: form.address.trim(),
+      }).unwrap();
+      toast.success(`Added vendor ${form.name}`);
+      setForm({ name: '', phone: '+91', gstNumber: '', address: '' });
+      onClose();
+    } catch (err) {
+      const message =
+        (err as { data?: { error?: { message?: string } } }).data?.error?.message ?? 'Could not save vendor.';
+      toast.error(message);
+    }
+  };
+
+  return (
+    <Sheet open={open} onOpenChange={(o) => !o && onClose()}>
+      <SheetContent>
+        <SheetHeader>
+          <SheetTitle>Add vendor</SheetTitle>
+        </SheetHeader>
+        <SheetBody>
+          <form onSubmit={submit} className="space-y-4 text-sm">
+            <Field label="Name">
+              <input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} className={fieldCls} required />
+            </Field>
+            <Field label="Phone (E.164)">
+              <input
+                value={form.phone}
+                onChange={(e) => setForm({ ...form, phone: e.target.value })}
+                className={`${fieldCls} font-mono`}
+                placeholder="+91XXXXXXXXXX"
+                required
+              />
+            </Field>
+            <Field label="GSTIN (optional)">
+              <input
+                value={form.gstNumber}
+                onChange={(e) => setForm({ ...form, gstNumber: e.target.value })}
+                className={`${fieldCls} font-mono uppercase`}
+                placeholder="27AAAAA0000A1Z5"
+              />
+            </Field>
+            <Field label="Address">
+              <textarea value={form.address} onChange={(e) => setForm({ ...form, address: e.target.value })} rows={3} className={fieldCls} />
+            </Field>
+            <div className="flex gap-2 pt-2">
+              <Button variant="outline" type="button" onClick={onClose} disabled={isLoading}>
+                Cancel
+              </Button>
+              <Button type="submit" className="flex-1" disabled={isLoading}>
+                {isLoading ? 'Saving…' : 'Save vendor'}
+              </Button>
+            </div>
+          </form>
+        </SheetBody>
+      </SheetContent>
+    </Sheet>
+  );
+}
+
+// ----------------------------------------------------------------------------
+// Create PO dialog.
+
+interface POLine {
+  itemSku: string;
+  weightG: string;
+  purityCarat: string;
+  costRupees: string;
+}
+
+function CreatePODialog({ open, onClose }: { open: boolean; onClose: () => void }): JSX.Element {
+  const { data: vendors } = useGetVendorsQuery();
+  const [create, { isLoading }] = useCreatePurchaseOrderMutation();
+  const [vendorId, setVendorId] = useState('');
+  const [lines, setLines] = useState<POLine[]>([{ itemSku: '', weightG: '', purityCarat: '22', costRupees: '' }]);
+
+  if (!vendorId && vendors?.data[0]) setVendorId(vendors.data[0].id);
+
+  const total = lines.reduce((s, l) => s + (parseFloat(l.costRupees) || 0), 0);
+
+  const submit = async (e: React.FormEvent): Promise<void> => {
+    e.preventDefault();
+    if (!vendorId) return void toast.error('Pick a vendor');
+    const items = lines.map((l) => ({
+      itemSku: l.itemSku.trim(),
+      weightMg: Math.round(parseFloat(l.weightG) * 1000),
+      purity: Math.round(parseFloat(l.purityCarat) * 100),
+      costPaise: Math.round(parseFloat(l.costRupees) * 100),
+    }));
+    if (items.some((i) => !i.itemSku || !Number.isFinite(i.weightMg) || i.weightMg <= 0 || !Number.isFinite(i.costPaise) || i.costPaise <= 0)) {
+      return void toast.error('Each line needs SKU, weight, and cost');
+    }
+    try {
+      await create({ vendorId, items }).unwrap();
+      toast.success('Purchase order created');
+      onClose();
+      setLines([{ itemSku: '', weightG: '', purityCarat: '22', costRupees: '' }]);
+    } catch (err) {
+      const message =
+        (err as { data?: { error?: { message?: string } } }).data?.error?.message ?? 'Could not create PO.';
+      toast.error(message);
+    }
+  };
+
+  return (
+    <Sheet open={open} onOpenChange={(o) => !o && onClose()}>
+      <SheetContent className="!max-w-2xl">
+        <SheetHeader>
+          <SheetTitle>Create purchase order</SheetTitle>
+        </SheetHeader>
+        <SheetBody>
+          <form onSubmit={submit} className="space-y-4 text-sm">
+            <Field label="Vendor">
+              <select value={vendorId} onChange={(e) => setVendorId(e.target.value)} className={fieldCls} required>
+                <option value="">Choose vendor…</option>
+                {(vendors?.data ?? []).map((v) => (
+                  <option key={v.id} value={v.id}>
+                    {v.name}
+                  </option>
+                ))}
+              </select>
+            </Field>
+
+            <div>
+              <div className="grid grid-cols-[1fr_90px_70px_120px_30px] gap-2 text-eyebrow uppercase text-ink-500 mb-2">
+                <span>SKU</span>
+                <span className="text-right">Weight (g)</span>
+                <span className="text-right">Purity</span>
+                <span className="text-right">Cost (₹)</span>
+                <span />
+              </div>
+              {lines.map((l, i) => (
+                <div key={i} className="grid grid-cols-[1fr_90px_70px_120px_30px] gap-2 mb-2">
+                  <input
+                    value={l.itemSku}
+                    onChange={(e) => {
+                      const next = [...lines];
+                      next[i] = { ...next[i]!, itemSku: e.target.value };
+                      setLines(next);
+                    }}
+                    className={fieldCls}
+                    placeholder="DW-0050"
+                  />
+                  <input
+                    type="number"
+                    step="0.001"
+                    value={l.weightG}
+                    onChange={(e) => {
+                      const next = [...lines];
+                      next[i] = { ...next[i]!, weightG: e.target.value };
+                      setLines(next);
+                    }}
+                    className={`${fieldCls} text-right`}
+                  />
+                  <select
+                    value={l.purityCarat}
+                    onChange={(e) => {
+                      const next = [...lines];
+                      next[i] = { ...next[i]!, purityCarat: e.target.value };
+                      setLines(next);
+                    }}
+                    className={fieldCls}
+                  >
+                    <option value="24">24K</option>
+                    <option value="22">22K</option>
+                    <option value="18">18K</option>
+                    <option value="14">14K</option>
+                  </select>
+                  <input
+                    type="number"
+                    step="0.01"
+                    value={l.costRupees}
+                    onChange={(e) => {
+                      const next = [...lines];
+                      next[i] = { ...next[i]!, costRupees: e.target.value };
+                      setLines(next);
+                    }}
+                    className={`${fieldCls} text-right`}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setLines(lines.filter((_, j) => j !== i))}
+                    disabled={lines.length === 1}
+                    className="text-ink-400 hover:text-rose-600 disabled:opacity-30"
+                    aria-label="Remove line"
+                  >
+                    ×
+                  </button>
+                </div>
+              ))}
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => setLines([...lines, { itemSku: '', weightG: '', purityCarat: '22', costRupees: '' }])}
+              >
+                + Add line
+              </Button>
+            </div>
+
+            <div className="flex items-center justify-between text-ink-700 border-t border-ink-100 pt-3">
+              <span className="text-eyebrow uppercase">Total</span>
+              <span className="font-mono text-lg">₹{total.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</span>
+            </div>
+
+            <div className="flex gap-2">
+              <Button variant="outline" type="button" onClick={onClose} disabled={isLoading}>
+                Cancel
+              </Button>
+              <Button type="submit" className="flex-1" disabled={isLoading}>
+                {isLoading ? 'Creating…' : 'Create PO'}
+              </Button>
+            </div>
+          </form>
+        </SheetBody>
+      </SheetContent>
+    </Sheet>
+  );
+}
+
+// ----------------------------------------------------------------------------
+// Small helpers.
+
+const fieldCls =
+  'w-full h-10 px-3 rounded-md border border-ink-200 bg-ink-0 text-sm focus:outline-none focus:border-brand-500';
+
+function Field({ label, children }: { label: string; children: React.ReactNode }): JSX.Element {
+  return (
+    <label className="block">
+      <span className="text-eyebrow uppercase text-ink-500 block mb-1">{label}</span>
+      {children}
+    </label>
   );
 }
 

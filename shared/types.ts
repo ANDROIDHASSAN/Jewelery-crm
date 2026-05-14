@@ -15,7 +15,11 @@ import type {
   ItemMovementSchema,
   TransferInitiateSchema,
   VendorSchema,
+  VendorInputSchema,
   PurchaseOrderSchema,
+  PurchaseOrderCreateSchema,
+  PurchaseOrderItemInputSchema,
+  WastageInputSchema,
   CustomerSchema,
   CustomerInputSchema,
   BillLineInputSchema,
@@ -48,7 +52,11 @@ export type ItemInput = z.infer<typeof ItemInputSchema>;
 export type ItemMovement = z.infer<typeof ItemMovementSchema>;
 export type TransferInitiate = z.infer<typeof TransferInitiateSchema>;
 export type Vendor = z.infer<typeof VendorSchema>;
+export type VendorInput = z.infer<typeof VendorInputSchema>;
 export type PurchaseOrder = z.infer<typeof PurchaseOrderSchema>;
+export type PurchaseOrderCreate = z.infer<typeof PurchaseOrderCreateSchema>;
+export type PurchaseOrderItemInput = z.infer<typeof PurchaseOrderItemInputSchema>;
+export type WastageInput = z.infer<typeof WastageInputSchema>;
 
 export type Customer = z.infer<typeof CustomerSchema>;
 export type CustomerInput = z.infer<typeof CustomerInputSchema>;
