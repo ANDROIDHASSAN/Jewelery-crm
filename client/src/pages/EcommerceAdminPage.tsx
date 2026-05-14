@@ -51,6 +51,9 @@ export function EcommerceAdminPage(): JSX.Element {
   const orders = orderRes?.data ?? [];
   const products = productRes?.data ?? [];
   const reservations = orders.filter((o) => o.paymentMethod === RESERVATION_PAYMENT_METHOD);
+  // Pending orders need staff acknowledgement. Surface the count as a red
+  // pip on the Orders tab so the cashier sees the queue without clicking in.
+  const pendingCount = orders.filter((o) => o.status === 'PENDING').length;
 
   return (
     <div className="space-y-4">
@@ -67,8 +70,18 @@ export function EcommerceAdminPage(): JSX.Element {
       <section className="grid grid-cols-1 md:grid-cols-4 gap-4">
         <KPI label="Published products" value={productsLoading ? '…' : String(products.filter((p) => p.isPublished).length)}
           sub={`${products.length} total in catalog`} />
-        <KPI label="Open orders"
-          value={ordersLoading ? '…' : String(orders.filter((o) => !['DELIVERED', 'CANCELLED', 'RETURNED'].includes(o.status)).length)} />
+        <KPI
+          label="Open orders"
+          value={ordersLoading ? '…' : String(orders.filter((o) => !['DELIVERED', 'CANCELLED', 'RETURNED'].includes(o.status)).length)}
+          sub={
+            pendingCount > 0 ? (
+              <span className="inline-flex items-center gap-1 text-danger-700 font-medium">
+                <span className="h-1.5 w-1.5 rounded-full bg-danger-500 animate-pulse" />
+                {pendingCount} pending · needs action
+              </span>
+            ) : undefined
+          }
+        />
         <KPI label="Open reservations"
           value={ordersLoading ? '…' : String(reservations.filter((o) => !['DELIVERED', 'CANCELLED', 'RETURNED'].includes(o.status)).length)}
           sub={`${reservations.length} total · storefront`} />
@@ -77,14 +90,44 @@ export function EcommerceAdminPage(): JSX.Element {
       </section>
 
       <div className="flex gap-1 border-b border-ink-100">
-        {([['products', 'Products'], ['orders', 'Orders'], ['reservations', `Reservations${reservations.length ? ` (${reservations.length})` : ''}`]] as const).map(([k, label]) => (
+        {([
+          { id: 'products', label: 'Products', badge: null },
+          {
+            id: 'orders',
+            label: 'Orders',
+            badge:
+              pendingCount > 0
+                ? { count: pendingCount, tone: 'danger' as const, title: `${pendingCount} pending` }
+                : null,
+          },
+          {
+            id: 'reservations',
+            label: 'Reservations',
+            badge:
+              reservations.length > 0
+                ? { count: reservations.length, tone: 'neutral' as const, title: `${reservations.length} total` }
+                : null,
+          },
+        ] as const).map((t) => (
           <button
-            key={k}
+            key={t.id}
             type="button"
-            onClick={() => setTab(k)}
-            className={`px-4 h-10 text-sm border-b-2 -mb-px ${tab === k ? 'border-brand-500 text-ink-900' : 'border-transparent text-ink-500 hover:text-ink-700'}`}
+            onClick={() => setTab(t.id)}
+            className={`px-4 h-10 text-sm border-b-2 -mb-px inline-flex items-center gap-2 ${tab === t.id ? 'border-brand-500 text-ink-900' : 'border-transparent text-ink-500 hover:text-ink-700'}`}
           >
-            {label}
+            <span>{t.label}</span>
+            {t.badge && (
+              <span
+                title={t.badge.title}
+                className={`inline-flex items-center justify-center min-w-[20px] h-5 px-1.5 rounded-full text-[10px] font-semibold tabular-nums ${
+                  t.badge.tone === 'danger'
+                    ? 'bg-danger-500 text-ink-0 animate-pulse'
+                    : 'bg-ink-100 text-ink-700'
+                }`}
+              >
+                {t.badge.count}
+              </span>
+            )}
           </button>
         ))}
       </div>
@@ -148,7 +191,15 @@ export function EcommerceAdminPage(): JSX.Element {
   );
 }
 
-function KPI({ label, value, sub }: { label: string; value: React.ReactNode; sub?: string }): JSX.Element {
+function KPI({
+  label,
+  value,
+  sub,
+}: {
+  label: string;
+  value: React.ReactNode;
+  sub?: React.ReactNode;
+}): JSX.Element {
   return (
     <div className="rounded-md border border-ink-100 bg-ink-0 p-5">
       <p className="text-eyebrow uppercase text-ink-500">{label}</p>
