@@ -15,6 +15,15 @@ export interface StaffRow {
   revenuePaise: number;
 }
 
+export interface TopProductRow {
+  productId: string;
+  name: string;
+  slug: string;
+  qty: number;
+  orderCount: number;
+  revenuePaise: number;
+}
+
 export const analyticsApi = baseApi.injectEndpoints({
   endpoints: (b) => ({
     getAnalyticsDashboard: b.query<
@@ -28,7 +37,15 @@ export const analyticsApi = baseApi.injectEndpoints({
       query: (params) => ({ url: '/analytics/staff', params }),
       providesTags: ['StaffReport'],
     }),
+    getTopProducts: b.query<{ data: TopProductRow[] }, { from?: string; to?: string; limit?: number } | void>({
+      query: (params) => ({ url: '/analytics/top-products', params: params ?? undefined }),
+      providesTags: ['SalesReport'],
+    }),
   }),
 });
 
-export const { useGetAnalyticsDashboardQuery, useGetStaffReportQuery } = analyticsApi;
+export const {
+  useGetAnalyticsDashboardQuery,
+  useGetStaffReportQuery,
+  useGetTopProductsQuery,
+} = analyticsApi;
