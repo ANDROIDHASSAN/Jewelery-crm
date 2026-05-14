@@ -1,15 +1,15 @@
-// POS receipt printing — generates a print-friendly HTML document, opens it
-// in a popup window via Blob URL, and triggers window.print() automatically.
+// POS receipt printing — generates a print-friendly HTML document and opens
+// it in an `about:blank` popup window, then triggers window.print().
 //
-// Why a popup instead of an in-page modal with CSS @media print?
+// Why `about:blank` instead of a Blob URL? Same-origin: `window.close()`
+// only works on script-opened, same-origin windows. A Blob URL is treated
+// as a different origin and silently refuses to close, leaving the cashier
+// with a stuck tab. About-blank inherits the opener origin so Close works.
+//
+// Why a popup at all instead of an in-page CSS @media print?
 // - Bill state in the POS is cleared the moment the charge succeeds (next
 //   bill starts). The popup snapshots the data so the cashier can re-print
 //   without re-entering anything.
-// - Blob URL keeps the content sandboxed in a separate origin/document so
-//   styles can't leak from the host app.
-// - Receipt printers are typically 80mm thermal but the popup also works
-//   on a regular office A4 printer; @page picks up whatever the printer
-//   prompts for.
 
 export interface PrintReceiptInput {
   billNumber: string;
@@ -60,6 +60,39 @@ function purityLabel(x100: number): string {
   return `${x100 / 100}K`;
 }
 
+// Shared CSS for the receipt. Kept separate so we can stamp it into a same-
+// origin popup's <head> via createElement('style') (no document.write).
+const RECEIPT_CSS = `
+  @page { size: A4; margin: 14mm; }
+  * { box-sizing: border-box; }
+  body { font: 12px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; color: #111; margin: 0; padding: 16px; }
+  .wrap { max-width: 740px; margin: 0 auto; }
+  .row { display: flex; justify-content: space-between; align-items: flex-start; gap: 24px; }
+  .brand { font-size: 22px; font-weight: 600; letter-spacing: -0.01em; }
+  .muted { color: #666; }
+  .small { font-size: 10.5px; }
+  .right { text-align: right; }
+  .num { text-align: right; font-variant-numeric: tabular-nums; }
+  .bold { font-weight: 600; }
+  h2 { font-size: 14px; font-weight: 600; margin: 18px 0 6px; letter-spacing: 0.04em; text-transform: uppercase; color: #666; }
+  table { width: 100%; border-collapse: collapse; margin-top: 4px; }
+  th { font-weight: 500; font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.04em; color: #666; border-bottom: 1px solid #ddd; padding: 6px 8px; text-align: left; }
+  th.num { text-align: right; }
+  td { padding: 6px 8px; border-bottom: 1px solid #eee; vertical-align: top; }
+  .totals { margin-top: 12px; margin-left: auto; width: 320px; }
+  .totals td { padding: 4px 8px; border: 0; }
+  .totals .grand td { border-top: 2px solid #111; padding-top: 10px; font-size: 14px; font-weight: 600; }
+  .pill { display: inline-block; padding: 2px 8px; border-radius: 999px; background: #f3f1ea; font-size: 10px; letter-spacing: 0.05em; text-transform: uppercase; color: #6b5a18; }
+  .foot { margin-top: 24px; padding-top: 14px; border-top: 1px dashed #ccc; color: #666; font-size: 11px; }
+  .signature { margin-top: 50px; display: flex; justify-content: space-between; gap: 40px; }
+  .signature div { flex: 1; border-top: 1px solid #333; padding-top: 4px; font-size: 11px; color: #666; }
+  .toolbar { text-align: center; margin-top: 20px; }
+  .toolbar button { padding: 8px 20px; font: 14px sans-serif; border-radius: 999px; cursor: pointer; }
+  .toolbar .primary { background: #111; color: #fff; border: 0; }
+  .toolbar .secondary { background: #fff; color: #111; border: 1px solid #ccc; }
+  @media print { body { padding: 0; } .toolbar { display: none !important; } }
+`;
+
 export function renderReceiptHtml(input: PrintReceiptInput): string {
   const dt = new Date(input.createdAt);
   const dateStr = dt.toLocaleString('en-IN', {
@@ -97,44 +130,7 @@ export function renderReceiptHtml(input: PrintReceiptInput): string {
     .join('');
 
   const t = input.totals;
-
-  return `<!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<title>Receipt ${escapeHtml(input.billNumber)}</title>
-<style>
-  @page { size: A4; margin: 14mm; }
-  * { box-sizing: border-box; }
-  body { font: 12px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; color: #111; margin: 0; padding: 16px; }
-  .wrap { max-width: 740px; margin: 0 auto; }
-  .row { display: flex; justify-content: space-between; align-items: flex-start; gap: 24px; }
-  .brand { font-size: 22px; font-weight: 600; letter-spacing: -0.01em; }
-  .muted { color: #666; }
-  .small { font-size: 10.5px; }
-  .right { text-align: right; }
-  .num { text-align: right; font-variant-numeric: tabular-nums; }
-  .bold { font-weight: 600; }
-  h2 { font-size: 14px; font-weight: 600; margin: 18px 0 6px; letter-spacing: 0.04em; text-transform: uppercase; color: #666; }
-  table { width: 100%; border-collapse: collapse; margin-top: 4px; }
-  th { font-weight: 500; font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.04em; color: #666; border-bottom: 1px solid #ddd; padding: 6px 8px; text-align: left; }
-  th.num { text-align: right; }
-  td { padding: 6px 8px; border-bottom: 1px solid #eee; vertical-align: top; }
-  .totals { margin-top: 12px; margin-left: auto; width: 320px; }
-  .totals td { padding: 4px 8px; border: 0; }
-  .totals .grand td { border-top: 2px solid #111; padding-top: 10px; font-size: 14px; font-weight: 600; }
-  .pill { display: inline-block; padding: 2px 8px; border-radius: 999px; background: #f3f1ea; font-size: 10px; letter-spacing: 0.05em; text-transform: uppercase; color: #6b5a18; }
-  .foot { margin-top: 24px; padding-top: 14px; border-top: 1px dashed #ccc; color: #666; font-size: 11px; }
-  .signature { margin-top: 50px; display: flex; justify-content: space-between; gap: 40px; }
-  .signature div { flex: 1; border-top: 1px solid #333; padding-top: 4px; font-size: 11px; color: #666; }
-  .toolbar { text-align: center; margin-top: 20px; }
-  .toolbar button { padding: 8px 20px; font: 14px sans-serif; border-radius: 999px; cursor: pointer; }
-  .toolbar .primary { background: #111; color: #fff; border: 0; }
-  .toolbar .secondary { background: #fff; color: #111; border: 1px solid #ccc; }
-  @media print { body { padding: 0; } .toolbar { display: none !important; } }
-</style>
-</head>
-<body>
+  const bodyMarkup = `
 <div class="wrap">
   <header class="row">
     <div>
@@ -204,34 +200,76 @@ export function renderReceiptHtml(input: PrintReceiptInput): string {
 <div class="toolbar">
   <button class="primary" type="button" id="print-btn">Print receipt</button>
   <button class="secondary" type="button" id="close-btn">Close</button>
-</div>
+</div>`;
 
-<script>
-  // No inline event handlers (CSP-friendly) and no document.write.
-  document.getElementById('print-btn').addEventListener('click', function() { window.print(); });
-  document.getElementById('close-btn').addEventListener('click', function() { window.close(); });
-  window.addEventListener('load', function() { setTimeout(function() { window.print(); }, 300); });
-</script>
-</body>
+  // Full standalone document — used by tests / fallback paths.
+  return `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Receipt ${escapeHtml(input.billNumber)}</title>
+<style>${RECEIPT_CSS}</style>
+</head>
+<body>${bodyMarkup}</body>
 </html>`;
 }
 
-// Open the receipt in a new tab via Blob URL. Returns true if the popup
-// opened, false if blocked (caller can fall back to in-page download).
+// Internal: returns just the receipt body markup (no <html>/<head>/<body>)
+// so we can inject it into a same-origin popup via element.innerHTML and
+// keep window.close() working. Reuses renderReceiptHtml + strips wrappers.
+function renderReceiptBody(input: PrintReceiptInput): string {
+  const full = renderReceiptHtml(input);
+  const match = full.match(/<body>([\s\S]*)<\/body>/);
+  return match ? match[1]! : full;
+}
+
+// Open the receipt in an `about:blank` popup, then build its document via
+// DOM APIs. Parsing the markup with DOMParser first means the popup never
+// sees innerHTML/document.write — we just move parsed nodes in. Same-origin
+// (`about:blank` inherits opener origin) so the Close button can actually
+// call window.close().
 export function printReceipt(input: PrintReceiptInput): boolean {
-  const html = renderReceiptHtml(input);
-  const blob = new Blob([html], { type: 'text/html;charset=utf-8' });
-  const url = URL.createObjectURL(blob);
-  const w = window.open(url, '_blank', 'width=820,height=900');
-  if (!w) {
-    // Popup blocked — surface a fallback link by triggering a same-tab open.
-    // (Cashier can right-click → open in new tab, or browser will allow it
-    // once it sees the user-gesture chain.)
-    window.location.href = url;
-    return false;
-  }
-  // Revoke the URL once the popup finishes loading so memory isn't held
-  // forever. 60s is generous — printer dialogs are slow.
-  setTimeout(() => URL.revokeObjectURL(url), 60_000);
+  const w = window.open('about:blank', '_blank', 'width=820,height=900');
+  if (!w) return false;
+
+  // Title.
+  w.document.title = `Receipt ${input.billNumber}`;
+
+  // <head>: meta + style.
+  const meta = w.document.createElement('meta');
+  meta.setAttribute('charset', 'utf-8');
+  w.document.head.appendChild(meta);
+  const style = w.document.createElement('style');
+  style.textContent = RECEIPT_CSS;
+  w.document.head.appendChild(style);
+
+  // <body>: parse the receipt markup in a sandbox document via DOMParser,
+  // then import each child node into the popup. The markup contains only
+  // pre-escaped strings (escapeHtml on every dynamic value) so there is no
+  // injection surface.
+  const parser = new DOMParser();
+  const parsed = parser.parseFromString(
+    `<!doctype html><html><body>${renderReceiptBody(input)}</body></html>`,
+    'text/html',
+  );
+  Array.from(parsed.body.childNodes).forEach((node) => {
+    w.document.body.appendChild(w.document.importNode(node, true));
+  });
+
+  // Wire toolbar buttons via the popup's own document — no inline handlers.
+  const printBtn = w.document.getElementById('print-btn');
+  const closeBtn = w.document.getElementById('close-btn');
+  if (printBtn) printBtn.addEventListener('click', () => w.print());
+  if (closeBtn) closeBtn.addEventListener('click', () => w.close());
+
+  // Auto-fire the print dialog after a paint tick.
+  setTimeout(() => {
+    try {
+      w.print();
+    } catch {
+      /* user can still hit the Print button if auto-print fails */
+    }
+  }, 300);
+
   return true;
 }
