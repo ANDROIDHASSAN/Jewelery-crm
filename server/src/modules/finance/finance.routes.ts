@@ -288,7 +288,26 @@ financeRouter.get('/expenses/by-category', async (req, res, next) => {
 financeRouter.post('/expenses', async (req, res, next) => {
   try {
     const body = ExpenseInputSchema.parse(req.body);
+    // Validate shopId belongs to the caller's tenant BEFORE the create — turns
+    // a confusing P2003 (FK failed) 500 into a clear 400. The Prisma tenant
+    // extension scopes findUnique to the current tenant; a cross-tenant or
+    // stale shopId returns null.
+    const shop = await prisma.shop.findUnique({ where: { id: body.shopId } });
+    if (!shop) {
+      res.status(400).json({
+        error: {
+          code: 'INVALID_SHOP',
+          message: `Shop ${body.shopId} not found for this tenant. Refresh the page to reload the shop list.`,
+        },
+      });
+      return;
+    }
     const created = await prisma.expense.create({ data: body });
+    // Bust the finance summary cache so the new expense shows up in tiles
+    // immediately rather than waiting up to 60s for the TTL.
+    for (const key of Array.from(summaryCache.keys())) {
+      if (key.startsWith(`${created.tenantId}:`)) summaryCache.delete(key);
+    }
     res.status(201).json({ data: created });
   } catch (err) {
     next(err);
