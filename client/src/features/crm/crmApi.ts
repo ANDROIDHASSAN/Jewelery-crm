@@ -25,7 +25,19 @@ export const crmApi = baseApi.injectEndpoints({
       query: ({ id, ...body }) => ({ url: `/crm/leads/${id}`, method: 'PATCH', body }),
       invalidatesTags: (_r, _e, a) => [{ type: 'Lead', id: a.id }, { type: 'Lead', id: 'LIST' }],
     }),
+    sendBroadcast: b.mutation<
+      ApiOne<{ queued: number; recipients: Array<{ id: string; name: string; phone: string }> }>,
+      { audience: 'ALL' | LeadStatus; template: string; message: string }
+    >({
+      query: (body) => ({ url: '/crm/broadcasts', method: 'POST', body }),
+      invalidatesTags: [{ type: 'Lead', id: 'LIST' }],
+    }),
   }),
 });
 
-export const { useGetLeadsQuery, useCreateLeadMutation, useUpdateLeadMutation } = crmApi;
+export const {
+  useGetLeadsQuery,
+  useCreateLeadMutation,
+  useUpdateLeadMutation,
+  useSendBroadcastMutation,
+} = crmApi;

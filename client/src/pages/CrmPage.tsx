@@ -16,7 +16,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { LEAD_STATUSES, type LeadStatus } from '@goldos/shared/constants';
 import {
-  useGetLeadsQuery, useUpdateLeadMutation, useCreateLeadMutation,
+  useGetLeadsQuery, useUpdateLeadMutation, useCreateLeadMutation, useSendBroadcastMutation,
 } from '@/features/crm/crmApi';
 import type { Lead } from '@goldos/shared/types';
 import { cn } from '@/lib/cn';
@@ -448,7 +448,7 @@ function CampaignsView({ leads }: { leads: Lead[] }): JSX.Element {
         <PlatformCard
           title="Google Ads"
           subtitle="Search & Performance Max"
-          status="Connected"
+          status="Not connected"
           icon={<span className="font-display text-lg">G</span>}
           totalLeads={leads.filter((l) => (l.utmSource ?? l.source) === 'google').length}
           accent="from-blue-50 to-blue-100/40 border-blue-200"
@@ -456,7 +456,7 @@ function CampaignsView({ leads }: { leads: Lead[] }): JSX.Element {
         <PlatformCard
           title="Facebook & Instagram Ads"
           subtitle="Lead-form sync via Meta API"
-          status="Connected"
+          status="Not connected"
           icon={<span className="font-display text-lg">f</span>}
           totalLeads={leads.filter((l) => ['facebook', 'instagram'].includes(l.utmSource ?? l.source)).length}
           accent="from-violet-50 to-violet-100/40 border-violet-200"
@@ -537,8 +537,11 @@ function PlatformCard({
           <span className="text-xs text-ink-500">leads tracked</span>
         </div>
       </div>
-      <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 inline-flex items-center gap-1">
-        <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
+      <span className={cn(
+        'text-[10px] px-2 py-0.5 rounded-full inline-flex items-center gap-1',
+        status === 'Connected' ? 'bg-emerald-50 text-emerald-700' : 'bg-ink-100 text-ink-700',
+      )}>
+        <span className={cn('h-1.5 w-1.5 rounded-full', status === 'Connected' ? 'bg-emerald-500' : 'bg-ink-400')} />
         {status}
       </span>
     </div>
@@ -560,19 +563,28 @@ function BroadcastsView({ leads }: { leads: Lead[] }): JSX.Element {
   const [templateId, setTemplateId] = useState(TEMPLATES[0]!.id);
   const [audience, setAudience] = useState<'all' | 'NEW' | 'INTERESTED' | 'CONVERTED'>('all');
   const [body, setBody] = useState(TEMPLATES[0]!.body);
-  const [sending, setSending] = useState(false);
+  const [sendBroadcast, { isLoading: sending }] = useSendBroadcastMutation();
 
   const recipients = audience === 'all' ? leads : leads.filter((l) => l.status === audience);
 
-  function send(): void {
+  async function send(): Promise<void> {
     if (recipients.length === 0) return;
-    setSending(true);
-    setTimeout(() => {
-      setSending(false);
-      toast.success(`Queued WhatsApp broadcast to ${recipients.length} recipients`, {
-        description: 'BullMQ will fan-out at 50 messages/minute to stay under Meta rate limits.',
+    const tpl = TEMPLATES.find((t) => t.id === templateId);
+    try {
+      const res = await sendBroadcast({
+        audience: audience === 'all' ? 'ALL' : audience,
+        template: tpl?.name ?? templateId,
+        message: body,
+      }).unwrap();
+      toast.success(`Queued WhatsApp broadcast to ${res.data.queued} recipients`, {
+        description: 'Logged to each lead\'s activity timeline. Meta send dispatch via BullMQ in next phase.',
       });
-    }, 800);
+    } catch (err) {
+      const message =
+        (err as { data?: { error?: { message?: string } } }).data?.error?.message ??
+        'Could not queue broadcast';
+      toast.error(message);
+    }
   }
 
   return (
@@ -642,7 +654,7 @@ function BroadcastsView({ leads }: { leads: Lead[] }): JSX.Element {
           <Button
             className="w-full mt-4 gap-2"
             disabled={sending || recipients.length === 0}
-            onClick={send}
+            onClick={() => void send()}
           >
             <Send className="h-4 w-4" /> {sending ? 'Queuing…' : 'Send broadcast'}
           </Button>

@@ -169,13 +169,18 @@ export function ProductDetailPage(): JSX.Element {
             <button
               type="button"
               onClick={() => {
+                // Cart pricePaise mirrors what the server uses for order
+                // line items (basePricePaise + stoneChargePaise) so the
+                // checkout total matches what gets stored. Cart adds GST.
+                const unitPaise = product.basePricePaise + product.stoneChargePaise;
                 dispatch(
                   addToCart({
                     slug,
                     name: product.name,
                     weight: `${weightG.toFixed(2)} g · ${purity}`,
-                    priceLabel: `₹${(total / 100).toLocaleString('en-IN')}`,
-                    pricePaise: total,
+                    priceLabel: `₹${(unitPaise / 100).toLocaleString('en-IN')}`,
+                    pricePaise: unitPaise,
+                    size,
                     img: product.images[0] ?? '',
                     qty,
                   }),
@@ -196,15 +201,19 @@ export function ProductDetailPage(): JSX.Element {
             <button
               type="button"
               onClick={() => {
-                dispatch(
-                  toggleWishlist({
-                    slug,
-                    name: product.name,
-                    weight: `${weightG.toFixed(2)} g · ${purity}`,
-                    priceLabel: `₹${(total / 100).toLocaleString('en-IN')}`,
-                    img: product.images[0] ?? '',
-                  }),
-                );
+                {
+                  const unitPaise = product.basePricePaise + product.stoneChargePaise;
+                  dispatch(
+                    toggleWishlist({
+                      slug,
+                      name: product.name,
+                      weight: `${weightG.toFixed(2)} g · ${purity}`,
+                      priceLabel: `₹${(unitPaise / 100).toLocaleString('en-IN')}`,
+                      pricePaise: unitPaise,
+                      img: product.images[0] ?? '',
+                    }),
+                  );
+                }
                 toast.success(wishlisted ? 'Removed from wishlist' : 'Saved to wishlist');
               }}
               className={cn(

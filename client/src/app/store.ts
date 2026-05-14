@@ -54,6 +54,18 @@ const baseQueryWithRefresh: BaseQueryFn<string | FetchArgs, unknown, FetchBaseQu
 export const baseApi = createApi({
   reducerPath: 'api',
   baseQuery: baseQueryWithRefresh,
+  // Hold cached query data for 5 min after the last subscriber unmounts.
+  // Lets users navigate around the app without re-fetching anything they've
+  // already loaded recently. Polling endpoints still update on their own cadence.
+  keepUnusedDataFor: 300,
+  // Don't re-fetch every time a component mounts the same query — RTK Query's
+  // dedup + cache will serve the existing data instantly. Polling intervals
+  // still drive freshness for the screens that opted in.
+  refetchOnMountOrArgChange: false,
+  // Re-fetch when the tab regains focus / network reconnects, since users
+  // come back to the demo after long idle periods.
+  refetchOnFocus: true,
+  refetchOnReconnect: true,
   tagTypes: [
     'Tenant',
     'Shop',

@@ -10,8 +10,14 @@ export interface CartItem {
   weight: string;
   /** Display price label (e.g. "₹62,200"). Source of truth is the catalog. */
   priceLabel: string;
-  /** Numeric paise value for totals. */
+  /**
+   * Numeric paise — pre-GST subtotal for one unit, matching the server's
+   * (basePricePaise + stoneChargePaise) so the cart total stays aligned with
+   * what the server stores on order creation.
+   */
   pricePaise: number;
+  /** Optional selected size (PDP). Surfaced on the cart line. */
+  size?: string;
   img: string;
   qty: number;
 }
@@ -21,6 +27,8 @@ export interface WishlistItem {
   name: string;
   weight: string;
   priceLabel: string;
+  /** Pre-GST paise (same convention as CartItem.pricePaise). */
+  pricePaise: number;
   img: string;
 }
 

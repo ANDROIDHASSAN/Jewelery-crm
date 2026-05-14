@@ -29,8 +29,11 @@ import {
   useGetMovementsQuery,
   useGetVendorsQuery,
   useCreateVendorMutation,
+  useUpdateVendorMutation,
+  useDeleteVendorMutation,
   useGetPurchaseOrdersQuery,
   useCreatePurchaseOrderMutation,
+  useReceivePurchaseOrderMutation,
   useGetAuditLogQuery,
   useUpdateCategoryMakingChargeMutation,
 } from '@/features/inventory/inventoryApi';
@@ -505,7 +508,21 @@ function LowStockTab(): JSX.Element {
 function VendorsTab(): JSX.Element {
   const { data, isLoading } = useGetVendorsQuery();
   const [addOpen, setAddOpen] = useState(false);
+  const [deleteVendor] = useDeleteVendorMutation();
   const rows = data?.data ?? [];
+
+  async function handleDelete(id: string, name: string): Promise<void> {
+    if (!window.confirm(`Delete vendor "${name}"?`)) return;
+    try {
+      await deleteVendor(id).unwrap();
+      toast.success(`${name} deleted`);
+    } catch (err) {
+      const message =
+        (err as { data?: { error?: { message?: string } } }).data?.error?.message ??
+        'Cannot delete vendor';
+      toast.error(message);
+    }
+  }
 
   return (
     <>
@@ -529,6 +546,7 @@ function VendorsTab(): JSX.Element {
                 <th className="text-left px-5 py-3">GSTIN</th>
                 <th className="text-left px-5 py-3">Address</th>
                 <th className="text-right px-5 py-3">Outstanding</th>
+                <th className="px-5 py-3" />
               </tr>
             </thead>
             <tbody className="divide-y divide-ink-100">
@@ -540,6 +558,14 @@ function VendorsTab(): JSX.Element {
                   <td className="px-5 py-3 text-ink-600 text-xs max-w-xs truncate">{v.address}</td>
                   <td className="px-5 py-3 text-right">
                     <Money paise={v.outstandingPaise} className="font-mono tabular-nums" />
+                  </td>
+                  <td className="px-5 py-3 text-right">
+                    <button
+                      onClick={() => void handleDelete(v.id, v.name)}
+                      className="text-xs text-danger-600 hover:underline"
+                    >
+                      Delete
+                    </button>
                   </td>
                 </tr>
               ))}
@@ -557,8 +583,40 @@ function VendorsTab(): JSX.Element {
 
 function PurchaseOrdersTab(): JSX.Element {
   const { data, isLoading } = useGetPurchaseOrdersQuery();
+  const { data: shopsRes } = useGetShopsQuery();
+  const { data: catsRes } = useGetCategoriesQuery();
+  const [receivePO, { isLoading: receiving }] = useReceivePurchaseOrderMutation();
   const [createOpen, setCreateOpen] = useState(false);
   const rows = data?.data ?? [];
+  const shops = shopsRes?.data ?? [];
+  const cats = catsRes?.data ?? [];
+
+  async function handleReceive(poId: string): Promise<void> {
+    if (shops.length === 0 || cats.length === 0) {
+      toast.error('Add a shop and a category first');
+      return;
+    }
+    // Single-shop tenants auto-receive into that shop; otherwise prompt.
+    let shopId = shops[0]!.id;
+    if (shops.length > 1) {
+      const pick = window.prompt(
+        `Receive into which shop?\n${shops.map((s, i) => `${i + 1}. ${s.name}`).join('\n')}\n\nEnter number:`,
+        '1',
+      );
+      const idx = Number(pick) - 1;
+      if (!Number.isFinite(idx) || idx < 0 || idx >= shops.length) return;
+      shopId = shops[idx]!.id;
+    }
+    try {
+      await receivePO({ id: poId, shopId, categoryId: cats[0]!.id }).unwrap();
+      toast.success('PO received — items added to stock');
+    } catch (err) {
+      const message =
+        (err as { data?: { error?: { message?: string } } }).data?.error?.message ??
+        'Could not receive PO';
+      toast.error(message);
+    }
+  }
 
   return (
     <>
@@ -583,6 +641,7 @@ function PurchaseOrdersTab(): JSX.Element {
                 <th className="text-left px-5 py-3">Status</th>
                 <th className="text-right px-5 py-3">Lines</th>
                 <th className="text-right px-5 py-3">Total</th>
+                <th className="px-5 py-3" />
               </tr>
             </thead>
             <tbody className="divide-y divide-ink-100">
@@ -601,6 +660,18 @@ function PurchaseOrdersTab(): JSX.Element {
                   <td className="px-5 py-3 text-right font-mono tabular-nums">{po.items.length}</td>
                   <td className="px-5 py-3 text-right">
                     <Money paise={po.totalPaise} className="font-mono tabular-nums" />
+                  </td>
+                  <td className="px-5 py-3 text-right">
+                    {po.status !== 'RECEIVED' && po.status !== 'CANCELLED' && (
+                      <Button
+                        size="sm"
+                        variant="secondary"
+                        disabled={receiving}
+                        onClick={() => void handleReceive(po.id)}
+                      >
+                        Receive
+                      </Button>
+                    )}
                   </td>
                 </tr>
               ))}

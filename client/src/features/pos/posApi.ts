@@ -1,5 +1,5 @@
 import { baseApi } from '@/app/store';
-import type { Bill, BillCreate, ApiList, ApiOne, Customer } from '@goldos/shared/types';
+import type { Bill, BillCreate, ApiList, ApiOne, Customer, Item } from '@goldos/shared/types';
 
 export const posApi = baseApi.injectEndpoints({
   endpoints: (b) => ({
@@ -26,7 +26,16 @@ export const posApi = baseApi.injectEndpoints({
       query: () => '/pos/gold-rate',
       providesTags: ['GoldRate'],
     }),
+    findItemByBarcode: b.query<ApiOne<Item>, { code: string }>({
+      query: ({ code }) => ({ url: '/pos/items/by-barcode', params: { code } }),
+    }),
   }),
 });
 
-export const { useGetBillsQuery, useCreateBillMutation, useLazyFindCustomerQuery, useGetGoldRateQuery } = posApi;
+export const {
+  useGetBillsQuery,
+  useCreateBillMutation,
+  useLazyFindCustomerQuery,
+  useGetGoldRateQuery,
+  useLazyFindItemByBarcodeQuery,
+} = posApi;

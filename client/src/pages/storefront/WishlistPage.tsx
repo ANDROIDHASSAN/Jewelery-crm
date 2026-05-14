@@ -1,13 +1,8 @@
 import { Link } from 'react-router-dom';
 import { Heart, ShoppingBag, X } from 'lucide-react';
+import { toast } from 'sonner';
 import { useAppDispatch, useAppSelector } from '@/app/hooks';
 import { removeFromWishlist, addToCart } from '@/features/storefront/shopSlice';
-
-function parsePricePaise(label: string): number {
-  const digits = label.replace(/[^\d]/g, '');
-  if (!digits) return 0;
-  return Number(digits) * 100;
-}
 
 export function WishlistPage(): JSX.Element {
   const wishlist = useAppSelector((s) => s.shop.wishlist);
@@ -47,7 +42,10 @@ export function WishlistPage(): JSX.Element {
           <article key={item.slug} className="group relative">
             <button
               type="button"
-              onClick={() => dispatch(removeFromWishlist(item.slug))}
+              onClick={() => {
+                dispatch(removeFromWishlist(item.slug));
+                toast.success('Removed from wishlist');
+              }}
               className="absolute top-3 right-3 z-10 h-9 w-9 rounded-full bg-ink-0/95 backdrop-blur text-ink-700 hover:text-ink-900 inline-flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity shadow-sm"
               aria-label={`Remove ${item.name} from wishlist`}
             >
@@ -70,18 +68,19 @@ export function WishlistPage(): JSX.Element {
             </Link>
             <button
               type="button"
-              onClick={() =>
+              onClick={() => {
                 dispatch(
                   addToCart({
                     slug: item.slug,
                     name: item.name,
                     weight: item.weight,
                     priceLabel: item.priceLabel,
-                    pricePaise: parsePricePaise(item.priceLabel),
+                    pricePaise: item.pricePaise,
                     img: item.img,
                   }),
-                )
-              }
+                );
+                toast.success(`${item.name} added to bag`);
+              }}
               className="mt-3 w-full h-10 rounded-full border border-ink-200 text-ink-900 text-xs font-medium hover:bg-ink-50 inline-flex items-center justify-center gap-2 transition-colors"
             >
               <ShoppingBag className="h-3.5 w-3.5" />

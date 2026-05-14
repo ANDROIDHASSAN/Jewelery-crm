@@ -60,7 +60,9 @@ export function CartPage(): JSX.Element {
                 <Link to={`/store/products/${item.slug}`} className="font-display text-[20px] text-ink-900 truncate hover:underline decoration-ink-300 underline-offset-4">
                   {item.name}
                 </Link>
-                <p className="text-xs text-ink-500 mt-1">{item.weight}</p>
+                <p className="text-xs text-ink-500 mt-1">
+                  {item.weight}{item.size ? ` · Size ${item.size}″` : ''}
+                </p>
                 <p className="text-sm text-ink-900 font-mono tabular-nums mt-2">{item.priceLabel}</p>
 
                 <div className="mt-auto flex items-center justify-between pt-4">

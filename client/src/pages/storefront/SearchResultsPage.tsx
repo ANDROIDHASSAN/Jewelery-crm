@@ -2,27 +2,24 @@ import { useMemo } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { Search as SearchIcon } from 'lucide-react';
 import { useAppSelector } from '@/app/hooks';
-
-const CATALOG = [
-  { slug: 'mira-bangle', name: 'Mira bangle', priceLabel: '₹84,500', weight: '12.45 g · 22K', img: 'https://images.unsplash.com/photo-1611591437281-460bfbe1220a?auto=format&fit=crop&w=800&q=80', tags: 'bridal bangle 22k gold' },
-  { slug: 'tara-mangalsutra', name: 'Tara mangalsutra', priceLabel: '₹62,200', weight: '8.10 g · 22K', img: 'https://images.unsplash.com/photo-1599643477877-530eb83abc8e?auto=format&fit=crop&w=800&q=80', tags: 'bridal mangalsutra chain 22k' },
-  { slug: 'aarya-ring', name: 'Aarya solitaire', priceLabel: '₹48,900', weight: '0.32 ct · 18K', img: 'https://images.unsplash.com/photo-1603561591411-07134e71a2a9?auto=format&fit=crop&w=800&q=80', tags: 'diamond ring solitaire 18k' },
-  { slug: 'riya-jhumka', name: 'Riya jhumkas', priceLabel: '₹31,400', weight: '5.20 g · 22K', img: 'https://images.unsplash.com/photo-1605100804763-247f67b3557e?auto=format&fit=crop&w=800&q=80', tags: 'festive jhumka earring 22k' },
-  { slug: 'diya-chain', name: 'Diya chain', priceLabel: '₹54,800', weight: '7.40 g · 22K', img: 'https://images.unsplash.com/photo-1611591437281-460bfbe1220a?auto=format&fit=crop&w=800&q=80', tags: 'daily wear chain 22k gold' },
-];
+import { useGetPublicProductsQuery } from '@/features/storefront/storefrontApi';
 
 export function SearchResultsPage(): JSX.Element {
   const [params] = useSearchParams();
   const q = (params.get('q') ?? '').trim();
   const collections = useAppSelector((s) => s.storefrontContent.collections);
+  const { data: products = [], isLoading } = useGetPublicProductsQuery();
 
   const productMatches = useMemo(() => {
     if (!q) return [];
     const needle = q.toLowerCase();
-    return CATALOG.filter(
-      (p) => p.name.toLowerCase().includes(needle) || p.tags.toLowerCase().includes(needle),
+    return products.filter(
+      (p) =>
+        p.name.toLowerCase().includes(needle) ||
+        p.descriptionMd.toLowerCase().includes(needle) ||
+        p.slug.includes(needle),
     );
-  }, [q]);
+  }, [q, products]);
 
   const collectionMatches = useMemo(() => {
     if (!q) return [];
@@ -57,7 +54,9 @@ export function SearchResultsPage(): JSX.Element {
         </div>
       )}
 
-      {q && !hasResults && (
+      {q && isLoading && <p className="text-sm text-ink-500">Searching…</p>}
+
+      {q && !isLoading && !hasResults && (
         <div className="rounded-md border border-ink-100 bg-ink-25 p-8 text-center">
           <p className="text-ink-700">Nothing matched &ldquo;{q}&rdquo;.</p>
           <p className="text-sm text-ink-500 mt-1">
@@ -87,18 +86,22 @@ export function SearchResultsPage(): JSX.Element {
         <section>
           <h2 className="font-display text-[22px] text-ink-900 mb-5">Pieces</h2>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-x-5 gap-y-10">
-            {productMatches.map((p) => (
-              <Link key={p.slug} to={`/store/products/${p.slug}`} className="group block">
-                <div className="aspect-[4/5] overflow-hidden bg-ink-100">
-                  <img src={p.img} alt={p.name} className="h-full w-full object-cover group-hover:scale-[1.03] transition-transform duration-slow" loading="lazy" />
-                </div>
-                <div className="mt-4">
-                  <h3 className="font-display text-[17px] text-ink-900 leading-tight">{p.name}</h3>
-                  <p className="text-xs text-ink-500 mt-1">{p.weight}</p>
-                  <p className="text-sm text-ink-900 font-mono tabular-nums mt-1.5">{p.priceLabel}</p>
-                </div>
-              </Link>
-            ))}
+            {productMatches.map((p) => {
+              const price = p.basePricePaise + p.stoneChargePaise;
+              const purity = p.purityCaratX100 < 1000 ? 'Silver' : `${p.purityCaratX100 / 100}K`;
+              return (
+                <Link key={p.id} to={`/store/products/${p.slug}`} className="group block">
+                  <div className="aspect-[4/5] overflow-hidden bg-ink-100">
+                    <img src={p.images[0] ?? ''} alt={p.name} className="h-full w-full object-cover group-hover:scale-[1.03] transition-transform duration-slow" loading="lazy" />
+                  </div>
+                  <div className="mt-4">
+                    <h3 className="font-display text-[17px] text-ink-900 leading-tight">{p.name}</h3>
+                    <p className="text-xs text-ink-500 mt-1">{(p.weightMg / 1000).toFixed(2)} g · {purity}</p>
+                    <p className="text-sm text-ink-900 font-mono tabular-nums mt-1.5">₹{(price / 100).toLocaleString('en-IN')}</p>
+                  </div>
+                </Link>
+              );
+            })}
           </div>
         </section>
       )}

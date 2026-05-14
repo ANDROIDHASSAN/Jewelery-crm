@@ -9,6 +9,18 @@ import { runWithTenant } from '../../lib/async-context.js';
 
 export const websiteRouter: Router = Router();
 
+// Public GET endpoints are read-mostly + tenant-public — let Vercel's edge cache
+// them. `s-maxage` controls CDN cache; `stale-while-revalidate` lets the edge
+// serve stale-but-fast while it revalidates in the background. Storefront content
+// only changes when an admin clicks Publish (which we can invalidate via webhook
+// later); a 60s cache is safe and turns repeat visits into single-digit-ms responses.
+websiteRouter.use((req, res, next) => {
+  if (req.method === 'GET') {
+    res.setHeader('Cache-Control', 'public, s-maxage=60, stale-while-revalidate=600');
+  }
+  next();
+});
+
 // Day 17 wires per-tenant subdomain resolution; for now accept ?tenant=, falling
 // back to the first tenant in the database (single-tenant dev mode).
 async function resolveTenant(req: { query: Record<string, unknown> }): Promise<string> {

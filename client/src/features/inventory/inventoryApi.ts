@@ -130,6 +130,29 @@ export const inventoryApi = baseApi.injectEndpoints({
       query: (body) => ({ url: '/inventory/purchase-orders', method: 'POST', body }),
       invalidatesTags: [{ type: 'PurchaseOrder', id: 'LIST' }],
     }),
+    receivePurchaseOrder: b.mutation<
+      ApiOne<PurchaseOrderRow>,
+      { id: string; shopId: string; categoryId: string }
+    >({
+      query: ({ id, ...body }) => ({
+        url: `/inventory/purchase-orders/${id}/receive`,
+        method: 'POST',
+        body,
+      }),
+      invalidatesTags: [
+        { type: 'PurchaseOrder', id: 'LIST' },
+        { type: 'Item', id: 'LIST' },
+        'StockValuation',
+      ],
+    }),
+    updateVendor: b.mutation<ApiOne<Vendor>, { id: string; patch: Partial<VendorInput> }>({
+      query: ({ id, patch }) => ({ url: `/inventory/vendors/${id}`, method: 'PATCH', body: patch }),
+      invalidatesTags: [{ type: 'Vendor', id: 'LIST' }],
+    }),
+    deleteVendor: b.mutation<void, string>({
+      query: (id) => ({ url: `/inventory/vendors/${id}`, method: 'DELETE' }),
+      invalidatesTags: [{ type: 'Vendor', id: 'LIST' }],
+    }),
     getAuditLog: b.query<ApiList<AuditLogRow>, { entityType?: string; entityId?: string; cursor?: string } | void>({
       query: (params) => ({ url: '/inventory/audit', params: params ?? undefined }),
       providesTags: [{ type: 'Item', id: 'AUDIT' }],
@@ -152,5 +175,8 @@ export const {
   useCreateVendorMutation,
   useGetPurchaseOrdersQuery,
   useCreatePurchaseOrderMutation,
+  useReceivePurchaseOrderMutation,
+  useUpdateVendorMutation,
+  useDeleteVendorMutation,
   useGetAuditLogQuery,
 } = inventoryApi;

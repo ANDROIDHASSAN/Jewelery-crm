@@ -48,6 +48,45 @@ crmRouter.post('/leads', async (req, res, next) => {
   }
 });
 
+// Broadcast — resolve recipients by lead-status filter and log a WHATSAPP_BROADCAST
+// activity per recipient. v1 stops short of dispatching to Meta's WhatsApp API
+// (that hooks in via BullMQ in a later phase); the route returns the count of
+// recipients that WOULD have been sent so the UI stops lying about it.
+const BroadcastSchema = z.object({
+  audience: z.enum(['ALL', ...LEAD_STATUSES]),
+  template: z.string().min(2).max(80),
+  message: z.string().min(2).max(1500),
+});
+
+crmRouter.post('/broadcasts', async (req, res, next) => {
+  try {
+    const body = BroadcastSchema.parse(req.body);
+    const where = body.audience === 'ALL' ? {} : { status: body.audience };
+    const recipients = await prisma.lead.findMany({ where, select: { id: true, phone: true, name: true } });
+    if (recipients.length === 0) {
+      res.json({ data: { queued: 0, recipients: [] } });
+      return;
+    }
+    const note = `[${body.template}] ${body.message}`.slice(0, 400);
+    await prisma.leadActivity.createMany({
+      data: recipients.map((r) => ({
+        leadId: r.id,
+        type: 'WHATSAPP_BROADCAST',
+        notes: note,
+        performedByUserId: req.user?.userId ?? null,
+      })),
+    });
+    res.status(201).json({
+      data: {
+        queued: recipients.length,
+        recipients: recipients.map((r) => ({ id: r.id, name: r.name, phone: r.phone })),
+      },
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
 crmRouter.patch('/leads/:id', async (req, res, next) => {
   try {
     const body = z

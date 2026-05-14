@@ -195,6 +195,18 @@ inventoryRouter.post('/purchase-orders', async (req, res, next) => {
   }
 });
 
+inventoryRouter.post('/purchase-orders/:id/receive', async (req, res, next) => {
+  try {
+    const body = z
+      .object({ shopId: z.string().min(1), categoryId: z.string().min(1) })
+      .parse(req.body);
+    const po = await svc.receivePurchaseOrder(req.params['id']!, body.shopId, body.categoryId, req.user?.userId);
+    res.json({ data: po });
+  } catch (err) {
+    next(err);
+  }
+});
+
 // --- Audit log ---
 
 inventoryRouter.get('/audit', async (req, res, next) => {

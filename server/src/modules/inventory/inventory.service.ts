@@ -256,6 +256,68 @@ export async function createPurchaseOrder(input: PurchaseOrderCreate) {
   return po;
 }
 
+// Receive a PO: mark it RECEIVED and turn each PO line into an Item +
+// PURCHASE ItemMovement so stock actually grows. Idempotent: a PO already
+// RECEIVED is a no-op.
+export async function receivePurchaseOrder(
+  poId: string,
+  shopId: string,
+  categoryId: string,
+  userId?: string,
+) {
+  const tenantId = getTenantId();
+  if (!tenantId) throw new Error('tenantId missing');
+  const po = await prisma.purchaseOrder.findUnique({
+    where: { id: poId },
+    include: { items: true },
+  });
+  if (!po) throw new NotFoundError('Purchase order not found');
+  if (po.status === 'RECEIVED') return po;
+
+  const shop = await prisma.shop.findUnique({ where: { id: shopId } });
+  if (!shop) throw new NotFoundError('Shop not found');
+  const category = await prisma.category.findUnique({ where: { id: categoryId } });
+  if (!category) throw new NotFoundError('Category not found');
+
+  const updated = await prisma.$transaction(async (tx) => {
+    for (const line of po.items) {
+      // Make SKU unique per (tenant, sku) — append PO-line id suffix.
+      const sku = `${line.itemSku}-${line.id.slice(-6).toUpperCase()}`;
+      const item = await tx.item.create({
+        data: {
+          tenantId,
+          shopId,
+          categoryId,
+          sku,
+          barcodeData: sku,
+          weightMg: line.weightMg,
+          purityCaratX100: line.purity,
+          costPricePaise: line.costPaise,
+          hallmarkStatus: 'PENDING',
+          status: 'IN_STOCK',
+        },
+      });
+      await tx.itemMovement.create({
+        data: {
+          tenantId,
+          itemId: item.id,
+          toShopId: shopId,
+          type: 'PURCHASE',
+          reason: `Received PO ${poId.slice(-6).toUpperCase()}`,
+          performedByUserId: userId ?? null,
+        },
+      });
+    }
+    return tx.purchaseOrder.update({
+      where: { id: poId },
+      data: { status: 'RECEIVED' },
+      include: { items: true, vendor: { select: { id: true, name: true } } },
+    });
+  });
+  await writeAudit('PurchaseOrder', poId, 'RECEIVE', po, updated, userId);
+  return updated;
+}
+
 // --- Audit log ---
 
 export async function listAuditLog(opts: { entityType?: string; entityId?: string; cursor?: string }) {
