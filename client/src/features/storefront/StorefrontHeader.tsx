@@ -112,7 +112,7 @@ export function StorefrontHeader(): JSX.Element {
                 {brand.name}
               </span>
               <span className="hidden md:block text-[10px] tracking-[0.22em] uppercase text-ink-400 mt-0.5 font-sans">
-                Pune · Since 1972
+                Haryana · Since 1972
               </span>
             </span>
           </Link>

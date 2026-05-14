@@ -20,7 +20,7 @@ export function CartPage(): JSX.Element {
         </div>
         <h1 className="font-display text-[32px] mt-6 text-ink-900">Your bag is empty</h1>
         <p className="mt-2 text-ink-600 text-sm">
-          Reserve a piece online or browse our collections — every order is hand-finished in Pune.
+          Reserve a piece online or browse our collections — every order is hand-finished in Haryana.
         </p>
         <Link
           to="/store/collections/bridal"
@@ -120,7 +120,7 @@ export function CartPage(): JSX.Element {
             </li>
             <li className="flex items-start gap-2">
               <Truck className="h-4 w-4 text-brand-700 shrink-0 mt-0.5" />
-              Free Pune delivery · India-wide shipping
+              Free Haryana delivery · India-wide shipping
             </li>
             <li className="flex items-start gap-2">
               <RotateCcw className="h-4 w-4 text-brand-700 shrink-0 mt-0.5" />

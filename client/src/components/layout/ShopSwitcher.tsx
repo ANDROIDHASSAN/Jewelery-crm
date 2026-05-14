@@ -5,8 +5,8 @@ import { cn } from '@/lib/cn';
 
 // Day 1: static shops. D5 wires this to shopsApi.
 const shops = [
-  { id: 'shop-main', name: 'Main Showroom — Pune' },
-  { id: 'shop-branch', name: 'Camp Branch — Pune' },
+  { id: 'shop-main', name: 'Main Showroom — Gurugram' },
+  { id: 'shop-branch', name: 'Karnal Branch — Haryana' },
   { id: 'all', name: 'All shops (consolidated)' },
 ];
 

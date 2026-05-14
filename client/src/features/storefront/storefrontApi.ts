@@ -60,6 +60,15 @@ export const storefrontApi = baseApi.injectEndpoints({
       transformResponse: (raw: { data: PublicCategory[] }) => raw.data,
       providesTags: [{ type: 'Category', id: 'PUBLIC' }],
     }),
+    // Public lead/enquiry submission. Reservations from the storefront PDP land here as Leads.
+    createEnquiry: build.mutation<
+      { id: string },
+      { source: string; name: string; phone: string; interest?: string; utmSource?: string; utmCampaign?: string }
+    >({
+      query: (body) => ({ url: '/website/enquiry', method: 'POST', body }),
+      transformResponse: (raw: { data: { id: string } }) => raw.data,
+      invalidatesTags: [{ type: 'Lead', id: 'LIST' }],
+    }),
   }),
 });
 
@@ -69,4 +78,5 @@ export const {
   useUpdateStorefrontMutation,
   useGetPublicProductsQuery,
   useGetPublicCollectionsQuery,
+  useCreateEnquiryMutation,
 } = storefrontApi;

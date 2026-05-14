@@ -165,7 +165,7 @@ export function StorefrontHome(): JSX.Element {
             <div className="absolute bottom-0 left-0 right-0 p-8 md:p-10 text-ink-0">
               <p className="text-eyebrow uppercase text-brand-200">Lookbook · Autumn</p>
               <h3 className="font-display text-[34px] md:text-[44px] leading-[1.05] mt-3 max-w-md">The Bridal lookbook</h3>
-              <p className="mt-3 text-sm text-ink-100/85 max-w-md">Twelve heirloom pieces, photographed in our Laxmi Road workshop. Long-form story, no carousel.</p>
+              <p className="mt-3 text-sm text-ink-100/85 max-w-md">Twelve heirloom pieces, photographed in our Gurugram workshop. Long-form story, no carousel.</p>
               <span className="mt-5 inline-flex items-center gap-1.5 text-sm border-b border-brand-300 pb-0.5">
                 Read the story
                 <ArrowRight className="h-3.5 w-3.5" />
@@ -295,7 +295,7 @@ export function StorefrontHome(): JSX.Element {
           <div className="max-w-xl">
             <p className="text-eyebrow uppercase text-ink-500">Visit us</p>
             <h2 className="font-display text-[28px] md:text-[36px] leading-tight text-ink-900 mt-3">
-              Two showrooms in Pune. Walk in, weigh, decide.
+              Two showrooms in Haryana. Walk in, weigh, decide.
             </h2>
           </div>
           <Link to="/store/locations" className="inline-flex items-center gap-2 h-12 px-7 rounded-full bg-ink-900 text-ink-0 text-sm font-medium hover:bg-ink-800 transition-colors duration-fast">

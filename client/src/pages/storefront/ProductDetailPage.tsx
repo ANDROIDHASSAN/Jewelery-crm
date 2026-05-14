@@ -7,6 +7,7 @@ import { Money } from '@/components/ui/money';
 import { cn } from '@/lib/cn';
 import { useAppDispatch, useAppSelector } from '@/app/hooks';
 import { addToCart, toggleWishlist } from '@/features/storefront/shopSlice';
+import { useCreateEnquiryMutation } from '@/features/storefront/storefrontApi';
 
 const PRODUCT = {
   name: 'Mira bangle',
@@ -209,7 +210,7 @@ export function ProductDetailPage(): JSX.Element {
           </div>
 
           <p className="text-xs text-ink-500">
-            Available at <span className="text-ink-700">Main Showroom — Pune</span> · <span className="text-ink-700">Camp Branch — Pune</span>
+            Available at <span className="text-ink-700">Main Showroom — Gurugram</span> · <span className="text-ink-700">Karnal Branch</span>
           </p>
 
           {/* Trust row */}
@@ -220,7 +221,7 @@ export function ProductDetailPage(): JSX.Element {
             </li>
             <li className="flex flex-col items-start gap-1.5">
               <Truck className="h-4 w-4 text-brand-700" />
-              <span>Free Pune delivery · India shipping</span>
+              <span>Free Haryana delivery · India shipping</span>
             </li>
             <li className="flex flex-col items-start gap-1.5">
               <RotateCcw className="h-4 w-4 text-brand-700" />
@@ -246,7 +247,7 @@ export function ProductDetailPage(): JSX.Element {
                 <dt className="text-ink-500">Setting</dt>
                 <dd className="text-ink-800">Hand-set, kundan accents</dd>
                 <dt className="text-ink-500">Made in</dt>
-                <dd className="text-ink-800">Pune, India</dd>
+                <dd className="text-ink-800">Gurugram, Haryana</dd>
               </dl>
             </Accordion>
             <Accordion
@@ -266,7 +267,7 @@ export function ProductDetailPage(): JSX.Element {
               onToggle={() => setOpenSection(openSection === 'shipping' ? null : 'shipping')}
             >
               <p className="text-sm text-ink-600 leading-relaxed">
-                Free delivery within Pune. India-wide shipping via insured Shiprocket within 4–6 working days. Returns accepted for 7 days in original packaging; exchange against pure-gold value valid for lifetime.
+                Free delivery within Haryana. India-wide shipping via insured Shiprocket within 4–6 working days. Returns accepted for 7 days in original packaging; exchange against pure-gold value valid for lifetime.
               </p>
             </Accordion>
           </div>
@@ -338,14 +339,14 @@ interface ReserveModalProps {
 function ReserveModal({ open, onClose, productName, purity, size, qty, totalPaise }: ReserveModalProps): JSX.Element {
   const [name, setName] = useState('');
   const [phone, setPhone] = useState('+91 ');
-  const [store, setStore] = useState<'main-showroom' | 'camp-branch'>('main-showroom');
+  const [store, setStore] = useState<'main-showroom' | 'karnal-branch'>('main-showroom');
   const [date, setDate] = useState(() => {
     const t = new Date();
     t.setDate(t.getDate() + 1);
     return t.toISOString().slice(0, 10);
   });
   const [notes, setNotes] = useState('');
-  const [submitting, setSubmitting] = useState(false);
+  const [createEnquiry, { isLoading: submitting }] = useCreateEnquiryMutation();
 
   const handleSubmit = async (e: React.FormEvent): Promise<void> => {
     e.preventDefault();
@@ -353,25 +354,51 @@ function ReserveModal({ open, onClose, productName, purity, size, qty, totalPais
       toast.error('Please enter your name');
       return;
     }
-    const phoneDigits = phone.replace(/\D/g, '');
-    if (!/^91?[6-9]\d{9}$/.test(phoneDigits)) {
+    const digits = phone.replace(/\D/g, '');
+    const local = digits.startsWith('91') ? digits.slice(2) : digits;
+    if (!/^[6-9]\d{9}$/.test(local)) {
       toast.error('Please enter a valid Indian phone number');
       return;
     }
-    setSubmitting(true);
-    await new Promise((r) => setTimeout(r, 600));
-    const id = 'ZL-' + Math.random().toString(36).slice(2, 8).toUpperCase();
-    const storeLabel = store === 'main-showroom' ? 'Main Showroom — Pune' : 'Camp Branch — Pune';
+    const e164 = `+91${local}`;
+
+    const storeLabel = store === 'main-showroom' ? 'Main Showroom — Gurugram' : 'Karnal Branch';
     const dateLabel = new Date(date).toLocaleDateString('en-IN', { weekday: 'long', day: 'numeric', month: 'short' });
-    toast.success(`Reserved! Confirmation ${id}`, {
-      description: `We've held ${productName} for 48 hours. Visit ${storeLabel} by ${dateLabel}. We'll WhatsApp you a reminder.`,
-      duration: 9000,
-    });
-    setSubmitting(false);
-    onClose();
-    setName('');
-    setPhone('+91 ');
-    setNotes('');
+    const priceLabel = `₹${(totalPaise / 100).toLocaleString('en-IN')}`;
+    const interest = [
+      `RESERVE: ${productName}`,
+      `${purity} · Size ${size}″ · Qty ${qty}`,
+      `Total ${priceLabel}`,
+      `Store: ${storeLabel}`,
+      `Visit by: ${dateLabel}`,
+      notes.trim() && `Notes: ${notes.trim()}`,
+    ]
+      .filter(Boolean)
+      .join(' · ')
+      .slice(0, 400);
+
+    try {
+      const res = await createEnquiry({
+        source: 'store-reservation',
+        name: name.trim(),
+        phone: e164,
+        interest,
+      }).unwrap();
+      const id = res.id.slice(-6).toUpperCase();
+      toast.success(`Reserved! Confirmation ZL-${id}`, {
+        description: `We've held ${productName} for 48 hours. Visit ${storeLabel} by ${dateLabel}. We'll WhatsApp you a reminder.`,
+        duration: 9000,
+      });
+      onClose();
+      setName('');
+      setPhone('+91 ');
+      setNotes('');
+    } catch (err) {
+      const message =
+        (err as { data?: { error?: { message?: string } } }).data?.error?.message ??
+        'Could not save reservation. Please try again.';
+      toast.error(message);
+    }
   };
 
   return (
@@ -427,14 +454,14 @@ function ReserveModal({ open, onClose, productName, purity, size, qty, totalPais
                     store === 'main-showroom' ? 'border-brand-500 bg-brand-50' : 'border-ink-200 hover:bg-ink-50',
                   )}>
                     <input type="radio" name="store" value="main-showroom" checked={store === 'main-showroom'} onChange={() => setStore('main-showroom')} className="accent-brand-500" />
-                    <span className="text-sm text-ink-900">Main Showroom — Pune</span>
+                    <span className="text-sm text-ink-900">Main Showroom — Gurugram</span>
                   </label>
                   <label className={cn(
                     'flex items-center gap-2.5 cursor-pointer rounded-lg border px-3 py-2.5 transition-colors',
-                    store === 'camp-branch' ? 'border-brand-500 bg-brand-50' : 'border-ink-200 hover:bg-ink-50',
+                    store === 'karnal-branch' ? 'border-brand-500 bg-brand-50' : 'border-ink-200 hover:bg-ink-50',
                   )}>
-                    <input type="radio" name="store" value="camp-branch" checked={store === 'camp-branch'} onChange={() => setStore('camp-branch')} className="accent-brand-500" />
-                    <span className="text-sm text-ink-900">Camp Branch — Pune</span>
+                    <input type="radio" name="store" value="karnal-branch" checked={store === 'karnal-branch'} onChange={() => setStore('karnal-branch')} className="accent-brand-500" />
+                    <span className="text-sm text-ink-900">Karnal Branch — Haryana</span>
                   </label>
                 </div>
               </fieldset>
