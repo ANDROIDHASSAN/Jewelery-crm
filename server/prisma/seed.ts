@@ -99,6 +99,84 @@ async function main(): Promise<void> {
       ],
     });
 
+    // Leads — 2-3 per pipeline stage so the CRM board renders alive.
+    await tx.lead.createMany({
+      data: [
+        // NEW
+        { tenantId: tenant.id, source: 'instagram', name: 'Aanya Kapoor',   phone: '+919811220011', interest: 'Bridal set, 22K, 80g',     status: 'NEW',         utmSource: 'instagram', utmCampaign: 'bridal-edit-2025' },
+        { tenantId: tenant.id, source: 'walkin',    name: 'Rohit Mehra',    phone: '+919811220012', interest: 'Engagement ring, solitaire 0.5ct', status: 'NEW' },
+        { tenantId: tenant.id, source: 'whatsapp',  name: 'Sneha Pillai',   phone: '+919811220013', interest: 'Daily-wear chain, 22K',    status: 'NEW',         utmSource: 'whatsapp' },
+        // CONTACTED
+        { tenantId: tenant.id, source: 'instagram', name: 'Devika Joshi',   phone: '+919811220014', interest: 'Mangalsutra, lightweight', status: 'CONTACTED',   utmSource: 'instagram' },
+        { tenantId: tenant.id, source: 'referral',  name: 'Vikram Anand',   phone: '+919811220015', interest: 'Gents bracelet, 22K, 25g', status: 'CONTACTED' },
+        // INTERESTED
+        { tenantId: tenant.id, source: 'walkin',    name: 'Priya Reddy',    phone: '+919811220016', interest: 'Bridal jhumkas + bangles', status: 'INTERESTED' },
+        { tenantId: tenant.id, source: 'google',    name: 'Karan Sehgal',   phone: '+919811220017', interest: 'Diamond pendant ~1ct',     status: 'INTERESTED',  utmSource: 'google',    utmCampaign: 'diamond-festive' },
+        // NEGOTIATION
+        { tenantId: tenant.id, source: 'referral',  name: 'Meera Iyer',     phone: '+919811220018', interest: 'Custom necklace, 65g, kundan accents', status: 'NEGOTIATION' },
+        { tenantId: tenant.id, source: 'whatsapp',  name: 'Arjun Bhatia',   phone: '+919811220019', interest: 'Anniversary ring pair',    status: 'NEGOTIATION', utmSource: 'whatsapp' },
+        // CONVERTED
+        { tenantId: tenant.id, source: 'walkin',    name: 'Nikhil Chawla',  phone: '+919811220020', interest: 'Bridal bangles — 12g pair', status: 'CONVERTED' },
+        { tenantId: tenant.id, source: 'instagram', name: 'Saira Khan',     phone: '+919811220021', interest: 'Festive collection, light pieces', status: 'CONVERTED', utmSource: 'instagram' },
+        // LOST
+        { tenantId: tenant.id, source: 'google',    name: 'Tanvi Desai',    phone: '+919811220022', interest: 'Diamond solitaire (budget mismatch)', status: 'LOST', utmSource: 'google' },
+        { tenantId: tenant.id, source: 'walkin',    name: 'Manish Khurana', phone: '+919811220023', interest: 'Silver gifting set',        status: 'LOST' },
+      ],
+    });
+
+    // Expenses — recent month, mix of categories, both shops.
+    const today = new Date();
+    const daysAgo = (n: number): Date => new Date(today.getTime() - n * 86_400_000);
+    await tx.expense.createMany({
+      data: [
+        { tenantId: tenant.id, shopId: shopMain.id,   category: 'Rent',       amountPaise: 8_500_000, paidAt: daysAgo(28), notes: 'May rent — Main' },
+        { tenantId: tenant.id, shopId: shopMain.id,   category: 'Salaries',   amountPaise: 24_000_000, paidAt: daysAgo(2),  notes: 'Staff payroll — Apr' },
+        { tenantId: tenant.id, shopId: shopMain.id,   category: 'Electricity',amountPaise: 1_840_000, paidAt: daysAgo(14), notes: 'Apr bill' },
+        { tenantId: tenant.id, shopId: shopMain.id,   category: 'Marketing',  amountPaise: 4_500_000, paidAt: daysAgo(9),  notes: 'Bridal edit IG ads' },
+        { tenantId: tenant.id, shopId: shopBranch.id, category: 'Rent',       amountPaise: 4_200_000, paidAt: daysAgo(28), notes: 'May rent — Karnal' },
+        { tenantId: tenant.id, shopId: shopBranch.id, category: 'Salaries',   amountPaise: 9_500_000, paidAt: daysAgo(2),  notes: 'Staff payroll — Apr' },
+        { tenantId: tenant.id, shopId: shopBranch.id, category: 'Repairs',    amountPaise: 720_000,   paidAt: daysAgo(5),  notes: 'Showcase glass replacement' },
+        { tenantId: tenant.id, shopId: shopMain.id,   category: 'Insurance',  amountPaise: 6_300_000, paidAt: daysAgo(18), notes: 'Quarterly premium' },
+      ],
+    });
+
+    // Bills — sample sales across last 30 days so Dashboard + Analytics have signal.
+    const sampleBills = [
+      { days:  0, paise: 1_82_400_00, shop: shopMain.id,   status: 'PAID' as const,    making: 12_580_00, customer: 0 },
+      { days:  1, paise: 64_300_00,  shop: shopMain.id,   status: 'PAID' as const,    making:  4_120_00, customer: 1 },
+      { days:  3, paise: 2_45_900_00, shop: shopMain.id,   status: 'PAID' as const,    making: 17_400_00, customer: 0 },
+      { days:  6, paise: 31_400_00,  shop: shopBranch.id, status: 'PAID' as const,    making:  2_350_00, customer: 2 },
+      { days:  9, paise: 1_12_000_00, shop: shopMain.id,   status: 'PARTIAL' as const, making:  8_900_00, customer: null },
+      { days: 12, paise: 78_500_00,  shop: shopBranch.id, status: 'PAID' as const,    making:  5_700_00, customer: 2 },
+      { days: 17, paise: 3_20_500_00, shop: shopMain.id,   status: 'PAID' as const,    making: 22_800_00, customer: 0 },
+      { days: 22, paise: 54_200_00,  shop: shopBranch.id, status: 'PAID' as const,    making:  3_900_00, customer: null },
+    ];
+    const customerIds = await tx.customer.findMany({ where: { tenantId: tenant.id }, select: { id: true } });
+    await tx.bill.createMany({
+      data: sampleBills.map((b, i) => {
+        const subtotal = b.paise - Math.round(b.paise * 300 / 10300); // back out 3% GST
+        const gst = b.paise - subtotal;
+        return {
+          tenantId: tenant.id,
+          shopId: b.shop,
+          billNumber: `INV-${String(1001 + i).padStart(5, '0')}`,
+          customerId: b.customer !== null ? customerIds[b.customer]?.id ?? null : null,
+          subtotalPaise: subtotal,
+          makingChargesPaise: b.making,
+          stoneChargesPaise: 0,
+          cgstPaise: Math.floor(gst / 2),
+          sgstPaise: Math.ceil(gst / 2),
+          igstPaise: 0,
+          oldGoldValuePaise: 0,
+          discountPaise: 0,
+          totalPaise: b.paise,
+          paymentStatus: b.status,
+          idempotencyKey: `seed-bill-${i + 1}-${tenant.id.slice(-6)}`,
+          createdAt: daysAgo(b.days),
+        };
+      }),
+    });
+
     // Default storefront content — drives the public homepage. Editable from
     // the Website CMS (PUT /api/v1/storefront).
     await tx.storefrontContent.create({
