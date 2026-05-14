@@ -4,7 +4,9 @@ services:
     runtime: node
     plan: free
     rootDir: .
-    buildCommand: npm install --include=dev && npm run prisma:generate -w @goldos/server && npx prisma migrate deploy --schema server/prisma/schema.prisma
+    # Seed runs every build — idempotent (seed.ts nukes the prior demo tenant first).
+    # Remove the trailing `&& npx tsx server/prisma/seed.ts` once a real merchant is on this DB.
+    buildCommand: npm install --include=dev && npm run prisma:generate -w @goldos/server && npx prisma migrate deploy --schema server/prisma/schema.prisma && npx tsx server/prisma/seed.ts
     startCommand: npx tsx server/src/index.ts
     healthCheckPath: /api/v1/health
     autoDeploy: true

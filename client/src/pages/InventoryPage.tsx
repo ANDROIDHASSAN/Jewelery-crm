@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react';
 import type { ColumnDef } from '@tanstack/react-table';
 import { Plus } from 'lucide-react';
 import type { Item } from '@goldos/shared/types';
-import { useGetItemsQuery } from '@/features/inventory/inventoryApi';
+import { useGetItemsQuery, useGetCategoriesQuery } from '@/features/inventory/inventoryApi';
 import { DataTable } from '@/components/data/DataTable';
 import { Button } from '@/components/ui/button';
 import { Money, Weight, Purity } from '@/components/ui/money';
@@ -12,12 +12,23 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetBody } from '@/compo
 
 export function InventoryPage(): JSX.Element {
   const { data, isLoading } = useGetItemsQuery({});
+  const { data: catRes } = useGetCategoriesQuery();
   const [selected, setSelected] = useState<Item | null>(null);
+
+  const categoryNameById = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const c of catRes?.data ?? []) map.set(c.id, c.name);
+    return map;
+  }, [catRes?.data]);
 
   const columns = useMemo<ColumnDef<Item>[]>(
     () => [
       { accessorKey: 'sku', header: 'SKU', cell: (i) => <span className="font-mono text-xs">{String(i.getValue())}</span> },
-      { accessorKey: 'categoryId', header: 'Category', cell: () => 'Daily Wear' },
+      {
+        accessorKey: 'categoryId',
+        header: 'Category',
+        cell: (i) => categoryNameById.get(String(i.getValue())) ?? '—',
+      },
       {
         accessorKey: 'weightMg',
         header: () => <span className="block text-right">Weight</span>,
@@ -44,7 +55,7 @@ export function InventoryPage(): JSX.Element {
         cell: (i) => <div className="text-right"><Money paise={Number(i.getValue())} /></div>,
       },
     ],
-    [],
+    [categoryNameById],
   );
 
   return (

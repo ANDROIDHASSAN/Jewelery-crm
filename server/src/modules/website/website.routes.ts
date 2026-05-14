@@ -18,10 +18,15 @@ async function resolveTenant(req: { query: Record<string, unknown> }): Promise<s
   return first.id;
 }
 
-function tenantFromQuery(req: { query: Record<string, unknown> }): string {
+// Resolve tenant from ?tenant= (subdomain support arrives in v1.5). For
+// single-tenant deployments, fall back to the first tenant so the public site
+// works without query strings.
+async function tenantFromQueryOrFirst(req: { query: Record<string, unknown> }): Promise<string> {
   const t = req.query['tenant'];
-  if (typeof t !== 'string') throw new Error('?tenant= required in dev');
-  return t;
+  if (typeof t === 'string' && t.length > 0) return t;
+  const first = await rawPrisma.tenant.findFirst({ select: { id: true }, orderBy: { createdAt: 'asc' } });
+  if (!first) throw new Error('No tenant configured. Run `npm run db:seed`.');
+  return first.id;
 }
 
 // Public read of the storefront content blob. Drives the entire homepage.
@@ -41,7 +46,7 @@ websiteRouter.get('/storefront', async (req, res, next) => {
 
 websiteRouter.get('/collections', async (req, res, next) => {
   try {
-    const tenantId = tenantFromQuery(req);
+    const tenantId = await tenantFromQueryOrFirst(req);
     const categories = await rawPrisma.category.findMany({
       where: { tenantId },
       orderBy: { name: 'asc' },
@@ -54,7 +59,7 @@ websiteRouter.get('/collections', async (req, res, next) => {
 
 websiteRouter.get('/products', async (req, res, next) => {
   try {
-    const tenantId = tenantFromQuery(req);
+    const tenantId = await tenantFromQueryOrFirst(req);
     const products = await rawPrisma.product.findMany({
       where: { tenantId, isPublished: true },
       orderBy: { createdAt: 'desc' },
@@ -68,7 +73,7 @@ websiteRouter.get('/products', async (req, res, next) => {
 
 websiteRouter.post('/enquiry', async (req, res, next) => {
   try {
-    const tenantId = tenantFromQuery(req);
+    const tenantId = await tenantFromQueryOrFirst(req);
     const body = LeadInputSchema.parse(req.body);
     // Use runWithTenant so the tenant Prisma extension scopes the write correctly.
     const lead = await runWithTenant({ tenantId }, async () => {

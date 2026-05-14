@@ -7,6 +7,8 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Money, Weight, Purity } from '@/components/ui/money';
 import { Badge } from '@/components/ui/badge';
+import { useGetItemsQuery } from '@/features/inventory/inventoryApi';
+import { useGetGoldRateQuery } from '@/features/pos/posApi';
 
 interface CartLine {
   id: string;
@@ -16,14 +18,53 @@ interface CartLine {
   linePaise: number;
 }
 
+function rateForPurity(rates: Array<{ purity: number; ratePerGramPaise: number }> | undefined, purity: number): number {
+  return rates?.find((r) => r.purity === purity)?.ratePerGramPaise ?? 642_000;
+}
+
+function computeGoldValuePaise(weightMg: number, purityCaratX100: number, ratePerGramPaise: number): number {
+  // weight (mg) × rate (paise/g) × purity/24K, integer-only.
+  return Math.round((weightMg * ratePerGramPaise * purityCaratX100) / (1000 * 2400));
+}
+
 export function PosPage(): JSX.Element {
   const [lines, setLines] = useState<CartLine[]>([]);
-  const [online] = useState(true);
+  const [online] = useState(navigator.onLine);
+  const [search, setSearch] = useState('');
+
+  const { data: itemsRes, isLoading: itemsLoading } = useGetItemsQuery({});
+  const { data: ratesRes } = useGetGoldRateQuery(undefined, { pollingInterval: 5 * 60_000 });
+  const items = itemsRes?.data ?? [];
+  const rates = ratesRes?.data;
+
+  const filtered = search.trim()
+    ? items.filter((i) =>
+        [i.sku, i.barcodeData].some((s) => s.toLowerCase().includes(search.trim().toLowerCase())),
+      )
+    : items;
 
   const subtotal = lines.reduce((s, l) => s + l.linePaise, 0);
   const making = Math.round(subtotal * 0.12);
   const gst = Math.round((subtotal + making) * 0.03);
   const total = subtotal + making + gst;
+
+  function addItem(it: (typeof items)[number]): void {
+    const linePaise = computeGoldValuePaise(
+      it.weightMg,
+      it.purityCaratX100,
+      rateForPurity(rates, it.purityCaratX100),
+    );
+    setLines((curr) => [
+      ...curr,
+      {
+        id: `${it.id}-${Date.now()}`,
+        sku: it.sku,
+        weightMg: it.weightMg,
+        purityCaratX100: it.purityCaratX100,
+        linePaise,
+      },
+    ]);
+  }
 
   return (
     <div className="-mx-4 lg:-mx-6 -my-6 h-[calc(100vh-3.5rem)] grid grid-cols-1 lg:grid-cols-[300px_1fr_280px] bg-ink-25">
@@ -86,33 +127,37 @@ export function PosPage(): JSX.Element {
       <section className="flex flex-col">
         <header className="h-12 px-4 border-b border-ink-100 flex items-center gap-2 bg-ink-0">
           <Search className="h-4 w-4 text-ink-400" />
-          <Input placeholder="SKU, barcode, or name…" className="border-0 focus:ring-0 h-9" />
+          <Input
+            placeholder="SKU, barcode, or name…"
+            className="border-0 focus:ring-0 h-9"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+          />
           <Button variant="secondary" size="md" className="h-10 px-4">
             <ScanLine className="h-4 w-4" />
             Scan
           </Button>
         </header>
         <div className="flex-1 grid grid-cols-2 md:grid-cols-3 gap-3 p-4 overflow-y-auto">
-          {Array.from({ length: 9 }).map((_, i) => (
+          {itemsLoading && <p className="col-span-full text-sm text-ink-500">Loading items…</p>}
+          {!itemsLoading && filtered.length === 0 && (
+            <p className="col-span-full text-sm text-ink-500">
+              {items.length === 0 ? 'No items in stock yet.' : 'No items match this search.'}
+            </p>
+          )}
+          {filtered.slice(0, 24).map((it) => (
             <button
-              key={i}
-              onClick={() =>
-                setLines((curr) => [
-                  ...curr,
-                  {
-                    id: `${Date.now()}-${i}`,
-                    sku: `DW-${String(i + 1).padStart(4, '0')}`,
-                    weightMg: 5000 + i * 250,
-                    purityCaratX100: 2200,
-                    linePaise: (5000 + i * 250) * 6 * 2200 / (1000 * 2400) * 100 | 0,
-                  },
-                ])
-              }
+              key={it.id}
+              onClick={() => addItem(it)}
               className="aspect-square rounded-md border border-ink-200 bg-ink-0 hover:border-brand-400 hover:bg-brand-50 transition-colors duration-fast p-3 text-left"
             >
-              <div className="text-xs font-mono text-ink-500">DW-{String(i + 1).padStart(4, '0')}</div>
-              <div className="mt-2 font-display text-md text-ink-900">{(5 + i * 0.25).toFixed(2)} g</div>
-              <div className="mt-1 text-xs text-ink-500">22K · Daily Wear</div>
+              <div className="text-xs font-mono text-ink-500 truncate">{it.sku}</div>
+              <div className="mt-2 font-display text-md text-ink-900">
+                {(it.weightMg / 1000).toFixed(2)} g
+              </div>
+              <div className="mt-1 text-xs text-ink-500">
+                {it.purityCaratX100 / 100}K · {it.hallmarkStatus.toLowerCase()}
+              </div>
             </button>
           ))}
         </div>

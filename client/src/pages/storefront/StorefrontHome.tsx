@@ -1,6 +1,7 @@
 import { Link } from 'react-router-dom';
 import { ArrowRight, Award, ShieldCheck, Sparkles, Quote } from 'lucide-react';
 import { useAppSelector } from '@/app/hooks';
+import { useGetPublicProductsQuery, type PublicProduct } from '@/features/storefront/storefrontApi';
 
 const SHOP_BY = [
   { label: '22K Gold', to: '/store/collections/22k' },
@@ -11,16 +12,43 @@ const SHOP_BY = [
   { label: 'Gifting', to: '/store/collections/gifting' },
 ];
 
-const BESTSELLERS = [
+interface BestSellerCard {
+  slug: string;
+  name: string;
+  priceLabel: string;
+  weight: string;
+  img: string;
+  alt: string;
+}
+
+const BESTSELLERS_FALLBACK: BestSellerCard[] = [
   { slug: 'mira-bangle', name: 'Mira bangle', priceLabel: '₹84,500', weight: '12.45 g · 22K', img: 'https://images.unsplash.com/photo-1611591437281-460bfbe1220a?auto=format&fit=crop&w=800&q=80', alt: 'https://images.unsplash.com/photo-1605100804763-247f67b3557e?auto=format&fit=crop&w=800&q=80' },
   { slug: 'tara-mangalsutra', name: 'Tara mangalsutra', priceLabel: '₹62,200', weight: '8.10 g · 22K', img: 'https://images.unsplash.com/photo-1599643477877-530eb83abc8e?auto=format&fit=crop&w=800&q=80', alt: 'https://images.unsplash.com/photo-1603561591411-07134e71a2a9?auto=format&fit=crop&w=800&q=80' },
   { slug: 'aarya-ring', name: 'Aarya solitaire', priceLabel: '₹48,900', weight: '0.32 ct · 18K', img: 'https://images.unsplash.com/photo-1603561591411-07134e71a2a9?auto=format&fit=crop&w=800&q=80', alt: 'https://images.unsplash.com/photo-1599643477877-530eb83abc8e?auto=format&fit=crop&w=800&q=80' },
   { slug: 'riya-jhumka', name: 'Riya jhumkas', priceLabel: '₹31,400', weight: '5.20 g · 22K', img: 'https://images.unsplash.com/photo-1605100804763-247f67b3557e?auto=format&fit=crop&w=800&q=80', alt: 'https://images.unsplash.com/photo-1611591437281-460bfbe1220a?auto=format&fit=crop&w=800&q=80' },
 ];
 
+function toBestSellerCard(p: PublicProduct): BestSellerCard {
+  const grams = (p.weightMg / 1000).toFixed(2);
+  const purity = p.purityCaratX100 ? `${p.purityCaratX100 / 100}K` : '';
+  return {
+    slug: p.slug,
+    name: p.name,
+    priceLabel: `₹${(p.basePricePaise / 100).toLocaleString('en-IN')}`,
+    weight: [grams && `${grams} g`, purity].filter(Boolean).join(' · '),
+    img: p.images[0] ?? BESTSELLERS_FALLBACK[0]!.img,
+    alt: p.images[1] ?? p.images[0] ?? BESTSELLERS_FALLBACK[0]!.alt,
+  };
+}
+
 export function StorefrontHome(): JSX.Element {
   const content = useAppSelector((s) => s.storefrontContent);
   const { hero, rates, collections, story, testimonial } = content;
+  const { data: liveProducts } = useGetPublicProductsQuery();
+  const bestSellers: BestSellerCard[] =
+    liveProducts && liveProducts.length > 0
+      ? liveProducts.slice(0, 4).map(toBestSellerCard)
+      : BESTSELLERS_FALLBACK;
   return (
     <>
       {/* Hero — single image, full bleed, editorial. */}
@@ -175,7 +203,7 @@ export function StorefrontHome(): JSX.Element {
           </Link>
         </div>
         <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-x-5 gap-y-10 md:gap-x-6">
-          {BESTSELLERS.map((p) => (
+          {bestSellers.map((p) => (
             <Link key={p.slug} to={`/store/products/${p.slug}`} className="group block">
               <div className="relative aspect-[4/5] overflow-hidden bg-ink-100">
                 <img src={p.img} alt={p.name} className="absolute inset-0 h-full w-full object-cover transition-opacity duration-300 group-hover:opacity-0" loading="lazy" />

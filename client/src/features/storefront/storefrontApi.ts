@@ -11,6 +11,28 @@ export interface StorefrontResponse {
   updatedAt: string;
 }
 
+export interface PublicProduct {
+  id: string;
+  slug: string;
+  name: string;
+  descriptionMd: string;
+  images: string[];
+  weightMg: number;
+  purityCaratX100: number;
+  makingChargeBps: number;
+  basePricePaise: number;
+  stoneChargePaise: number;
+  categoryId: string;
+  isPublished: boolean;
+  createdAt: string;
+}
+
+export interface PublicCategory {
+  id: string;
+  name: string;
+  slug: string;
+}
+
 export const storefrontApi = baseApi.injectEndpoints({
   endpoints: (build) => ({
     getPublicStorefront: build.query<StorefrontResponse, void>({
@@ -28,6 +50,16 @@ export const storefrontApi = baseApi.injectEndpoints({
       transformResponse: (raw: { data: StorefrontResponse }) => raw.data,
       invalidatesTags: [{ type: 'StorefrontContent', id: 'LIST' }],
     }),
+    getPublicProducts: build.query<PublicProduct[], void>({
+      query: () => ({ url: '/website/products' }),
+      transformResponse: (raw: { data: PublicProduct[] }) => raw.data,
+      providesTags: [{ type: 'Product', id: 'PUBLIC' }],
+    }),
+    getPublicCollections: build.query<PublicCategory[], void>({
+      query: () => ({ url: '/website/collections' }),
+      transformResponse: (raw: { data: PublicCategory[] }) => raw.data,
+      providesTags: [{ type: 'Category', id: 'PUBLIC' }],
+    }),
   }),
 });
 
@@ -35,4 +67,6 @@ export const {
   useGetPublicStorefrontQuery,
   useGetAdminStorefrontQuery,
   useUpdateStorefrontMutation,
+  useGetPublicProductsQuery,
+  useGetPublicCollectionsQuery,
 } = storefrontApi;
