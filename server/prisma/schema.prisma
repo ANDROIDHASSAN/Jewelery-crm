@@ -1,0 +1,617 @@
+// Gold OS — full schema per specs/data-model.md.
+// All money in paise (Int). All weight in mg (Int). All rates in bps (Int).
+// All purity as carat × 100. All timestamps UTC. Soft-delete via isActive/status.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// --------------------------------------------------------------------------
+// Tenancy
+// --------------------------------------------------------------------------
+
+enum Role {
+  OWNER
+  MANAGER
+  BILLING
+  VIEWER
+}
+
+enum Plan {
+  STARTER
+  GROWTH
+  SCALE
+}
+
+model Tenant {
+  id            String   @id @default(cuid())
+  businessName  String
+  gstNumber     String?
+  phone         String
+  ownerEmail    String   @unique
+  plan          Plan     @default(STARTER)
+  brandPrimary  String   @default("#C99B2A")
+  logoUrl       String?
+  createdAt     DateTime @default(now())
+
+  shops         Shop[]
+  users         User[]
+  categories    Category[]
+  items         Item[]
+  itemMovements ItemMovement[]
+  vendors       Vendor[]
+  purchaseOrders PurchaseOrder[]
+  customers     Customer[]
+  bills         Bill[]
+  expenses      Expense[]
+  goldLoans     GoldLoan[]
+  payrolls      Payroll[]
+  leads         Lead[]
+  whatsappMessages WhatsAppMessage[]
+  products      Product[]
+  orders        Order[]
+  auditLogs     AuditLog[]
+
+  @@index([ownerEmail])
+}
+
+model Shop {
+  id           String   @id @default(cuid())
+  tenantId     String
+  name         String
+  address      String
+  gstStateCode String
+  phone        String
+  isActive     Boolean  @default(true)
+
+  tenant       Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  users        User[]
+  items        Item[]
+  bills        Bill[]
+  expenses     Expense[]
+
+  @@index([tenantId])
+  @@index([tenantId, isActive])
+}
+
+model User {
+  id           String   @id @default(cuid())
+  tenantId     String
+  shopId       String?
+  name         String
+  phone        String
+  role         Role
+  passwordHash String?
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now())
+
+  tenant       Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  shop         Shop?    @relation(fields: [shopId], references: [id])
+
+  @@unique([tenantId, phone])
+  @@index([tenantId])
+}
+
+// --------------------------------------------------------------------------
+// Inventory
+// --------------------------------------------------------------------------
+
+enum MetalType {
+  GOLD
+  SILVER
+  DIAMOND
+  PLATINUM
+  OTHER
+}
+
+enum HallmarkStatus {
+  PENDING
+  SUBMITTED
+  CERTIFIED
+  EXEMPT
+}
+
+enum ItemStatus {
+  IN_STOCK
+  IN_TRANSIT
+  SOLD
+  MELTED
+}
+
+enum ItemMovementType {
+  PURCHASE
+  TRANSFER
+  SALE
+  RETURN
+  WASTAGE
+  ADJUSTMENT
+}
+
+enum PurchaseOrderStatus {
+  DRAFT
+  PLACED
+  PARTIAL
+  RECEIVED
+  CANCELLED
+}
+
+model Category {
+  id                      String     @id @default(cuid())
+  tenantId                String
+  name                    String
+  parentId                String?
+  metalType               MetalType
+  defaultMakingChargeBps  Int
+
+  tenant                  Tenant     @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  parent                  Category?  @relation("CategoryTree", fields: [parentId], references: [id])
+  children                Category[] @relation("CategoryTree")
+  items                   Item[]
+  products                Product[]
+
+  @@index([tenantId])
+}
+
+model Item {
+  id                String         @id @default(cuid())
+  tenantId          String
+  shopId            String
+  categoryId        String
+  sku               String
+  barcodeData       String
+  weightMg          Int
+  purityCaratX100   Int
+  stoneWeightMg     Int?
+  hallmarkStatus    HallmarkStatus @default(PENDING)
+  hallmarkRef       String?
+  costPricePaise    Int
+  makingChargeBps   Int?
+  status            ItemStatus     @default(IN_STOCK)
+  createdAt         DateTime       @default(now())
+
+  tenant            Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  shop              Shop           @relation(fields: [shopId], references: [id])
+  category          Category       @relation(fields: [categoryId], references: [id])
+  movements         ItemMovement[]
+  billLines         BillLine[]
+
+  @@unique([tenantId, sku])
+  @@index([tenantId])
+  @@index([tenantId, shopId])
+  @@index([tenantId, categoryId])
+}
+
+model ItemMovement {
+  id                 String           @id @default(cuid())
+  tenantId           String
+  itemId             String
+  fromShopId         String?
+  toShopId           String?
+  type               ItemMovementType
+  qty                Int              @default(1)
+  reason             String?
+  performedByUserId  String?
+  createdAt          DateTime         @default(now())
+
+  tenant             Tenant           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  item               Item             @relation(fields: [itemId], references: [id])
+
+  @@index([tenantId])
+  @@index([tenantId, itemId])
+  @@index([tenantId, createdAt])
+}
+
+model Vendor {
+  id                 String  @id @default(cuid())
+  tenantId           String
+  name               String
+  gstNumber          String?
+  phone              String
+  address            String
+  outstandingPaise   Int     @default(0)
+
+  tenant             Tenant  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  purchaseOrders     PurchaseOrder[]
+
+  @@index([tenantId])
+}
+
+model PurchaseOrder {
+  id           String              @id @default(cuid())
+  tenantId     String
+  vendorId     String
+  status       PurchaseOrderStatus @default(DRAFT)
+  totalPaise   Int                 @default(0)
+  createdAt    DateTime            @default(now())
+
+  tenant       Tenant              @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  vendor       Vendor              @relation(fields: [vendorId], references: [id])
+  items        PurchaseOrderItem[]
+
+  @@index([tenantId])
+  @@index([tenantId, vendorId])
+}
+
+model PurchaseOrderItem {
+  id        String        @id @default(cuid())
+  poId      String
+  itemSku   String
+  weightMg  Int
+  purity    Int
+  costPaise Int
+
+  purchaseOrder PurchaseOrder @relation(fields: [poId], references: [id], onDelete: Cascade)
+
+  @@index([poId])
+}
+
+// --------------------------------------------------------------------------
+// Sales / POS
+// --------------------------------------------------------------------------
+
+enum PaymentMode {
+  CASH
+  UPI
+  CARD
+  CHEQUE
+  GOLD_EXCHANGE
+  LOYALTY
+}
+
+enum PaymentStatus {
+  PENDING
+  PAID
+  PARTIAL
+  REFUNDED
+}
+
+model Customer {
+  id               String    @id @default(cuid())
+  tenantId         String
+  phone            String
+  name             String
+  dob              DateTime?
+  anniversary      DateTime?
+  tags             String[]
+  loyaltyPoints    Int       @default(0)
+  totalSpendPaise  Int       @default(0)
+  lastVisitAt      DateTime?
+  createdAt        DateTime  @default(now())
+
+  tenant           Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  bills            Bill[]
+  orders           Order[]
+  leads            Lead[]
+  goldLoans        GoldLoan[]
+
+  @@unique([tenantId, phone])
+  @@index([tenantId])
+}
+
+model Bill {
+  id                  String        @id @default(cuid())
+  tenantId            String
+  shopId              String
+  billNumber          String
+  customerId          String?
+  subtotalPaise       Int
+  makingChargesPaise  Int           @default(0)
+  stoneChargesPaise   Int           @default(0)
+  cgstPaise           Int           @default(0)
+  sgstPaise           Int           @default(0)
+  igstPaise           Int           @default(0)
+  oldGoldValuePaise   Int           @default(0)
+  discountPaise       Int           @default(0)
+  totalPaise          Int
+  paymentStatus       PaymentStatus @default(PENDING)
+  idempotencyKey      String
+  createdByUserId     String?
+  createdAt           DateTime      @default(now())
+  syncedAt            DateTime?
+
+  tenant              Tenant        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  shop                Shop          @relation(fields: [shopId], references: [id])
+  customer            Customer?     @relation(fields: [customerId], references: [id])
+  lines               BillLine[]
+  payments            Payment[]
+  oldGoldExchange     OldGoldExchange?
+
+  @@unique([tenantId, idempotencyKey])
+  @@unique([shopId, billNumber])
+  @@index([tenantId])
+  @@index([tenantId, shopId])
+  @@index([tenantId, createdAt])
+}
+
+model BillLine {
+  id                String  @id @default(cuid())
+  billId            String
+  itemId            String
+  weightMg          Int
+  purityCaratX100   Int
+  ratePerGramPaise  Int
+  makingChargeBps   Int     @default(0)
+  stoneChargePaise  Int     @default(0)
+  linePaise         Int
+
+  bill              Bill    @relation(fields: [billId], references: [id], onDelete: Cascade)
+  item              Item    @relation(fields: [itemId], references: [id])
+
+  @@index([billId])
+}
+
+model Payment {
+  id           String      @id @default(cuid())
+  billId       String
+  mode         PaymentMode
+  amountPaise  Int
+  referenceId  String?
+  createdAt    DateTime    @default(now())
+
+  bill         Bill        @relation(fields: [billId], references: [id], onDelete: Cascade)
+
+  @@index([billId])
+}
+
+model OldGoldExchange {
+  id                String @id @default(cuid())
+  billId            String @unique
+  weightMg          Int
+  purityCaratX100   Int
+  ratePerGramPaise  Int
+  valuePaise        Int
+
+  bill              Bill   @relation(fields: [billId], references: [id], onDelete: Cascade)
+}
+
+// --------------------------------------------------------------------------
+// Finance
+// --------------------------------------------------------------------------
+
+enum GoldLoanStatus {
+  ACTIVE
+  PARTIALLY_REPAID
+  CLOSED
+  DEFAULTED
+}
+
+model Expense {
+  id          String   @id @default(cuid())
+  tenantId    String
+  shopId      String
+  category    String
+  amountPaise Int
+  paidAt      DateTime
+  notes       String?
+  createdAt   DateTime @default(now())
+
+  tenant      Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  shop        Shop     @relation(fields: [shopId], references: [id])
+
+  @@index([tenantId])
+  @@index([tenantId, shopId, paidAt])
+}
+
+model GoldLoan {
+  id               String         @id @default(cuid())
+  tenantId         String
+  customerId       String
+  principalPaise   Int
+  interestRateBps  Int
+  pledgedWeightMg  Int
+  status           GoldLoanStatus @default(ACTIVE)
+  dueAt            DateTime
+
+  tenant           Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  customer         Customer       @relation(fields: [customerId], references: [id])
+  repayments       GoldLoanRepayment[]
+
+  @@index([tenantId])
+  @@index([tenantId, customerId])
+}
+
+model GoldLoanRepayment {
+  id          String   @id @default(cuid())
+  loanId      String
+  amountPaise Int
+  paidAt      DateTime
+
+  loan        GoldLoan @relation(fields: [loanId], references: [id], onDelete: Cascade)
+
+  @@index([loanId])
+}
+
+model Payroll {
+  id              String   @id @default(cuid())
+  tenantId        String
+  userId          String
+  month           String   // "YYYY-MM"
+  basePaise       Int
+  commissionPaise Int      @default(0)
+  advancePaise    Int      @default(0)
+  netPaise        Int
+  paidAt          DateTime?
+
+  tenant          Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, userId, month])
+  @@index([tenantId])
+}
+
+// --------------------------------------------------------------------------
+// CRM
+// --------------------------------------------------------------------------
+
+enum LeadStatus {
+  NEW
+  CONTACTED
+  INTERESTED
+  NEGOTIATION
+  CONVERTED
+  LOST
+}
+
+enum WhatsAppMessageStatus {
+  QUEUED
+  SENT
+  DELIVERED
+  READ
+  FAILED
+}
+
+model Lead {
+  id                String     @id @default(cuid())
+  tenantId          String
+  source            String
+  customerId        String?
+  name              String
+  phone             String
+  interest          String?
+  status            LeadStatus @default(NEW)
+  assignedToUserId  String?
+  utmSource         String?
+  utmCampaign       String?
+  createdAt         DateTime   @default(now())
+  updatedAt         DateTime   @updatedAt
+
+  tenant            Tenant     @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  customer          Customer?  @relation(fields: [customerId], references: [id])
+  activities        LeadActivity[]
+
+  @@index([tenantId])
+  @@index([tenantId, status])
+}
+
+model LeadActivity {
+  id                String   @id @default(cuid())
+  leadId            String
+  type              String
+  notes             String?
+  performedByUserId String?
+  createdAt         DateTime @default(now())
+
+  lead              Lead     @relation(fields: [leadId], references: [id], onDelete: Cascade)
+
+  @@index([leadId])
+}
+
+model WhatsAppMessage {
+  id            String                @id @default(cuid())
+  tenantId      String
+  leadId        String?
+  customerId    String?
+  templateName  String
+  body          String
+  status        WhatsAppMessageStatus @default(QUEUED)
+  sentAt        DateTime?
+  deliveredAt   DateTime?
+  createdAt     DateTime              @default(now())
+
+  tenant        Tenant                @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId])
+  @@index([tenantId, status])
+}
+
+// --------------------------------------------------------------------------
+// E-Commerce
+// --------------------------------------------------------------------------
+
+enum OrderStatus {
+  PENDING
+  CONFIRMED
+  PACKED
+  SHIPPED
+  DELIVERED
+  CANCELLED
+  RETURNED
+}
+
+model Product {
+  id                 String   @id @default(cuid())
+  tenantId           String
+  name               String
+  slug               String
+  categoryId         String
+  descriptionMd      String
+  images             String[]
+  weightMg           Int
+  purityCaratX100    Int
+  makingChargeBps    Int
+  basePricePaise     Int
+  stoneChargePaise   Int      @default(0)
+  isPublished        Boolean  @default(false)
+  createdAt          DateTime @default(now())
+
+  tenant             Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  category           Category @relation(fields: [categoryId], references: [id])
+  orderItems         OrderItem[]
+
+  @@unique([tenantId, slug])
+  @@index([tenantId])
+  @@index([tenantId, isPublished])
+}
+
+model Order {
+  id              String      @id @default(cuid())
+  tenantId        String
+  customerId      String
+  status          OrderStatus @default(PENDING)
+  subtotalPaise   Int
+  shippingPaise   Int         @default(0)
+  taxPaise        Int         @default(0)
+  totalPaise      Int
+  paymentMethod   String
+  razorpayOrderId String?
+  shiprocketAwb   String?
+  createdAt       DateTime    @default(now())
+
+  tenant          Tenant      @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  customer        Customer    @relation(fields: [customerId], references: [id])
+  items           OrderItem[]
+
+  @@index([tenantId])
+  @@index([tenantId, status])
+}
+
+model OrderItem {
+  id         String  @id @default(cuid())
+  orderId    String
+  productId  String
+  qty        Int     @default(1)
+  pricePaise Int
+
+  order      Order   @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  product    Product @relation(fields: [productId], references: [id])
+
+  @@index([orderId])
+}
+
+// --------------------------------------------------------------------------
+// Audit
+// --------------------------------------------------------------------------
+
+model AuditLog {
+  id          String   @id @default(cuid())
+  tenantId    String
+  userId      String?
+  entityType  String
+  entityId    String
+  action      String
+  beforeJson  Json?
+  afterJson   Json?
+  ip          String?
+  userAgent   String?
+  createdAt   DateTime @default(now())
+
+  tenant      Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId])
+  @@index([tenantId, entityType, entityId])
+  @@index([tenantId, createdAt])
+}

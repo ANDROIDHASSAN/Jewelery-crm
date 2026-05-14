@@ -1,0 +1,31 @@
+node_modules/
+dist/
+build/
+coverage/
+.env
+.env.local
+.env.*.local
+*.log
+.DS_Store
+.vite/
+.turbo/
+.cache/
+.idea/
+.vscode/
+*.tsbuildinfo
+playwright-report/
+test-results/
+.pnpm-debug.log*
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Repo cruft / local-only references
+* copy.md
+gold-os-complete/
+.vercel
+Thumbs.db
+
+# tool logs
+.client-dev.log
+.npm-install.log

@@ -1,0 +1,23 @@
+{
+  "name": "Gold OS",
+  "short_name": "Gold OS",
+  "description": "Run your jewellery business from one screen.",
+  "start_url": "/pos",
+  "display": "standalone",
+  "background_color": "#FAF9F7",
+  "theme_color": "#C99B2A",
+  "orientation": "landscape-primary",
+  "categories": ["business", "productivity"],
+  "icons": [
+    {
+      "src": "/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
+  ]
+}

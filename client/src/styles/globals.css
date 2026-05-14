@@ -1,0 +1,27 @@
+@import './tokens.css';
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html {
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+  body {
+    @apply bg-ink-25 text-ink-800 font-sans;
+  }
+  ::selection {
+    background: var(--brand-100);
+    color: var(--ink-900);
+  }
+  :focus-visible {
+    @apply outline-none ring-2 ring-brand-300 ring-offset-2 ring-offset-ink-0 rounded-sm;
+  }
+}
+
+@layer utilities {
+  .tabular-nums {
+    font-variant-numeric: tabular-nums;
+  }
+}

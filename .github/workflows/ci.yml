@@ -1,0 +1,42 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:15-alpine
+        env:
+          POSTGRES_USER: goldos
+          POSTGRES_PASSWORD: goldos
+          POSTGRES_DB: goldos_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd="pg_isready -U goldos"
+          --health-interval=5s --health-timeout=5s --health-retries=5
+      redis:
+        image: redis:7-alpine
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd="redis-cli ping"
+          --health-interval=5s --health-timeout=3s --health-retries=5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run lint
+      - run: npm run test
+        env:
+          DATABASE_URL: postgresql://goldos:goldos@localhost:5432/goldos_test
+          REDIS_URL: redis://localhost:6379
+          JWT_ACCESS_SECRET: ci-access-secret-not-for-prod
+          JWT_REFRESH_SECRET: ci-refresh-secret-not-for-prod
