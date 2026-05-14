@@ -16,6 +16,7 @@ import { Input } from '@/components/ui/input';
 import {
   useGetFinanceSummaryQuery,
   useCreateExpenseMutation,
+  type ExpenseRow,
 } from '@/features/finance/financeApi';
 import { useGetShopsQuery } from '@/features/shops/shopsApi';
 import { ChartCard, CurrencyBarChart, CurrencyDonutChart } from '@/components/ui/charts';
@@ -207,7 +208,7 @@ function ExpensesList({
   rows,
   loading,
 }: {
-  rows: NonNullable<ReturnType<typeof useGetFinanceSummaryQuery>['data']>['data']['recentExpenses'];
+  rows: ExpenseRow[];
   loading: boolean;
 }): JSX.Element {
   const { data: shopsRes } = useGetShopsQuery();
