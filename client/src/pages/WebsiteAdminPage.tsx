@@ -65,11 +65,18 @@ export function WebsiteAdminPage(): JSX.Element {
   }
 
   async function handlePublish(): Promise<void> {
+    // Flip the button + dirty flag immediately. The mutation patches the cache
+    // optimistically (see updateStorefront in storefrontApi); if the PUT fails
+    // the catch below restores the dirty state so the user can retry. This
+    // turns "Publishing…" from a 5-15s blocking spinner into a sub-100ms ack.
+    setIsDirty(false);
+    const t0 = performance.now();
     try {
       await publish(content).unwrap();
-      setIsDirty(false);
-      toast.success('Published · live on the storefront');
+      const ms = Math.round(performance.now() - t0);
+      toast.success(`Published in ${ms < 1000 ? `${ms}ms` : `${(ms / 1000).toFixed(1)}s`} · live on the storefront`);
     } catch (err) {
+      setIsDirty(true); // re-arm so the user can retry
       const message =
         (err as { data?: { error?: { message?: string } } })?.data?.error?.message ??
         'Could not publish. Check the server logs.';

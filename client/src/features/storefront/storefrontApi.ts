@@ -48,7 +48,37 @@ export const storefrontApi = baseApi.injectEndpoints({
     updateStorefront: build.mutation<StorefrontResponse, StorefrontContent>({
       query: (content) => ({ url: '/storefront', method: 'PUT', body: content }),
       transformResponse: (raw: { data: StorefrontResponse }) => raw.data,
-      invalidatesTags: [{ type: 'StorefrontContent', id: 'LIST' }],
+      // Don't invalidate the StorefrontContent tag — that would trigger a
+      // second GET roundtrip (which on Render free-tier cold start can add
+      // 5-15s on top of the PUT itself, making Publish feel like 8-20s).
+      // The PUT response already carries the canonical saved content, so we
+      // patch the admin + public caches directly from it. Result: Publish
+      // feels instant once the server ACKs the write.
+      async onQueryStarted(content, { dispatch, queryFulfilled }) {
+        // Optimistic patch on both caches so the UI flips to "Published" the
+        // moment the cashier clicks the button. Roll back if the PUT fails.
+        const optimistic = {
+          content,
+          version: 0,
+          updatedAt: new Date().toISOString(),
+        } as StorefrontResponse;
+        const adminPatch = dispatch(
+          storefrontApi.util.updateQueryData('getAdminStorefront', undefined, () => optimistic),
+        );
+        const publicPatch = dispatch(
+          storefrontApi.util.updateQueryData('getPublicStorefront', undefined, () => optimistic),
+        );
+        try {
+          const { data: saved } = await queryFulfilled;
+          // Server confirmed — overwrite optimistic with the authoritative
+          // payload (carries the real version number + updatedAt).
+          dispatch(storefrontApi.util.updateQueryData('getAdminStorefront', undefined, () => saved));
+          dispatch(storefrontApi.util.updateQueryData('getPublicStorefront', undefined, () => saved));
+        } catch {
+          adminPatch.undo();
+          publicPatch.undo();
+        }
+      },
     }),
     getPublicProducts: build.query<PublicProduct[], void>({
       query: () => ({ url: '/website/products' }),
