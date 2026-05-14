@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Link, NavLink } from 'react-router-dom';
+import { Link, NavLink, useNavigate } from 'react-router-dom';
 import { Search, Heart, User, ShoppingBag, MapPin, Menu, X } from 'lucide-react';
 import { cn } from '@/lib/cn';
 import { useAppSelector } from '@/app/hooks';
@@ -17,9 +17,21 @@ export function StorefrontHeader(): JSX.Element {
   const brand = useAppSelector((s) => s.storefrontContent.brand);
   const rates = useAppSelector((s) => s.storefrontContent.rates);
   const locationCount = useAppSelector((s) => s.storefrontContent.locations.length);
+  const cartCount = useAppSelector((s) => s.shop.cart.reduce((n, c) => n + c.qty, 0));
+  const wishlistCount = useAppSelector((s) => s.shop.wishlist.length);
+  const signedIn = useAppSelector((s) => s.shop.account.signedIn);
+  const navigate = useNavigate();
   const [scrolled, setScrolled] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
+  const [searchQ, setSearchQ] = useState('');
+
+  function submitSearch(query: string): void {
+    const q = query.trim();
+    if (!q) return;
+    setSearchOpen(false);
+    navigate(`/store/search?q=${encodeURIComponent(q)}`);
+  }
 
   useEffect(() => {
     const onScroll = (): void => setScrolled(window.scrollY > 8);
@@ -134,18 +146,37 @@ export function StorefrontHeader(): JSX.Element {
             >
               <Search className="h-[18px] w-[18px]" />
             </button>
-            <button className="hidden sm:inline-flex h-10 w-10 items-center justify-center rounded-full hover:bg-ink-50" aria-label="Wishlist">
+            <Link
+              to="/store/wishlist"
+              className="relative hidden sm:inline-flex h-10 w-10 items-center justify-center rounded-full hover:bg-ink-50"
+              aria-label={`Wishlist${wishlistCount ? ` (${wishlistCount})` : ''}`}
+            >
               <Heart className="h-[18px] w-[18px]" />
-            </button>
-            <button className="hidden sm:inline-flex h-10 w-10 items-center justify-center rounded-full hover:bg-ink-50" aria-label="Account">
+              {wishlistCount > 0 && (
+                <span className="absolute top-1.5 right-1.5 h-4 min-w-4 px-1 rounded-full bg-brand-500 text-ink-0 text-[10px] leading-4 text-center tabular-nums">
+                  {wishlistCount}
+                </span>
+              )}
+            </Link>
+            <Link
+              to="/store/account"
+              className="hidden sm:inline-flex h-10 w-10 items-center justify-center rounded-full hover:bg-ink-50"
+              aria-label={signedIn ? 'Your account' : 'Sign in'}
+            >
               <User className="h-[18px] w-[18px]" />
-            </button>
-            <button className="relative h-10 w-10 inline-flex items-center justify-center rounded-full hover:bg-ink-50" aria-label="Cart">
+            </Link>
+            <Link
+              to="/store/cart"
+              className="relative h-10 w-10 inline-flex items-center justify-center rounded-full hover:bg-ink-50"
+              aria-label={`Cart${cartCount ? ` (${cartCount})` : ''}`}
+            >
               <ShoppingBag className="h-[18px] w-[18px]" />
-              <span className="absolute top-1.5 right-1.5 h-4 min-w-4 px-1 rounded-full bg-brand-500 text-ink-0 text-[10px] leading-4 text-center tabular-nums">
-                2
-              </span>
-            </button>
+              {cartCount > 0 && (
+                <span className="absolute top-1.5 right-1.5 h-4 min-w-4 px-1 rounded-full bg-brand-500 text-ink-0 text-[10px] leading-4 text-center tabular-nums">
+                  {cartCount}
+                </span>
+              )}
+            </Link>
           </div>
         </div>
 
@@ -153,11 +184,19 @@ export function StorefrontHeader(): JSX.Element {
         {searchOpen && (
           <div className="border-t border-ink-100 bg-ink-0">
             <div className="max-w-[1280px] mx-auto px-6 py-5">
-              <div className="relative">
+              <form
+                className="relative"
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  submitSearch(searchQ);
+                }}
+              >
                 <Search className="absolute left-4 top-1/2 -translate-y-1/2 h-4 w-4 text-ink-400" />
                 <input
                   autoFocus
                   type="search"
+                  value={searchQ}
+                  onChange={(e) => setSearchQ(e.target.value)}
                   placeholder="Search rings, bangles, necklaces…"
                   className="w-full h-12 pl-11 pr-12 bg-ink-25 rounded-full border border-ink-100 text-sm text-ink-900 placeholder:text-ink-400 focus:bg-ink-0 focus:border-brand-300 outline-none transition-colors"
                 />
@@ -169,11 +208,16 @@ export function StorefrontHeader(): JSX.Element {
                 >
                   <X className="h-4 w-4" />
                 </button>
-              </div>
+              </form>
               <div className="mt-4 flex flex-wrap gap-2 text-xs text-ink-600">
                 <span className="text-ink-400">Trending:</span>
                 {['Bridal sets', 'Mangalsutra', 'Diamond rings', 'Light-weight bangles', 'Daily-wear chains'].map((t) => (
-                  <button key={t} className="px-3 py-1 rounded-full border border-ink-100 hover:border-ink-300 hover:text-ink-900">
+                  <button
+                    key={t}
+                    type="button"
+                    onClick={() => submitSearch(t)}
+                    className="px-3 py-1 rounded-full border border-ink-100 hover:border-ink-300 hover:text-ink-900"
+                  >
                     {t}
                   </button>
                 ))}
@@ -225,6 +269,9 @@ export function StorefrontHeader(): JSX.Element {
                 </NavLink>
               ))}
               <div className="px-6 py-6 space-y-3 text-sm text-ink-600">
+                <Link to="/store/account" onClick={() => setMobileOpen(false)} className="block">{signedIn ? 'Your account' : 'Sign in'}</Link>
+                <Link to="/store/wishlist" onClick={() => setMobileOpen(false)} className="block">Wishlist{wishlistCount ? ` (${wishlistCount})` : ''}</Link>
+                <Link to="/store/cart" onClick={() => setMobileOpen(false)} className="block">Bag{cartCount ? ` (${cartCount})` : ''}</Link>
                 <Link to="/store/track" onClick={() => setMobileOpen(false)} className="block">Track order</Link>
                 <Link to="/store/help" onClick={() => setMobileOpen(false)} className="block">Help</Link>
                 <a href="https://wa.me/919876543210" className="block text-brand-700">Chat on WhatsApp</a>

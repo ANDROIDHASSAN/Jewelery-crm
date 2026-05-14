@@ -29,5 +29,10 @@ Thumbs.db
 # tool logs
 .client-dev.log
 .npm-install.log
+client/.vite-dev.log.err
+client/.vite-dev.log.out
 
 .vercel
+
+# Claude Code local settings + plugin metadata (not for production)
+.claude/

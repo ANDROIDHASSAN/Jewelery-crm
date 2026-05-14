@@ -13,6 +13,13 @@ const EnvSchema = z.object({
   JWT_ACCESS_SECRET: z.string().min(32),
   JWT_REFRESH_SECRET: z.string().min(32),
 
+  // Sentinel bearer token accepted by the auth middleware as the admin user.
+  // Must match VITE_ADMIN_API_TOKEN on the client. Empty disables the bypass.
+  ADMIN_API_TOKEN: z.string().optional().default(''),
+  // Optional: pin the admin session to a specific tenant. If empty, the
+  // first tenant in the DB is used (single-tenant deployments).
+  ADMIN_TENANT_ID: z.string().optional().default(''),
+
   CORS_ORIGIN: z.string().default('http://localhost:3000'),
 
   WHATSAPP_API_TOKEN: z.string().optional().default(''),

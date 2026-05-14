@@ -17,6 +17,10 @@ import { StorefrontHome } from '@/pages/storefront/StorefrontHome';
 import { CollectionPage } from '@/pages/storefront/CollectionPage';
 import { ProductDetailPage } from '@/pages/storefront/ProductDetailPage';
 import { StorePage } from '@/pages/storefront/StorePage';
+import { CartPage } from '@/pages/storefront/CartPage';
+import { WishlistPage } from '@/pages/storefront/WishlistPage';
+import { AccountPage } from '@/pages/storefront/AccountPage';
+import { SearchResultsPage } from '@/pages/storefront/SearchResultsPage';
 
 const router = createBrowserRouter([
   // Storefront at root.
@@ -29,6 +33,10 @@ const router = createBrowserRouter([
       { path: 'collections/:slug', element: <CollectionPage /> },
       { path: 'products/:slug', element: <ProductDetailPage /> },
       { path: 'locations', element: <StorePage /> },
+      { path: 'cart', element: <CartPage /> },
+      { path: 'wishlist', element: <WishlistPage /> },
+      { path: 'account', element: <AccountPage /> },
+      { path: 'search', element: <SearchResultsPage /> },
     ],
   },
   // Legacy /store/* paths still work (storefront internal links use them).
@@ -41,6 +49,10 @@ const router = createBrowserRouter([
       { path: 'collections/:slug', element: <CollectionPage /> },
       { path: 'products/:slug', element: <ProductDetailPage /> },
       { path: 'locations', element: <StorePage /> },
+      { path: 'cart', element: <CartPage /> },
+      { path: 'wishlist', element: <WishlistPage /> },
+      { path: 'account', element: <AccountPage /> },
+      { path: 'search', element: <SearchResultsPage /> },
     ],
   },
   // Admin login.

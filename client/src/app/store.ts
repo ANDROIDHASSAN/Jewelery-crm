@@ -11,6 +11,7 @@ import {
 } from '@reduxjs/toolkit/query/react';
 import { authReducer, logout, setAccessToken } from '@/features/auth/authSlice';
 import { storefrontContentReducer } from '@/features/storefront/storefrontContentSlice';
+import { shopReducer, persistShopState } from '@/features/storefront/shopSlice';
 
 const rawBaseQuery = fetchBaseQuery({
   baseUrl: '/api/v1',
@@ -30,8 +31,10 @@ const baseQueryWithRefresh: BaseQueryFn<string | FetchArgs, unknown, FetchBaseQu
   const currentToken = (api.getState() as RootState).auth.accessToken;
   let result = await rawBaseQuery(args, api, extraOptions);
   if (result.error && result.error.status === 401) {
-    // Admin sentinel session is client-only; server will always 401. Don't refresh/logout.
-    if (currentToken === 'admin-session-token') return result;
+    // Admin sentinel session has no JWT refresh cookie — surface the 401 instead
+    // of bouncing through /auth/refresh (which would also 401 and trigger logout).
+    const adminToken = import.meta.env.VITE_ADMIN_API_TOKEN ?? 'admin-session-token';
+    if (currentToken === adminToken) return result;
     const refresh = await rawBaseQuery(
       { url: '/auth/refresh', method: 'POST' },
       api,
@@ -90,9 +93,14 @@ export const store = configureStore({
   reducer: {
     auth: authReducer,
     storefrontContent: storefrontContentReducer,
+    shop: shopReducer,
     [baseApi.reducerPath]: baseApi.reducer,
   },
   middleware: (getDefault) => getDefault().concat(baseApi.middleware),
+});
+
+store.subscribe(() => {
+  persistShopState(store.getState().shop);
 });
 
 export type RootState = ReturnType<typeof store.getState>;

@@ -5,6 +5,8 @@ import * as Dialog from '@radix-ui/react-dialog';
 import { toast } from 'sonner';
 import { Money } from '@/components/ui/money';
 import { cn } from '@/lib/cn';
+import { useAppDispatch, useAppSelector } from '@/app/hooks';
+import { addToCart, toggleWishlist } from '@/features/storefront/shopSlice';
 
 const PRODUCT = {
   name: 'Mira bangle',
@@ -35,10 +37,12 @@ const RELATED = [
 export function ProductDetailPage(): JSX.Element {
   const { slug = 'mira-bangle' } = useParams();
   const [imgIdx, setImgIdx] = useState(0);
-  const [size, setSize] = useState<string>(SIZES[1] ?? '2.6');
+  const [size, setSize] = useState<string>(SIZES[1] ?? SIZES[0] ?? '');
   const [qty, setQty] = useState(1);
   const [openSection, setOpenSection] = useState<string | null>('details');
   const [reserveOpen, setReserveOpen] = useState(false);
+  const dispatch = useAppDispatch();
+  const wishlisted = useAppSelector((s) => s.shop.wishlist.some((w) => w.slug === slug));
 
   const gold = Math.round((PRODUCT.weightG * 1000 * PRODUCT.ratePerGram * 2200) / (1000 * 2400));
   const making = Math.round((PRODUCT.weightG * 1000 * PRODUCT.makingPerGram) / 1000);
@@ -151,13 +155,55 @@ export function ProductDetailPage(): JSX.Element {
             </div>
             <button
               type="button"
+              onClick={() => {
+                dispatch(
+                  addToCart({
+                    slug,
+                    name: PRODUCT.name,
+                    weight: `${PRODUCT.weightG.toFixed(2)} g · ${PRODUCT.purity}`,
+                    priceLabel: `₹${(total / 100).toLocaleString('en-IN')}`,
+                    pricePaise: total,
+                    img: PRODUCT.images[0] ?? '',
+                    qty,
+                  }),
+                );
+                toast.success(`${PRODUCT.name} added to bag`);
+              }}
+              className="flex-1 h-12 px-7 rounded-full bg-ink-900 text-ink-0 text-sm font-medium hover:bg-ink-700 transition-colors duration-fast"
+            >
+              Add to bag
+            </button>
+            <button
+              type="button"
               onClick={() => setReserveOpen(true)}
               className="flex-1 h-12 px-7 rounded-full bg-brand-400 text-ink-900 text-sm font-medium hover:bg-brand-300 transition-colors duration-fast"
             >
               Reserve at store
             </button>
-            <button className="h-12 px-5 rounded-full border border-ink-200 text-ink-900 text-sm hover:bg-ink-50 transition-colors duration-fast inline-flex items-center justify-center gap-2" aria-label="Add to wishlist">
-              <Heart className="h-4 w-4" />
+            <button
+              type="button"
+              onClick={() => {
+                dispatch(
+                  toggleWishlist({
+                    slug,
+                    name: PRODUCT.name,
+                    weight: `${PRODUCT.weightG.toFixed(2)} g · ${PRODUCT.purity}`,
+                    priceLabel: `₹${(total / 100).toLocaleString('en-IN')}`,
+                    img: PRODUCT.images[0] ?? '',
+                  }),
+                );
+                toast.success(wishlisted ? 'Removed from wishlist' : 'Saved to wishlist');
+              }}
+              className={cn(
+                'h-12 px-5 rounded-full border text-sm transition-colors duration-fast inline-flex items-center justify-center gap-2',
+                wishlisted
+                  ? 'border-brand-500 bg-brand-50 text-brand-800'
+                  : 'border-ink-200 text-ink-900 hover:bg-ink-50',
+              )}
+              aria-label={wishlisted ? 'Remove from wishlist' : 'Add to wishlist'}
+              aria-pressed={wishlisted}
+            >
+              <Heart className={cn('h-4 w-4', wishlisted && 'fill-brand-500 text-brand-700')} />
               <span className="sm:hidden">Wishlist</span>
             </button>
           </div>

@@ -12,6 +12,9 @@ import { Label } from '@/components/ui/label';
 
 const ADMIN_EMAIL = import.meta.env.VITE_ADMIN_EMAIL ?? 'admin@zelora.in';
 const ADMIN_PASSWORD = import.meta.env.VITE_ADMIN_PASSWORD ?? 'zelora123';
+// Bearer token sent to the API for the admin session. Must equal the server's
+// ADMIN_API_TOKEN env var for protected admin calls (e.g. storefront CMS) to work.
+const ADMIN_API_TOKEN = import.meta.env.VITE_ADMIN_API_TOKEN ?? 'admin-session-token';
 
 export function LoginPage(): JSX.Element {
   const [email, setEmail] = useState('');
@@ -29,7 +32,7 @@ export function LoginPage(): JSX.Element {
     // Tiny artificial delay so the spinner state is visible.
     setTimeout(() => {
       if (email.trim().toLowerCase() === ADMIN_EMAIL.toLowerCase() && password === ADMIN_PASSWORD) {
-        dispatch(setAccessToken('admin-session-token'));
+        dispatch(setAccessToken(ADMIN_API_TOKEN));
         toast.success('Signed in');
         navigate(from, { replace: true });
       } else {
