@@ -271,6 +271,9 @@ export function DashboardPage(): JSX.Element {
         />
       </section>
 
+      {/* ---- 3a. Recent storefront reservations — high-priority, kept above the fold ---- */}
+      <RecentReservations />
+
       {/* ---- 4. Sales chart + Gold rate ---- */}
       <section className="grid grid-cols-1 lg:grid-cols-3 gap-4">
         <ChartCard
@@ -381,9 +384,6 @@ export function DashboardPage(): JSX.Element {
           )}
         </ChartCard>
       </section>
-
-      {/* ---- 6a. Recent storefront reservations — leads from Reserve at Store ---- */}
-      <RecentReservations />
 
       {/* ---- 6. Recent storefront orders + Recent bills ---- */}
       <section className="grid grid-cols-1 lg:grid-cols-2 gap-4">
