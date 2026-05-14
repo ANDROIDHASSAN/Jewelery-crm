@@ -308,74 +308,118 @@ function ChannelButton({ label, count, active, onClick }: { label: string; count
 // --------------------------------------------------------------------------
 
 function PipelineView({ leads }: { leads: Lead[] }): JSX.Element {
-  const [updateLead, { isLoading: updating }] = useUpdateLeadMutation();
-  const [busyId, setBusyId] = useState<string | null>(null);
+  const [updateLead] = useUpdateLeadMutation();
+  // Track the dragging lead and the currently hovered drop column for visual
+  // feedback. Native HTML5 drag-and-drop — zero deps, works in every modern
+  // desktop browser. Touch is handled by the explicit "→ next" button per card.
+  const [dragId, setDragId] = useState<string | null>(null);
+  const [overStatus, setOverStatus] = useState<LeadStatus | null>(null);
 
-  async function advance(lead: Lead): Promise<void> {
-    const next = NEXT_STATUS[lead.status];
-    if (!next) return;
+  async function moveLead(lead: Lead, target: LeadStatus): Promise<void> {
+    if (lead.status === target) return;
+    const prev = lead.status;
     try {
-      setBusyId(lead.id);
-      await updateLead({ id: lead.id, status: next }).unwrap();
-      toast.success(`${lead.name} → ${next.toLowerCase()}`);
-    } catch {
-      toast.error('Could not update lead');
-    } finally {
-      setBusyId(null);
+      await updateLead({ id: lead.id, status: target }).unwrap();
+      toast.success(`${lead.name} → ${target.toLowerCase()}`);
+    } catch (err) {
+      const e = err as { data?: { error?: { message?: string } } };
+      toast.error(`Could not move ${lead.name}`, {
+        description: e?.data?.error?.message ?? `Reverted to ${prev.toLowerCase()}`,
+      });
     }
   }
 
+  function onCardDragStart(e: React.DragEvent, lead: Lead): void {
+    setDragId(lead.id);
+    e.dataTransfer.setData('text/plain', `${lead.id}::${lead.status}`);
+    e.dataTransfer.effectAllowed = 'move';
+  }
+
+  function onColumnDragOver(e: React.DragEvent, status: LeadStatus): void {
+    if (!dragId) return;
+    e.preventDefault(); // required to allow drop
+    e.dataTransfer.dropEffect = 'move';
+    if (overStatus !== status) setOverStatus(status);
+  }
+
+  function onColumnDrop(e: React.DragEvent, target: LeadStatus): void {
+    e.preventDefault();
+    setOverStatus(null);
+    setDragId(null);
+    const payload = e.dataTransfer.getData('text/plain');
+    const [id] = payload.split('::');
+    const lead = leads.find((l) => l.id === id);
+    if (lead) void moveLead(lead, target);
+  }
+
   return (
-    <div className="grid grid-cols-1 md:grid-cols-3 xl:grid-cols-6 gap-3">
-      {LEAD_STATUSES.map((status) => {
-        const items = leads.filter((s) => s.status === status);
-        return (
-          <div key={status} className="rounded-md border border-ink-100 bg-ink-0">
-            <div className="px-3 py-2 border-b border-ink-100 flex items-center justify-between">
-              <span className="text-eyebrow uppercase text-ink-500">{status.toLowerCase()}</span>
-              <Badge tone="neutral">{items.length}</Badge>
-            </div>
-            <ul className="p-2 space-y-2 min-h-[80px]">
-              {items.map((l) => {
-                const next = NEXT_STATUS[l.status];
-                return (
-                  <li
-                    key={l.id}
-                    className="rounded-md border border-ink-100 bg-ink-0 p-2.5 hover:border-brand-400 transition-colors duration-fast"
-                  >
-                    <div className="flex items-start gap-2">
-                      <Avatar name={l.name} size="sm" />
-                      <div className="min-w-0 flex-1">
-                        <p className="text-sm font-medium text-ink-800 truncate">{l.name}</p>
-                        <p className="text-xs text-ink-500 font-mono truncate">{l.phone}</p>
-                      </div>
-                    </div>
-                    {l.interest && <p className="text-xs text-ink-600 mt-1.5 line-clamp-2">{l.interest}</p>}
-                    <div className="flex items-center gap-1 mt-1.5">
-                      <ChannelChip source={l.source} compact />
-                      {l.utmCampaign && <span className="text-[9px] text-ink-500 font-mono truncate">utm:{l.utmCampaign}</span>}
-                    </div>
-                    {next && (
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        className="mt-2 w-full text-xs"
-                        disabled={updating && busyId === l.id}
-                        onClick={() => void advance(l)}
-                      >
-                        {busyId === l.id ? '…' : `→ ${next.toLowerCase()}`}
-                      </Button>
-                    )}
-                  </li>
-                );
-              })}
-              {items.length === 0 && (
-                <li className="text-center text-xs text-ink-400 py-4">—</li>
+    <div>
+      <p className="text-xs text-ink-500 mb-3 inline-flex items-center gap-1.5">
+        <span className="h-1.5 w-1.5 rounded-full bg-brand-400" />
+        Drag a card to move it between stages — changes save instantly.
+      </p>
+      <div className="grid grid-cols-1 md:grid-cols-3 xl:grid-cols-6 gap-3">
+        {LEAD_STATUSES.map((status) => {
+          const items = leads.filter((s) => s.status === status);
+          const isDropTarget = overStatus === status && dragId !== null;
+          return (
+            <div
+              key={status}
+              onDragOver={(e) => onColumnDragOver(e, status)}
+              onDragLeave={() => overStatus === status && setOverStatus(null)}
+              onDrop={(e) => onColumnDrop(e, status)}
+              className={cn(
+                'rounded-md border bg-ink-0 transition-colors',
+                isDropTarget ? 'border-brand-500 bg-brand-50/40 ring-2 ring-brand-200' : 'border-ink-100',
               )}
-            </ul>
-          </div>
-        );
-      })}
+            >
+              <div className="px-3 py-2 border-b border-ink-100 flex items-center justify-between">
+                <span className="text-eyebrow uppercase text-ink-500">{status.toLowerCase()}</span>
+                <Badge tone="neutral">{items.length}</Badge>
+              </div>
+              <ul className="p-2 space-y-2 min-h-[120px]">
+                {items.map((l) => {
+                  const isDragging = dragId === l.id;
+                  return (
+                    <li
+                      key={l.id}
+                      draggable
+                      onDragStart={(e) => onCardDragStart(e, l)}
+                      onDragEnd={() => { setDragId(null); setOverStatus(null); }}
+                      className={cn(
+                        'rounded-md border bg-ink-0 p-2.5 select-none cursor-grab active:cursor-grabbing transition-all',
+                        'hover:border-brand-400 hover:shadow-sm',
+                        isDragging && 'opacity-40 scale-[0.98] border-brand-400',
+                      )}
+                    >
+                      <div className="flex items-start gap-2">
+                        <Avatar name={l.name} size="sm" />
+                        <div className="min-w-0 flex-1">
+                          <p className="text-sm font-medium text-ink-800 truncate">{l.name}</p>
+                          <p className="text-xs text-ink-500 font-mono truncate">{l.phone}</p>
+                        </div>
+                      </div>
+                      {l.interest && <p className="text-xs text-ink-600 mt-1.5 line-clamp-2">{l.interest}</p>}
+                      <div className="flex items-center gap-1 mt-1.5">
+                        <ChannelChip source={l.source} compact />
+                        {l.utmCampaign && <span className="text-[9px] text-ink-500 font-mono truncate">utm:{l.utmCampaign}</span>}
+                      </div>
+                    </li>
+                  );
+                })}
+                {items.length === 0 && (
+                  <li className={cn(
+                    'text-center text-xs py-6 rounded border border-dashed transition-colors',
+                    isDropTarget ? 'border-brand-400 text-brand-700 bg-brand-50' : 'border-ink-100 text-ink-400',
+                  )}>
+                    {isDropTarget ? 'Drop here' : '—'}
+                  </li>
+                )}
+              </ul>
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }

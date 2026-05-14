@@ -130,6 +130,47 @@ analyticsRouter.get('/dashboard', async (req, res, next) => {
   }
 });
 
+analyticsRouter.get('/top-products', async (req, res, next) => {
+  try {
+    const q = z
+      .object({
+        from: z.coerce.date().optional(),
+        to: z.coerce.date().optional(),
+        limit: z.coerce.number().int().positive().max(50).default(5),
+      })
+      .parse(req.query);
+    const grouped = await prisma.orderItem.groupBy({
+      by: ['productId'],
+      where: q.from || q.to ? { order: { createdAt: { gte: q.from, lte: q.to } } } : undefined,
+      _sum: { qty: true, pricePaise: true },
+      _count: { _all: true },
+      orderBy: { _sum: { qty: 'desc' } },
+      take: q.limit,
+    });
+    const productIds = grouped.map((g) => g.productId);
+    const products = await prisma.product.findMany({
+      where: { id: { in: productIds } },
+      select: { id: true, name: true, slug: true, basePricePaise: true },
+    });
+    const productById = new Map(products.map((p) => [p.id, p]));
+    res.json({
+      data: grouped.map((g) => {
+        const p = productById.get(g.productId);
+        return {
+          productId: g.productId,
+          name: p?.name ?? 'Unknown',
+          slug: p?.slug ?? '',
+          qty: g._sum.qty ?? 0,
+          orderCount: g._count._all,
+          revenuePaise: g._sum.pricePaise ?? 0,
+        };
+      }),
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
 analyticsRouter.get('/staff', async (req, res, next) => {
   try {
     const q = z.object({ from: z.coerce.date(), to: z.coerce.date() }).parse(req.query);

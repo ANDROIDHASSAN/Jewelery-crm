@@ -3,18 +3,14 @@ import { z } from 'zod';
 import { LeadInputSchema } from '@goldos/shared/schemas';
 import { prisma } from '../../lib/prisma.js';
 import { LEAD_STATUSES } from '@goldos/shared/constants';
-import { NotFoundError, BusinessRuleError } from '../../lib/errors.js';
+import { NotFoundError } from '../../lib/errors.js';
 
 export const crmRouter: Router = Router();
 
-const ALLOWED_TRANSITIONS: Record<string, string[]> = {
-  NEW: ['CONTACTED', 'LOST'],
-  CONTACTED: ['INTERESTED', 'LOST'],
-  INTERESTED: ['NEGOTIATION', 'LOST'],
-  NEGOTIATION: ['CONVERTED', 'LOST'],
-  CONVERTED: [],
-  LOST: [],
-};
+// Pipeline kanban supports drag-and-drop in any direction — both for normal
+// progression (NEW → CONTACTED → … → CONVERTED), for marking lost from any
+// stage, and for reverting an accidental drop. The previous strict transition
+// table blocked the kanban UX. Status is still validated against the enum.
 
 crmRouter.get('/leads', async (req, res, next) => {
   try {
@@ -64,9 +60,6 @@ crmRouter.patch('/leads/:id', async (req, res, next) => {
 
     const existing = await prisma.lead.findUnique({ where: { id: req.params['id']! } });
     if (!existing) throw new NotFoundError();
-    if (body.status && !ALLOWED_TRANSITIONS[existing.status]?.includes(body.status)) {
-      throw new BusinessRuleError('INVALID_TRANSITION', `Cannot move ${existing.status} → ${body.status}`);
-    }
 
     const lead = await prisma.lead.update({
       where: { id: req.params['id']! },
