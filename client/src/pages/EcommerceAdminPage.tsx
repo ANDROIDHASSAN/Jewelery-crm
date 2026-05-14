@@ -17,7 +17,9 @@ import {
   type AdminOrder,
 } from '@/features/ecommerce/ecommerceApi';
 import { useGetCategoriesQuery } from '@/features/inventory/inventoryApi';
+import { useGetLeadsQuery, useUpdateLeadMutation } from '@/features/crm/crmApi';
 import { ORDER_STATUSES, type OrderStatus } from '@goldos/shared/constants';
+import type { Lead } from '@goldos/shared/types';
 
 const STATUS_TONE: Record<string, 'success' | 'info' | 'warning' | 'neutral'> = {
   DELIVERED: 'success',
@@ -29,20 +31,30 @@ const STATUS_TONE: Record<string, 'success' | 'info' | 'warning' | 'neutral'> = 
   RETURNED: 'neutral',
 };
 
+// Storefront-sourced lead sources that should surface in the E-Commerce module.
+// PDP "Reserve at store" emits `store-reservation`; the footer newsletter emits
+// `newsletter`. Anything else (walk-in, instagram, etc.) stays in CRM only.
+const STOREFRONT_SOURCES = new Set(['store-reservation', 'newsletter', 'storefront']);
+
 export function EcommerceAdminPage(): JSX.Element {
-  const [tab, setTab] = useState<'products' | 'orders'>('products');
+  const [tab, setTab] = useState<'products' | 'orders' | 'reservations'>('products');
   const [productDialog, setProductDialog] = useState<{ open: boolean; editing?: AdminProduct }>({ open: false });
   const [orderDrawer, setOrderDrawer] = useState<AdminOrder | null>(null);
   const [statusFilter, setStatusFilter] = useState<OrderStatus | ''>('');
 
   const { data: orderRes, isLoading: ordersLoading } = useGetOrdersQuery(
     statusFilter ? { status: statusFilter } : undefined,
-    { pollingInterval: 60_000 },
+    { pollingInterval: 30_000 },
   );
   const { data: productRes, isLoading: productsLoading } = useGetAdminProductsQuery();
+  // Poll leads on 15s so a newly-placed reservation appears within a screen blink.
+  const { data: leadsRes, isLoading: leadsLoading } = useGetLeadsQuery(undefined, {
+    pollingInterval: 15_000,
+  });
 
   const orders = orderRes?.data ?? [];
   const products = productRes?.data ?? [];
+  const reservations = (leadsRes?.data ?? []).filter((l) => STOREFRONT_SOURCES.has(l.source));
 
   return (
     <div className="space-y-4">
@@ -56,17 +68,20 @@ export function EcommerceAdminPage(): JSX.Element {
         </Button>
       </header>
 
-      <section className="grid grid-cols-1 md:grid-cols-3 gap-4">
+      <section className="grid grid-cols-1 md:grid-cols-4 gap-4">
         <KPI label="Published products" value={productsLoading ? '…' : String(products.filter((p) => p.isPublished).length)}
           sub={`${products.length} total in catalog`} />
         <KPI label="Open orders"
           value={ordersLoading ? '…' : String(orders.filter((o) => !['DELIVERED', 'CANCELLED', 'RETURNED'].includes(o.status)).length)} />
+        <KPI label="Open reservations"
+          value={leadsLoading ? '…' : String(reservations.filter((l) => !['CONVERTED', 'LOST'].includes(l.status)).length)}
+          sub={`${reservations.length} total · storefront`} />
         <KPI label="Revenue (this page)"
           value={<Money paise={orders.reduce((s, o) => s + o.totalPaise, 0)} />} />
       </section>
 
       <div className="flex gap-1 border-b border-ink-100">
-        {([['products', 'Products'], ['orders', 'Orders']] as const).map(([k, label]) => (
+        {([['products', 'Products'], ['orders', 'Orders'], ['reservations', `Reservations${reservations.length ? ` (${reservations.length})` : ''}`]] as const).map(([k, label]) => (
           <button
             key={k}
             type="button"
@@ -94,6 +109,10 @@ export function EcommerceAdminPage(): JSX.Element {
           onFilter={setStatusFilter}
           onOpen={setOrderDrawer}
         />
+      )}
+
+      {tab === 'reservations' && (
+        <ReservationsTable reservations={reservations} loading={leadsLoading} />
       )}
 
       <ProductDialog
@@ -650,5 +669,164 @@ function Row({ label, children }: { label: string; children: React.ReactNode }):
       <span className="text-ink-500">{label}</span>
       <span>{children}</span>
     </div>
+  );
+}
+
+// Storefront reservations live in the `Lead` table with source = 'store-reservation'.
+// We parse the freeform `interest` field (formatted by the PDP modal as
+// "RESERVE: <name> · <weight/purity> · Size … · Qty … · Total … · Store: … · Visit by: …")
+// so each row can show the actual reserved piece, total, and visit date.
+function parseReservation(interest: string | null | undefined): {
+  product: string;
+  details: string;
+  totalLabel: string | null;
+  store: string | null;
+  visitBy: string | null;
+} {
+  if (!interest) return { product: '—', details: '', totalLabel: null, store: null, visitBy: null };
+  const parts = interest.split(' · ').map((p) => p.trim());
+  const productPart = parts[0] ?? '';
+  const product = productPart.replace(/^RESERVE:\s*/i, '') || productPart;
+  const details = parts[1] ?? '';
+  const total = parts.find((p) => p.toLowerCase().startsWith('total ')) ?? null;
+  const store = parts.find((p) => p.toLowerCase().startsWith('store:'))?.replace(/^store:\s*/i, '') ?? null;
+  const visitBy = parts.find((p) => p.toLowerCase().startsWith('visit by:'))?.replace(/^visit by:\s*/i, '') ?? null;
+  return { product, details, totalLabel: total, store, visitBy };
+}
+
+const LEAD_STATUS_TONE: Record<string, 'success' | 'info' | 'warning' | 'neutral'> = {
+  NEW: 'warning',
+  CONTACTED: 'info',
+  INTERESTED: 'info',
+  NEGOTIATION: 'info',
+  CONVERTED: 'success',
+  LOST: 'neutral',
+};
+
+function ReservationsTable({
+  reservations,
+  loading,
+}: {
+  reservations: Lead[];
+  loading: boolean;
+}): JSX.Element {
+  const [updateLead, { isLoading: updating }] = useUpdateLeadMutation();
+
+  async function markConverted(id: string): Promise<void> {
+    try {
+      await updateLead({ id, status: 'CONVERTED' }).unwrap();
+      toast.success('Marked converted');
+    } catch {
+      toast.error('Could not update reservation');
+    }
+  }
+
+  async function markLost(id: string): Promise<void> {
+    try {
+      await updateLead({ id, status: 'LOST' }).unwrap();
+      toast.success('Marked lost');
+    } catch {
+      toast.error('Could not update reservation');
+    }
+  }
+
+  return (
+    <section className="rounded-md border border-ink-100 bg-ink-0">
+      <header className="px-4 py-3 border-b border-ink-100">
+        <h2 className="text-md font-medium text-ink-900">Storefront reservations</h2>
+        <p className="text-xs text-ink-500 mt-0.5">
+          Every &ldquo;Reserve at store&rdquo; from the public site lands here in real time.
+          {reservations.length > 0 && ` · ${reservations.length} total`}
+        </p>
+      </header>
+      {loading && <p className="px-4 py-6 text-sm text-ink-500">Loading…</p>}
+      {!loading && reservations.length === 0 && (
+        <p className="px-4 py-6 text-sm text-ink-500">
+          No reservations yet. Place one from <code className="font-mono">/store</code> to see it appear here within 15 seconds.
+        </p>
+      )}
+      {reservations.length > 0 && (
+        <table className="w-full text-sm">
+          <thead className="text-eyebrow uppercase text-ink-500">
+            <tr>
+              <th className="text-left px-4 py-2">When</th>
+              <th className="text-left px-4 py-2">Customer</th>
+              <th className="text-left px-4 py-2">Piece reserved</th>
+              <th className="text-left px-4 py-2">Visit by · Store</th>
+              <th className="text-right px-4 py-2">Total</th>
+              <th className="text-left px-4 py-2">Status</th>
+              <th className="px-4 py-2" />
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-ink-100">
+            {reservations.map((l) => {
+              const p = parseReservation(l.interest);
+              return (
+                <tr key={l.id} className="hover:bg-ink-25">
+                  <td className="px-4 py-3 font-mono text-xs text-ink-700 whitespace-nowrap">
+                    {new Date(l.createdAt).toLocaleString('en-IN', {
+                      day: '2-digit',
+                      month: 'short',
+                      hour: '2-digit',
+                      minute: '2-digit',
+                    })}
+                  </td>
+                  <td className="px-4 py-3">
+                    <p className="text-ink-900">{l.name}</p>
+                    <p className="font-mono text-xs text-ink-500">{l.phone}</p>
+                  </td>
+                  <td className="px-4 py-3">
+                    <p className="text-ink-900">{p.product}</p>
+                    {p.details && <p className="text-xs text-ink-500">{p.details}</p>}
+                  </td>
+                  <td className="px-4 py-3 text-xs text-ink-600">
+                    {p.visitBy && <p>{p.visitBy}</p>}
+                    {p.store && <p className="text-ink-500">{p.store}</p>}
+                  </td>
+                  <td className="px-4 py-3 text-right font-mono tabular-nums text-ink-900">
+                    {p.totalLabel?.replace(/^total\s*/i, '') ?? '—'}
+                  </td>
+                  <td className="px-4 py-3">
+                    <Badge tone={LEAD_STATUS_TONE[l.status] ?? 'neutral'}>{l.status.toLowerCase()}</Badge>
+                  </td>
+                  <td className="px-4 py-3 text-right whitespace-nowrap">
+                    <div className="inline-flex gap-1">
+                      <a
+                        href={`https://wa.me/${l.phone.replace(/\D/g, '')}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-xs text-brand-700 hover:underline"
+                      >
+                        WhatsApp
+                      </a>
+                      {l.status !== 'CONVERTED' && l.status !== 'LOST' && (
+                        <>
+                          <span className="text-ink-300">·</span>
+                          <button
+                            onClick={() => void markConverted(l.id)}
+                            disabled={updating}
+                            className="text-xs text-success-700 hover:underline"
+                          >
+                            Convert
+                          </button>
+                          <span className="text-ink-300">·</span>
+                          <button
+                            onClick={() => void markLost(l.id)}
+                            disabled={updating}
+                            className="text-xs text-ink-500 hover:underline"
+                          >
+                            Lost
+                          </button>
+                        </>
+                      )}
+                    </div>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      )}
+    </section>
   );
 }

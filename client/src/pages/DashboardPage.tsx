@@ -382,6 +382,9 @@ export function DashboardPage(): JSX.Element {
         </ChartCard>
       </section>
 
+      {/* ---- 6a. Recent storefront reservations — leads from Reserve at Store ---- */}
+      <RecentReservations />
+
       {/* ---- 6. Recent storefront orders + Recent bills ---- */}
       <section className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         <div className="rounded-md border border-ink-100 bg-ink-0">
@@ -395,7 +398,9 @@ export function DashboardPage(): JSX.Element {
             </Link>
           </div>
           {orders.length === 0 ? (
-            <p className="px-5 pb-5 text-sm text-ink-500">No orders yet. Place one from the storefront to test the flow.</p>
+            <p className="px-5 pb-5 text-sm text-ink-500">
+              No orders yet. The cart &ldquo;Reserve at store&rdquo; flow shows up here once submitted.
+            </p>
           ) : (
             <ul className="divide-y divide-ink-100">
               {orders.slice(0, 6).map((o) => (
@@ -685,5 +690,72 @@ function QuickLink({
       </div>
       <ArrowRight className="h-3.5 w-3.5 text-ink-400 group-hover:text-ink-700 ml-auto" />
     </Link>
+  );
+}
+
+// Storefront reservations — leads created from PDP "Reserve at store" or the
+// cart's Reserve dialog. Polls 15s so newly-placed reservations show up fast.
+const STOREFRONT_SOURCES = new Set(['store-reservation', 'newsletter', 'storefront']);
+
+function RecentReservations(): JSX.Element {
+  const { data: leadsRes, isLoading } = useGetLeadsQuery(undefined, {
+    pollingInterval: 15_000,
+  });
+  const reservations = (leadsRes?.data ?? [])
+    .filter((l) => STOREFRONT_SOURCES.has(l.source))
+    .slice(0, 6);
+
+  return (
+    <section className="rounded-md border border-ink-100 bg-ink-0">
+      <div className="flex items-center justify-between px-5 pt-5 mb-3">
+        <div className="flex items-center gap-2">
+          <ShoppingBag className="h-4 w-4 text-brand-500" />
+          <h3 className="text-md text-ink-900 font-medium">Recent storefront reservations</h3>
+          <span className="text-xs text-ink-500">· live (polling 15s)</span>
+        </div>
+        <Link to="/admin/ecommerce" className="text-xs text-ink-500 hover:text-ink-900 inline-flex items-center gap-1">
+          All reservations <ArrowRight className="h-3 w-3" />
+        </Link>
+      </div>
+      {isLoading && <p className="px-5 pb-5 text-sm text-ink-500">Loading…</p>}
+      {!isLoading && reservations.length === 0 && (
+        <p className="px-5 pb-5 text-sm text-ink-500">
+          No reservations yet. Place one from the storefront and refresh.
+        </p>
+      )}
+      {reservations.length > 0 && (
+        <ul className="divide-y divide-ink-100">
+          {reservations.map((l) => {
+            // Reservation interest is formatted as "RESERVE: <name> · …"
+            const parts = (l.interest ?? '').split(' · ');
+            const piece = (parts[0] ?? '').replace(/^RESERVE:\s*/i, '') || 'Reservation';
+            const total = parts.find((p) => p.toLowerCase().startsWith('total ')) ?? null;
+            return (
+              <li key={l.id}>
+                <Link
+                  to="/admin/ecommerce"
+                  className="px-5 py-3 flex items-center justify-between gap-3 hover:bg-ink-25"
+                >
+                  <div className="min-w-0 flex-1">
+                    <p className="text-sm text-ink-900 truncate">{piece}</p>
+                    <p className="text-xs text-ink-500 mt-0.5">
+                      {l.name} · <span className="font-mono">{l.phone}</span> · {shortTime(l.createdAt)}
+                    </p>
+                  </div>
+                  <Badge tone={l.status === 'CONVERTED' ? 'success' : l.status === 'LOST' ? 'neutral' : 'warning'}>
+                    {l.status.toLowerCase()}
+                  </Badge>
+                  {total && (
+                    <span className="font-mono tabular-nums text-sm text-ink-900">
+                      {total.replace(/^total\s*/i, '')}
+                    </span>
+                  )}
+                </Link>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </section>
   );
 }
