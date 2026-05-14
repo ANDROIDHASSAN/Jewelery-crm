@@ -58,10 +58,22 @@ export function MetricCard({
         />
       )}
 
-      <p className="text-eyebrow uppercase text-ink-500">{label}</p>
-      <div className="mt-1.5 text-2xl font-mono font-semibold text-ink-900 tabular-nums">{value}</div>
+      <p
+        className={cn(
+          'text-eyebrow uppercase font-semibold tracking-wider',
+          tone === 'neutral' && 'text-ink-700',
+          tone === 'success' && 'text-success-700',
+          tone === 'warning' && 'text-warning-700',
+          tone === 'danger' && 'text-danger-700',
+        )}
+      >
+        {label}
+      </p>
+      <div className="mt-1.5 text-2xl font-mono font-semibold tabular-nums text-ink-900">
+        {value}
+      </div>
       {delta && (
-        <p className={cn('mt-0.5 text-xs inline-flex items-center gap-1', deltaColor)}>
+        <p className={cn('mt-0.5 text-xs inline-flex items-center gap-1 font-medium', deltaColor)}>
           <DeltaIcon className="h-3 w-3" />
           {delta.value}
         </p>
