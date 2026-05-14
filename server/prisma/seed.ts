@@ -64,14 +64,27 @@ async function main(): Promise<void> {
       ],
     });
 
-    const category = await tx.category.create({
-      data: {
-        tenantId: tenant.id,
-        name: 'Daily Wear',
-        metalType: 'GOLD',
-        defaultMakingChargeBps: 1200, // 12%
-      },
-    });
+    // Multiple categories so every storefront collection tab has products.
+    // The `Item` table (physical inventory) keeps pointing at "Daily Wear"
+    // for simplicity; the storefront `Product` rows fan out across all five.
+    const [catDaily, catBridal, catFestive, catDiamond, catSilver] = await Promise.all([
+      tx.category.create({
+        data: { tenantId: tenant.id, name: 'Daily Wear', metalType: 'GOLD', defaultMakingChargeBps: 1200 },
+      }),
+      tx.category.create({
+        data: { tenantId: tenant.id, name: 'Bridal', metalType: 'GOLD', defaultMakingChargeBps: 1500 },
+      }),
+      tx.category.create({
+        data: { tenantId: tenant.id, name: 'Festive', metalType: 'GOLD', defaultMakingChargeBps: 1300 },
+      }),
+      tx.category.create({
+        data: { tenantId: tenant.id, name: 'Diamond', metalType: 'GOLD', defaultMakingChargeBps: 1600 },
+      }),
+      tx.category.create({
+        data: { tenantId: tenant.id, name: 'Silver', metalType: 'SILVER', defaultMakingChargeBps: 800 },
+      }),
+    ]);
+    const category = catDaily;
 
     // Multiple vendors so the Vendors tab + Purchase Orders tab feel real.
     const [vendorSurat, vendorMumbai, vendorJaipur] = await Promise.all([
@@ -367,7 +380,7 @@ async function main(): Promise<void> {
       const orderFixtures = [
         { days: 0, status: 'PENDING' as const, productIdxs: [0], qty: [1], method: 'reserve-at-store' },
         { days: 1, status: 'CONFIRMED' as const, productIdxs: [1, 3], qty: [1, 1], method: 'razorpay' },
-        { days: 3, status: 'PROCESSING' as const, productIdxs: [2], qty: [1], method: 'razorpay' },
+        { days: 3, status: 'PACKED' as const, productIdxs: [2], qty: [1], method: 'razorpay' },
         { days: 5, status: 'SHIPPED' as const, productIdxs: [4], qty: [1], method: 'razorpay' },
         { days: 9, status: 'DELIVERED' as const, productIdxs: [0, 3], qty: [1, 2], method: 'cod' },
         { days: 14, status: 'DELIVERED' as const, productIdxs: [1], qty: [1], method: 'razorpay' },

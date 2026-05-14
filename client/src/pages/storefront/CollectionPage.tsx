@@ -2,24 +2,12 @@ import { useMemo, useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { ChevronDown, SlidersHorizontal, X } from 'lucide-react';
 import { cn } from '@/lib/cn';
-
-const IMG = [
-  'https://images.unsplash.com/photo-1611591437281-460bfbe1220a?auto=format&fit=crop&w=800&q=80',
-  'https://images.unsplash.com/photo-1599643477877-530eb83abc8e?auto=format&fit=crop&w=800&q=80',
-  'https://images.unsplash.com/photo-1605100804763-247f67b3557e?auto=format&fit=crop&w=800&q=80',
-  'https://images.unsplash.com/photo-1603561591411-07134e71a2a9?auto=format&fit=crop&w=800&q=80',
-];
-
-const PRODUCTS = Array.from({ length: 12 }).map((_, i) => ({
-  slug: `piece-${i + 1}`,
-  name: ['Mira', 'Tara', 'Aarya', 'Riya', 'Diya', 'Saanvi', 'Kiara', 'Anya', 'Ishani', 'Reet', 'Naina', 'Vanya'][i] + ' bangle',
-  pricePaise: 84_500_00 + i * 12_500_00,
-  weightG: 12 + i * 0.8,
-  purity: i % 3 === 0 ? '18K' : '22K',
-  img: IMG[i % 4],
-  alt: IMG[(i + 1) % 4],
-  isNew: i % 5 === 0,
-}));
+import {
+  useGetPublicProductsQuery,
+  useGetPublicCollectionsQuery,
+  type PublicProduct,
+  type PublicCategory,
+} from '@/features/storefront/storefrontApi';
 
 const TITLES: Record<string, { title: string; subtitle: string }> = {
   bridal: { title: 'Bridal', subtitle: 'Heirloom pieces for the day that matters. Hand-set, 22K, BIS-hallmarked.' },
@@ -27,44 +15,96 @@ const TITLES: Record<string, { title: string; subtitle: string }> = {
   festive: { title: 'Festive', subtitle: 'For Diwali, Karva Chauth, Navratri — designed to be photographed.' },
   diamond: { title: 'Diamond', subtitle: 'Certified solitaires and studded pieces. IGI / GIA on every stone above 0.20 ct.' },
   silver: { title: 'Silver', subtitle: '92.5 sterling. Hallmarked. For gifting and daily wear.' },
+  '22k': { title: '22K Gold', subtitle: 'BIS-hallmarked 22K pieces — bridal, daily-wear, festive.' },
+  '18k': { title: '18K Gold', subtitle: 'Lighter, stronger 18K — modern silhouettes and diamond settings.' },
+  'under-50k': { title: 'Under ₹50,000', subtitle: 'Gifting-ready pieces, under fifty thousand.' },
+  gifting: { title: 'Gifting', subtitle: 'Hand-picked pieces, ready to gift.' },
 };
 
 const SORTS = ['Featured', 'Newest', 'Price: low → high', 'Price: high → low', 'Weight: light → heavy'] as const;
 type Sort = (typeof SORTS)[number];
 
+function priceOf(p: PublicProduct): number {
+  return p.basePricePaise + p.stoneChargePaise;
+}
+
+function purityLabel(p: PublicProduct): string {
+  if (p.purityCaratX100 < 1000) return 'Silver';
+  return `${p.purityCaratX100 / 100}K`;
+}
+
+// Apply collection-slug rules to a product list. Real categories match by
+// slugified name (via /website/collections); pseudo-collections (22k, 18k,
+// under-50k, gifting, silver) use intrinsic product fields.
+function filterBySlug(
+  products: PublicProduct[],
+  categories: PublicCategory[],
+  slug: string | undefined,
+): PublicProduct[] {
+  if (!slug) return products;
+  switch (slug) {
+    case '22k':
+      return products.filter((p) => p.purityCaratX100 === 2200);
+    case '18k':
+      return products.filter((p) => p.purityCaratX100 === 1800);
+    case 'silver':
+      return products.filter((p) => p.purityCaratX100 < 1000);
+    case 'under-50k':
+      return products.filter((p) => priceOf(p) < 50_00_000);
+    case 'gifting':
+      return products.filter((p) => priceOf(p) <= 1_00_000_00);
+    default: {
+      const cat = categories.find((c) => c.slug === slug);
+      if (!cat) return products;
+      return products.filter((p) => p.categoryId === cat.id);
+    }
+  }
+}
+
 export function CollectionPage(): JSX.Element {
-  const { slug = 'bridal' } = useParams();
-  const meta = TITLES[slug] ?? { title: slug, subtitle: '' };
+  const { slug } = useParams();
+  const meta = slug ? TITLES[slug] ?? { title: slug, subtitle: '' } : { title: 'All collections', subtitle: 'Every piece in our catalogue, ready to view.' };
 
   const [sort, setSort] = useState<Sort>('Featured');
   const [sortOpen, setSortOpen] = useState(false);
   const [filtersOpen, setFiltersOpen] = useState(false);
 
+  const { data: products = [], isLoading: productsLoading } = useGetPublicProductsQuery();
+  const { data: categories = [] } = useGetPublicCollectionsQuery();
+
+  const filtered = useMemo(
+    () => filterBySlug(products, categories, slug),
+    [products, categories, slug],
+  );
+
   const sorted = useMemo(() => {
-    const arr = [...PRODUCTS];
+    const arr = [...filtered];
     switch (sort) {
       case 'Price: low → high':
-        return arr.sort((a, b) => a.pricePaise - b.pricePaise);
+        return arr.sort((a, b) => priceOf(a) - priceOf(b));
       case 'Price: high → low':
-        return arr.sort((a, b) => b.pricePaise - a.pricePaise);
+        return arr.sort((a, b) => priceOf(b) - priceOf(a));
       case 'Weight: light → heavy':
-        return arr.sort((a, b) => a.weightG - b.weightG);
+        return arr.sort((a, b) => a.weightMg - b.weightMg);
       case 'Newest':
-        return arr.sort((a, b) => Number(b.isNew) - Number(a.isNew));
+        return arr.sort((a, b) => +new Date(b.createdAt) - +new Date(a.createdAt));
       default:
         return arr;
     }
-  }, [sort]);
+  }, [filtered, sort]);
 
   return (
     <div className="max-w-[1280px] mx-auto px-6 py-12 md:py-16">
-      {/* Breadcrumb */}
       <nav className="text-xs text-ink-500 mb-5" aria-label="Breadcrumb">
         <Link to="/store" className="hover:text-ink-700">Home</Link>
         <span className="mx-2 text-ink-300">/</span>
         <Link to="/store/collections" className="hover:text-ink-700">Collections</Link>
-        <span className="mx-2 text-ink-300">/</span>
-        <span className="text-ink-700">{meta.title}</span>
+        {slug && (
+          <>
+            <span className="mx-2 text-ink-300">/</span>
+            <span className="text-ink-700">{meta.title}</span>
+          </>
+        )}
       </nav>
 
       <header className="mb-10 max-w-3xl">
@@ -73,7 +113,6 @@ export function CollectionPage(): JSX.Element {
         {meta.subtitle && <p className="mt-4 text-base text-ink-600 leading-relaxed max-w-2xl">{meta.subtitle}</p>}
       </header>
 
-      {/* Toolbar — sticky on scroll */}
       <div className="sticky top-[88px] z-20 bg-ink-0/85 backdrop-blur-md -mx-6 px-6 border-y border-ink-100 mb-8">
         <div className="h-14 flex items-center justify-between gap-4">
           <button
@@ -130,7 +169,6 @@ export function CollectionPage(): JSX.Element {
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-[220px_1fr] gap-10">
-        {/* Side filters */}
         <aside className={cn('space-y-7 text-sm', filtersOpen ? 'block' : 'hidden lg:block')}>
           <FilterGroup label="Metal" options={['22K Gold', '18K Gold', 'Silver', 'Platinum']} />
           <FilterGroup label="Weight" options={['Under 10 g', '10 – 20 g', '20 – 40 g', 'Over 40 g']} />
@@ -139,43 +177,56 @@ export function CollectionPage(): JSX.Element {
         </aside>
 
         <section className="grid grid-cols-2 md:grid-cols-3 gap-x-5 gap-y-10 md:gap-x-6">
-          {sorted.map((p) => (
-            <Link to={`/store/products/${p.slug}`} key={p.slug} className="group block">
-              <div className="relative aspect-[4/5] overflow-hidden bg-ink-100">
-                <img
-                  src={p.img}
-                  alt={p.name}
-                  className="absolute inset-0 h-full w-full object-cover transition-opacity duration-300 group-hover:opacity-0"
-                  loading="lazy"
-                />
-                <img
-                  src={p.alt}
-                  alt=""
-                  className="absolute inset-0 h-full w-full object-cover opacity-0 group-hover:opacity-100 transition-opacity duration-300"
-                  loading="lazy"
-                  aria-hidden
-                />
-                {p.isNew && (
-                  <span className="absolute top-3 left-3 bg-ink-0/90 backdrop-blur-sm text-[10px] uppercase tracking-[0.16em] px-2.5 py-1 rounded-full text-ink-700">
-                    New
-                  </span>
-                )}
-              </div>
-              <div className="mt-4 space-y-1">
-                <h3 className="font-display text-[18px] leading-tight text-ink-900">{p.name}</h3>
-                <p className="text-xs text-ink-500">
-                  {p.weightG.toFixed(2)} g · {p.purity} hallmarked
-                </p>
-                <p className="text-sm text-ink-900 font-mono tabular-nums pt-0.5">
-                  ₹{(p.pricePaise / 100).toLocaleString('en-IN')}
-                </p>
-              </div>
-            </Link>
-          ))}
+          {productsLoading && (
+            <p className="col-span-full text-sm text-ink-500">Loading the collection…</p>
+          )}
+          {!productsLoading && sorted.length === 0 && (
+            <div className="col-span-full text-center py-16">
+              <p className="font-display text-[22px] text-ink-900">Nothing published yet</p>
+              <p className="text-sm text-ink-500 mt-2 max-w-md mx-auto">
+                This collection is empty. Add products from the admin panel — they&apos;ll appear here once published.
+              </p>
+              <Link to="/store/collections" className="inline-block mt-5 text-sm text-ink-900 underline decoration-brand-500 underline-offset-4">
+                Browse all pieces
+              </Link>
+            </div>
+          )}
+          {sorted.map((p) => {
+            const weightG = p.weightMg / 1000;
+            const primary = p.images[0] ?? '';
+            const secondary = p.images[1] ?? primary;
+            return (
+              <Link to={`/store/products/${p.slug}`} key={p.id} className="group block">
+                <div className="relative aspect-[4/5] overflow-hidden bg-ink-100">
+                  <img
+                    src={primary}
+                    alt={p.name}
+                    className="absolute inset-0 h-full w-full object-cover transition-opacity duration-300 group-hover:opacity-0"
+                    loading="lazy"
+                  />
+                  <img
+                    src={secondary}
+                    alt=""
+                    className="absolute inset-0 h-full w-full object-cover opacity-0 group-hover:opacity-100 transition-opacity duration-300"
+                    loading="lazy"
+                    aria-hidden
+                  />
+                </div>
+                <div className="mt-4 space-y-1">
+                  <h3 className="font-display text-[18px] leading-tight text-ink-900">{p.name}</h3>
+                  <p className="text-xs text-ink-500">
+                    {weightG.toFixed(2)} g · {purityLabel(p)} hallmarked
+                  </p>
+                  <p className="text-sm text-ink-900 font-mono tabular-nums pt-0.5">
+                    ₹{(priceOf(p) / 100).toLocaleString('en-IN')}
+                  </p>
+                </div>
+              </Link>
+            );
+          })}
         </section>
       </div>
 
-      {/* Mobile filter drawer */}
       {filtersOpen && (
         <div className="fixed inset-0 z-50 lg:hidden">
           <div className="absolute inset-0 bg-ink-900/40" onClick={() => setFiltersOpen(false)} aria-hidden />

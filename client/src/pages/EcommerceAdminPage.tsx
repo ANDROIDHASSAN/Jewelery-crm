@@ -7,8 +7,8 @@ import { useGetOrdersQuery, useGetAdminProductsQuery } from '@/features/ecommerc
 const STATUS_TONE: Record<string, 'success' | 'info' | 'warning' | 'neutral'> = {
   DELIVERED: 'success',
   SHIPPED: 'info',
+  PACKED: 'info',
   CONFIRMED: 'warning',
-  PROCESSING: 'warning',
   PENDING: 'neutral',
   CANCELLED: 'neutral',
   RETURNED: 'neutral',

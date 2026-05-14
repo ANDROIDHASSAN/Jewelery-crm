@@ -36,3 +36,4 @@ client/.vite-dev.log.out
 
 # Claude Code local settings + plugin metadata (not for production)
 .claude/
+shared/*.js

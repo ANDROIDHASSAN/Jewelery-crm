@@ -45,6 +45,17 @@ websiteRouter.get('/storefront', async (req, res, next) => {
   }
 });
 
+// Slugify category names so storefront URLs (/store/collections/<slug>) can
+// resolve to a Category row. We don't store slug on the Category model yet
+// (v1.5), so derive it deterministically here.
+function slugifyName(name: string): string {
+  return name
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+}
+
 websiteRouter.get('/collections', async (req, res, next) => {
   try {
     const tenantId = await tenantFromQueryOrFirst(req);
@@ -52,7 +63,8 @@ websiteRouter.get('/collections', async (req, res, next) => {
       where: { tenantId },
       orderBy: { name: 'asc' },
     });
-    res.json({ data: categories, page: { hasMore: false } });
+    const withSlugs = categories.map((c) => ({ ...c, slug: slugifyName(c.name) }));
+    res.json({ data: withSlugs, page: { hasMore: false } });
   } catch (err) {
     next(err);
   }
