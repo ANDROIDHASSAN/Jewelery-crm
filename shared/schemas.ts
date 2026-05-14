@@ -13,7 +13,6 @@ import {
   PURITY_VALUES,
   PURCHASE_ORDER_STATUSES,
   GOLD_LOAN_STATUSES,
-  TRANSFER_STATUSES,
 } from './constants.js';
 
 // --- Primitives ---
