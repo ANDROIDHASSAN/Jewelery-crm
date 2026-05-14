@@ -22,6 +22,7 @@ import {
 import { MetricCard } from '@/components/ui/MetricCard';
 import { Money } from '@/components/ui/money';
 import { Badge } from '@/components/ui/badge';
+import { cn } from '@/lib/cn';
 import {
   ChartCard,
   CurrencyBarChart,
@@ -81,23 +82,33 @@ function shortTime(d: string | Date): string {
   return new Date(d).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' });
 }
 
+// Funnel-stage color scale. NEW is cool/neutral → CONVERTED is success-green;
+// LOST breaks out into danger-red. Reads visually like a heat map.
 const LEAD_STAGE_COLOR: Record<LeadStatus, string> = {
-  NEW: 'bg-ink-200',
-  CONTACTED: 'bg-brand-200',
-  INTERESTED: 'bg-brand-300',
-  NEGOTIATION: 'bg-brand-400',
-  CONVERTED: 'bg-emerald-500',
-  LOST: 'bg-rose-300',
+  NEW: 'bg-ink-300',
+  CONTACTED: 'bg-info-500',
+  INTERESTED: 'bg-warning-500',
+  NEGOTIATION: 'bg-warning-700',
+  CONVERTED: 'bg-success-500',
+  LOST: 'bg-danger-500',
 };
 
-const ORDER_STATUS_TONE: Record<string, 'success' | 'info' | 'warning' | 'neutral'> = {
+// Order-status tone:
+//   PENDING   → warning (needs action)
+//   CONFIRMED → info    (acknowledged, in flow)
+//   PACKED    → info
+//   SHIPPED   → info
+//   DELIVERED → success (revenue realised)
+//   CANCELLED → danger  (lost sale)
+//   RETURNED  → danger  (refund liability)
+const ORDER_STATUS_TONE: Record<string, 'success' | 'info' | 'warning' | 'neutral' | 'danger'> = {
   DELIVERED: 'success',
   SHIPPED: 'info',
   PACKED: 'info',
-  CONFIRMED: 'warning',
-  PENDING: 'neutral',
-  CANCELLED: 'neutral',
-  RETURNED: 'neutral',
+  CONFIRMED: 'info',
+  PENDING: 'warning',
+  CANCELLED: 'danger',
+  RETURNED: 'danger',
 };
 
 export function DashboardPage(): JSX.Element {
@@ -220,12 +231,24 @@ export function DashboardPage(): JSX.Element {
         </div>
       </header>
 
-      {/* ---- 2. Primary KPI tiles ---- */}
+      {/* ---- 2. Primary KPI tiles ----
+       *  Color psychology applied via MetricCard.tone:
+       *    - Today's sales: success if up vs yesterday, danger if down.
+       *    - Open leads: success (always good to have inbound interest).
+       *    - Stock valuation & Bills today: neutral (informational).
+       */}
       <section className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
         <MetricCard
           label="Today's sales"
           value={summary ? <Money paise={summary.today.revenuePaise} /> : isLoading ? '…' : '—'}
           delta={summary ? delta(summary.today.revenuePaise, summary.yesterday.revenuePaise, 'yesterday') : undefined}
+          tone={
+            summary
+              ? summary.today.revenuePaise >= summary.yesterday.revenuePaise
+                ? 'success'
+                : 'danger'
+              : 'neutral'
+          }
         />
         <MetricCard
           label="Bills today"
@@ -244,15 +267,20 @@ export function DashboardPage(): JSX.Element {
           label="Open leads"
           value={summary ? String(summary.leads.open) : isLoading ? '…' : '—'}
           delta={summary ? { value: `▲ ${summary.leads.today} today`, direction: 'up' } : undefined}
+          tone="success"
         />
       </section>
 
-      {/* ---- 3. Secondary KPI tiles ---- */}
+      {/* ---- 3. Secondary KPI tiles ----
+       *  - Revenue MTD: success when net is positive, danger when negative.
+       *  - Vendor outstanding: warning when there's money owed, success at ₹0.
+       */}
       <section className="grid grid-cols-2 md:grid-cols-4 gap-4">
         <MetricCard
           label="Revenue MTD"
           value={pl ? <Money paise={pl.revenuePaise} /> : '—'}
           delta={pl ? { value: `Net ${(pl.netPaise / 100).toLocaleString('en-IN', { maximumFractionDigits: 0 })}`, direction: pl.netPaise >= 0 ? 'up' : 'down' } : undefined}
+          tone={pl ? (pl.netPaise >= 0 ? 'success' : 'danger') : 'neutral'}
         />
         <MetricCard
           label="Storefront orders"
@@ -263,11 +291,13 @@ export function DashboardPage(): JSX.Element {
           label="Order revenue MTD"
           value={<Money paise={monthOrderRevenue} />}
           delta={{ value: 'Website + WhatsApp', direction: 'flat' }}
+          tone={monthOrderRevenue > 0 ? 'success' : 'neutral'}
         />
         <MetricCard
           label="Vendor outstanding"
           value={<Money paise={vendorOutstanding} />}
           delta={{ value: `${vendors.length} vendors`, direction: 'flat' }}
+          tone={vendorOutstanding > 0 ? 'warning' : 'success'}
         />
       </section>
 
@@ -444,7 +474,17 @@ export function DashboardPage(): JSX.Element {
                     <p className="font-mono text-xs text-ink-900 truncate">{b.billNumber}</p>
                     <p className="text-xs text-ink-500 mt-0.5">{shortTime(b.createdAt)}</p>
                   </div>
-                  <Badge tone={b.paymentStatus === 'PAID' ? 'success' : b.paymentStatus === 'PARTIAL' ? 'warning' : 'neutral'}>
+                  <Badge
+                    tone={
+                      b.paymentStatus === 'PAID'
+                        ? 'success'
+                        : b.paymentStatus === 'PARTIAL'
+                          ? 'warning'
+                          : b.paymentStatus === 'REFUNDED'
+                            ? 'danger'
+                            : 'neutral'
+                    }
+                  >
                     {b.paymentStatus.toLowerCase()}
                   </Badge>
                   <Money paise={b.totalPaise} className="font-mono tabular-nums text-sm" />
@@ -499,10 +539,20 @@ export function DashboardPage(): JSX.Element {
 
       {/* ---- 8. Inventory health (low stock + vendor outstanding) ---- */}
       <section className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        <div className="rounded-md border border-ink-100 bg-ink-0 p-5">
+        <div
+          className={cn(
+            'rounded-md border bg-ink-0 p-5',
+            lowStock.length === 0 ? 'border-success-500/30' : 'border-danger-500/30',
+          )}
+        >
           <div className="flex items-center justify-between mb-3">
             <div className="flex items-center gap-2">
-              <TrendingDown className="h-4 w-4 text-rose-500" />
+              <TrendingDown
+                className={cn(
+                  'h-4 w-4',
+                  lowStock.length === 0 ? 'text-success-700' : 'text-danger-500',
+                )}
+              />
               <h3 className="text-md text-ink-900 font-medium">Low stock alerts</h3>
             </div>
             <Link to="/admin/inventory" className="text-xs text-ink-500 hover:text-ink-900 inline-flex items-center gap-1">
@@ -510,7 +560,10 @@ export function DashboardPage(): JSX.Element {
             </Link>
           </div>
           {lowStock.length === 0 ? (
-            <p className="text-sm text-ink-500">All category × shop combinations have healthy stock.</p>
+            <p className="text-sm text-success-700 inline-flex items-center gap-1.5">
+              <span className="h-1.5 w-1.5 rounded-full bg-success-500" />
+              All category × shop combinations have healthy stock.
+            </p>
           ) : (
             <>
               <p className="text-xs text-ink-500 mb-3">
@@ -558,7 +611,12 @@ export function DashboardPage(): JSX.Element {
                     </div>
                     <Money
                       paise={v.outstandingPaise}
-                      className={`font-mono tabular-nums text-sm ${v.outstandingPaise > 0 ? 'text-rose-700' : 'text-ink-500'}`}
+                      className={cn(
+                        'font-mono tabular-nums text-sm',
+                        v.outstandingPaise === 0 && 'text-success-700',
+                        v.outstandingPaise > 0 && v.outstandingPaise < 100_000_00 && 'text-warning-700',
+                        v.outstandingPaise >= 100_000_00 && 'text-danger-700',
+                      )}
                     />
                   </li>
                 ))}
@@ -599,11 +657,24 @@ export function DashboardPage(): JSX.Element {
             <ul className="space-y-2 text-sm">
               {audit.slice(0, 8).map((a) => (
                 <li key={a.id} className="flex items-center gap-3 border-b border-ink-50 pb-2 last:border-0">
-                  <span className="h-6 w-6 rounded-full bg-ink-50 inline-flex items-center justify-center shrink-0">
+                  <span
+                    className={cn(
+                      'h-6 w-6 rounded-full inline-flex items-center justify-center shrink-0',
+                      a.action === 'CREATE'
+                        ? 'bg-success-50'
+                        : a.action === 'DELETE' || a.action === 'WASTAGE'
+                          ? 'bg-danger-50'
+                          : a.action === 'UPDATE'
+                            ? 'bg-info-50'
+                            : 'bg-ink-50',
+                    )}
+                  >
                     {a.action === 'CREATE' ? (
-                      <TrendingUp className="h-3 w-3 text-emerald-600" />
+                      <TrendingUp className="h-3 w-3 text-success-700" />
                     ) : a.action === 'DELETE' || a.action === 'WASTAGE' ? (
-                      <Flame className="h-3 w-3 text-rose-600" />
+                      <Flame className="h-3 w-3 text-danger-700" />
+                    ) : a.action === 'UPDATE' ? (
+                      <ArrowUpRight className="h-3 w-3 text-info-700" />
                     ) : (
                       <ArrowUpRight className="h-3 w-3 text-ink-500" />
                     )}
@@ -742,7 +813,7 @@ function RecentReservations(): JSX.Element {
                       {l.name} · <span className="font-mono">{l.phone}</span> · {shortTime(l.createdAt)}
                     </p>
                   </div>
-                  <Badge tone={l.status === 'CONVERTED' ? 'success' : l.status === 'LOST' ? 'neutral' : 'warning'}>
+                  <Badge tone={l.status === 'CONVERTED' ? 'success' : l.status === 'LOST' ? 'danger' : 'warning'}>
                     {l.status.toLowerCase()}
                   </Badge>
                   {total && (
