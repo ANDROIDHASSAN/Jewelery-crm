@@ -60,6 +60,20 @@ export const storefrontApi = baseApi.injectEndpoints({
       transformResponse: (raw: { data: PublicCategory[] }) => raw.data,
       providesTags: [{ type: 'Category', id: 'PUBLIC' }],
     }),
+    // Public storefront checkout. Server computes prices from the DB, so client cart
+    // pricing can't be tampered with. Creates Order + OrderItems + (if needed) Customer.
+    createPublicOrder: build.mutation<
+      { id: string; totalPaise: number },
+      {
+        customer: { name: string; phone: string };
+        items: Array<{ productId: string; qty: number }>;
+        paymentMethod?: 'reserve-at-store' | 'razorpay' | 'cod';
+      }
+    >({
+      query: (body) => ({ url: '/website/orders', method: 'POST', body }),
+      transformResponse: (raw: { data: { id: string; totalPaise: number } }) => raw.data,
+      invalidatesTags: [{ type: 'Order', id: 'LIST' }],
+    }),
     // Public lead/enquiry submission. Reservations from the storefront PDP land here as Leads.
     createEnquiry: build.mutation<
       { id: string },
@@ -79,4 +93,5 @@ export const {
   useGetPublicProductsQuery,
   useGetPublicCollectionsQuery,
   useCreateEnquiryMutation,
+  useCreatePublicOrderMutation,
 } = storefrontApi;

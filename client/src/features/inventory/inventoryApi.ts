@@ -25,7 +25,7 @@ export interface ItemMovementRow {
 export interface PurchaseOrderRow {
   id: string;
   vendorId: string;
-  status: 'DRAFT' | 'CONFIRMED' | 'RECEIVED' | 'CANCELLED';
+  status: 'DRAFT' | 'PLACED' | 'PARTIAL' | 'RECEIVED' | 'CANCELLED';
   totalPaise: number;
   createdAt: string;
   vendor: { id: string; name: string };

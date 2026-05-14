@@ -1,12 +1,20 @@
+import { useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Minus, Plus, Trash2, ShoppingBag, ShieldCheck, Truck, RotateCcw } from 'lucide-react';
+import * as Dialog from '@radix-ui/react-dialog';
+import { Minus, Plus, Trash2, ShoppingBag, ShieldCheck, Truck, RotateCcw, X } from 'lucide-react';
+import { toast } from 'sonner';
 import { Money } from '@/components/ui/money';
 import { useAppDispatch, useAppSelector } from '@/app/hooks';
 import { setCartQty, removeFromCart, clearCart } from '@/features/storefront/shopSlice';
+import {
+  useGetPublicProductsQuery,
+  useCreatePublicOrderMutation,
+} from '@/features/storefront/storefrontApi';
 
 export function CartPage(): JSX.Element {
   const cart = useAppSelector((s) => s.shop.cart);
   const dispatch = useAppDispatch();
+  const [checkoutOpen, setCheckoutOpen] = useState(false);
 
   const subtotal = cart.reduce((sum, item) => sum + item.pricePaise * item.qty, 0);
   const gst = Math.round((subtotal * 300) / 10000);
@@ -105,7 +113,11 @@ export function CartPage(): JSX.Element {
               <span className="text-ink-900 font-medium">Total</span>
               <Money paise={total} className="text-ink-900 font-medium font-mono tabular-nums text-lg" />
             </div>
-            <button className="w-full h-12 mt-4 rounded-full bg-brand-400 text-ink-900 text-sm font-medium hover:bg-brand-300 transition-colors">
+            <button
+              type="button"
+              onClick={() => setCheckoutOpen(true)}
+              className="w-full h-12 mt-4 rounded-full bg-brand-400 text-ink-900 text-sm font-medium hover:bg-brand-300 transition-colors"
+            >
               Reserve at store
             </button>
             <p className="text-[11px] text-ink-500 leading-relaxed">
@@ -129,7 +141,140 @@ export function CartPage(): JSX.Element {
           </ul>
         </aside>
       </div>
+
+      <CheckoutDialog open={checkoutOpen} onClose={() => setCheckoutOpen(false)} />
     </div>
+  );
+}
+
+function CheckoutDialog({ open, onClose }: { open: boolean; onClose: () => void }): JSX.Element {
+  const cart = useAppSelector((s) => s.shop.cart);
+  const account = useAppSelector((s) => s.shop.account);
+  const dispatch = useAppDispatch();
+  const { data: products } = useGetPublicProductsQuery();
+  const [createOrder, { isLoading }] = useCreatePublicOrderMutation();
+  const [name, setName] = useState(account.name);
+  const [phone, setPhone] = useState(account.phone || '+91 ');
+
+  const total = cart.reduce((s, l) => s + l.pricePaise * l.qty, 0);
+  const gst = Math.round((total * 300) / 10_000);
+  const grand = total + gst;
+
+  const handleSubmit = async (e: React.FormEvent): Promise<void> => {
+    e.preventDefault();
+    if (name.trim().length < 2) return void toast.error('Please enter your name');
+    const digits = phone.replace(/\D/g, '');
+    const local = digits.startsWith('91') ? digits.slice(2) : digits;
+    if (!/^[6-9]\d{9}$/.test(local)) return void toast.error('Please enter a valid Indian phone number');
+    if (!products || products.length === 0) return void toast.error('Catalog is still loading, try again');
+
+    // Map cart slugs → product IDs. Skip items not in the live catalog (shouldn't happen).
+    const productIdBySlug = new Map(products.map((p) => [p.slug, p.id]));
+    const items = cart
+      .map((c) => {
+        const id = productIdBySlug.get(c.slug);
+        return id ? { productId: id, qty: c.qty } : null;
+      })
+      .filter((x): x is { productId: string; qty: number } => x !== null);
+
+    if (items.length === 0) {
+      return void toast.error('None of these pieces are available right now — try refreshing.');
+    }
+
+    try {
+      const res = await createOrder({
+        customer: { name: name.trim(), phone: `+91${local}` },
+        items,
+        paymentMethod: 'reserve-at-store',
+      }).unwrap();
+      toast.success(`Order placed! Confirmation ZL-${res.id.slice(-6).toUpperCase()}`, {
+        description: 'We\'ve held these pieces for 48 hours. Our team will WhatsApp you shortly.',
+        duration: 8000,
+      });
+      dispatch(clearCart());
+      onClose();
+    } catch (err) {
+      const message =
+        (err as { data?: { error?: { message?: string } } }).data?.error?.message ??
+        'Could not place order. Please try again.';
+      toast.error(message);
+    }
+  };
+
+  return (
+    <Dialog.Root open={open} onOpenChange={(next) => !next && onClose()}>
+      <Dialog.Portal>
+        <Dialog.Overlay className="fixed inset-0 z-50 bg-ink-900/40 data-[state=open]:animate-in data-[state=open]:fade-in-0" />
+        <Dialog.Content className="fixed left-1/2 top-1/2 z-50 -translate-x-1/2 -translate-y-1/2 w-[92vw] max-w-md bg-ink-0 rounded-lg shadow-xl border border-ink-100">
+          <form onSubmit={handleSubmit} className="p-6 space-y-5">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <Dialog.Title className="font-display text-[22px] leading-tight text-ink-900">
+                  Reserve at store
+                </Dialog.Title>
+                <Dialog.Description className="text-xs text-ink-500 mt-1">
+                  {cart.length} piece{cart.length === 1 ? '' : 's'} ·{' '}
+                  <Money paise={grand} className="font-mono" /> incl. GST
+                </Dialog.Description>
+              </div>
+              <Dialog.Close className="text-ink-500 hover:text-ink-900 p-1 -mr-1 -mt-1 rounded-md hover:bg-ink-50" aria-label="Close">
+                <X className="h-4 w-4" />
+              </Dialog.Close>
+            </div>
+
+            <div className="space-y-3">
+              <label className="block">
+                <span className="text-[11px] uppercase tracking-wider text-ink-500">Your name</span>
+                <input
+                  type="text"
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
+                  required
+                  autoFocus
+                  className="mt-1 w-full h-11 px-3 rounded-lg border border-ink-200 focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500 text-sm"
+                  placeholder="Full name"
+                />
+              </label>
+
+              <label className="block">
+                <span className="text-[11px] uppercase tracking-wider text-ink-500">Phone</span>
+                <input
+                  type="tel"
+                  value={phone}
+                  onChange={(e) => setPhone(e.target.value)}
+                  required
+                  inputMode="tel"
+                  className="mt-1 w-full h-11 px-3 rounded-lg border border-ink-200 focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500 text-sm font-mono"
+                  placeholder="+91 98XXX XXXXX"
+                />
+              </label>
+            </div>
+
+            <div className="flex gap-2 pt-1">
+              <button
+                type="button"
+                onClick={onClose}
+                disabled={isLoading}
+                className="flex-1 h-11 rounded-full border border-ink-200 text-ink-900 text-sm hover:bg-ink-50 disabled:opacity-60 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                disabled={isLoading}
+                className="flex-[2] h-11 rounded-full bg-brand-400 text-ink-900 text-sm font-medium hover:bg-brand-300 disabled:opacity-60 transition-colors"
+              >
+                {isLoading ? 'Reserving…' : 'Confirm reservation'}
+              </button>
+            </div>
+
+            <p className="text-[11px] text-ink-500 text-center leading-relaxed">
+              We&apos;ll hold these pieces for 48 hours. No payment online — pay in store at today&apos;s gold rate.
+            </p>
+          </form>
+        </Dialog.Content>
+      </Dialog.Portal>
+    </Dialog.Root>
   );
 }
 

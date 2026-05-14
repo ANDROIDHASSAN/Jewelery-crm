@@ -45,6 +45,25 @@ inventoryRouter.post('/items', async (req, res, next) => {
   }
 });
 
+inventoryRouter.patch('/items/:id', async (req, res, next) => {
+  try {
+    const body = ItemInputSchema.partial().parse(req.body);
+    const item = await svc.updateItem(req.params['id']!, body, req.user?.userId);
+    res.json({ data: item });
+  } catch (err) {
+    next(err);
+  }
+});
+
+inventoryRouter.delete('/items/:id', async (req, res, next) => {
+  try {
+    await svc.deleteItem(req.params['id']!, req.user?.userId);
+    res.status(204).end();
+  } catch (err) {
+    next(err);
+  }
+});
+
 inventoryRouter.post('/items/:id/transfer', async (req, res, next) => {
   try {
     const body = TransferInitiateSchema.parse({ itemId: req.params['id'], ...req.body });
@@ -132,6 +151,25 @@ inventoryRouter.post('/vendors', async (req, res, next) => {
     const body = VendorInputSchema.parse(req.body);
     const vendor = await svc.createVendor(body);
     res.status(201).json({ data: vendor });
+  } catch (err) {
+    next(err);
+  }
+});
+
+inventoryRouter.patch('/vendors/:id', async (req, res, next) => {
+  try {
+    const body = VendorInputSchema.partial().parse(req.body);
+    const vendor = await svc.updateVendor(req.params['id']!, body);
+    res.json({ data: vendor });
+  } catch (err) {
+    next(err);
+  }
+});
+
+inventoryRouter.delete('/vendors/:id', async (req, res, next) => {
+  try {
+    await svc.deleteVendor(req.params['id']!);
+    res.status(204).end();
   } catch (err) {
     next(err);
   }

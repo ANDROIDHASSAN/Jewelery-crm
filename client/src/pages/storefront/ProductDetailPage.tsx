@@ -7,36 +7,18 @@ import { Money } from '@/components/ui/money';
 import { cn } from '@/lib/cn';
 import { useAppDispatch, useAppSelector } from '@/app/hooks';
 import { addToCart, toggleWishlist } from '@/features/storefront/shopSlice';
-import { useCreateEnquiryMutation } from '@/features/storefront/storefrontApi';
+import { useCreateEnquiryMutation, useGetPublicProductsQuery, type PublicProduct } from '@/features/storefront/storefrontApi';
 
-const PRODUCT = {
-  name: 'Mira bangle',
-  weightG: 12.45,
-  purity: '22K · BIS Hallmarked',
-  ratePerGram: 6420_00,
-  makingPerGram: 850_00,
-  stonePaise: 0,
-  gstBps: 300,
-  sku: 'AJ-BNG-MIRA-22K-12.45',
-  images: [
-    'https://images.unsplash.com/photo-1611591437281-460bfbe1220a?auto=format&fit=crop&w=1400&q=85',
-    'https://images.unsplash.com/photo-1599643477877-530eb83abc8e?auto=format&fit=crop&w=1400&q=85',
-    'https://images.unsplash.com/photo-1605100804763-247f67b3557e?auto=format&fit=crop&w=1400&q=85',
-    'https://images.unsplash.com/photo-1603561591411-07134e71a2a9?auto=format&fit=crop&w=1400&q=85',
-  ],
-};
+// Per-day 22K rate. Lives here for the demo; the storefront content blob also
+// surfaces a *display string* (rates.g22) edited from the CMS. Numeric pricing
+// uses this single source so the breakdown stays internally consistent.
+const RATE_PER_GRAM_22K_PAISE = 6420_00;
+const GST_BPS = 300;
 
 const SIZES = ['2.4', '2.6', '2.8'];
 
-const RELATED = [
-  { slug: 'tara-mangalsutra', name: 'Tara mangalsutra', priceLabel: '₹62,200', weight: '8.10 g · 22K', img: 'https://images.unsplash.com/photo-1599643477877-530eb83abc8e?auto=format&fit=crop&w=800&q=80' },
-  { slug: 'aarya-ring', name: 'Aarya solitaire', priceLabel: '₹48,900', weight: '0.32 ct · 18K', img: 'https://images.unsplash.com/photo-1603561591411-07134e71a2a9?auto=format&fit=crop&w=800&q=80' },
-  { slug: 'riya-jhumka', name: 'Riya jhumkas', priceLabel: '₹31,400', weight: '5.20 g · 22K', img: 'https://images.unsplash.com/photo-1605100804763-247f67b3557e?auto=format&fit=crop&w=800&q=80' },
-  { slug: 'diya-chain', name: 'Diya chain', priceLabel: '₹54,800', weight: '7.40 g · 22K', img: 'https://images.unsplash.com/photo-1611591437281-460bfbe1220a?auto=format&fit=crop&w=800&q=80' },
-];
-
 export function ProductDetailPage(): JSX.Element {
-  const { slug = 'mira-bangle' } = useParams();
+  const { slug = '' } = useParams<{ slug: string }>();
   const [imgIdx, setImgIdx] = useState(0);
   const [size, setSize] = useState<string>(SIZES[1] ?? SIZES[0] ?? '');
   const [qty, setQty] = useState(1);
@@ -44,11 +26,41 @@ export function ProductDetailPage(): JSX.Element {
   const [reserveOpen, setReserveOpen] = useState(false);
   const dispatch = useAppDispatch();
   const wishlisted = useAppSelector((s) => s.shop.wishlist.some((w) => w.slug === slug));
+  const { data: products, isLoading } = useGetPublicProductsQuery();
 
-  const gold = Math.round((PRODUCT.weightG * 1000 * PRODUCT.ratePerGram * 2200) / (1000 * 2400));
-  const making = Math.round((PRODUCT.weightG * 1000 * PRODUCT.makingPerGram) / 1000);
-  const subtotal = gold + making + PRODUCT.stonePaise;
-  const gst = Math.round((subtotal * PRODUCT.gstBps) / 10000);
+  const product: PublicProduct | undefined = products?.find((p) => p.slug === slug);
+  const related: PublicProduct[] = (products ?? []).filter((p) => p.slug !== slug).slice(0, 4);
+
+  // Loading + not-found states (early-return AFTER hooks so the React hooks order is stable).
+  if (isLoading) {
+    return (
+      <div className="max-w-[1280px] mx-auto px-6 py-20 text-center text-ink-500 text-sm">
+        Loading the piece…
+      </div>
+    );
+  }
+  if (!product) {
+    return (
+      <div className="max-w-[1280px] mx-auto px-6 py-20 text-center">
+        <h1 className="font-display text-[28px] leading-tight text-ink-900 mb-3">Piece not found</h1>
+        <p className="text-ink-600 mb-6 max-w-prose mx-auto">
+          We couldn&apos;t find a piece with that slug. It may have been retired or not yet published.
+        </p>
+        <Link to="/store/collections" className="inline-block text-sm text-ink-900 underline decoration-brand-500 underline-offset-4">
+          Browse the collection
+        </Link>
+      </div>
+    );
+  }
+
+  const weightG = product.weightMg / 1000;
+  const purityK = product.purityCaratX100 / 100;
+  const purity = `${purityK}K · BIS Hallmarked`;
+  // gold value = weight (mg) × rate-per-mg × (actual purity / 24K reference)
+  const gold = Math.round((product.weightMg * RATE_PER_GRAM_22K_PAISE * product.purityCaratX100) / (1000 * 2400));
+  const making = Math.round((gold * product.makingChargeBps) / 10000);
+  const subtotal = gold + making + product.stoneChargePaise;
+  const gst = Math.round((subtotal * GST_BPS) / 10000);
   const total = subtotal + gst;
 
   return (
@@ -66,7 +78,7 @@ export function ProductDetailPage(): JSX.Element {
         <section className="lg:flex lg:gap-4">
           {/* Thumbnails — vertical on desktop */}
           <div className="order-2 lg:order-1 mt-4 lg:mt-0 grid grid-cols-4 lg:grid-cols-1 lg:flex-col gap-3 lg:w-[80px]">
-            {PRODUCT.images.map((src, i) => (
+            {product.images.map((src, i) => (
               <button
                 key={src}
                 onClick={() => setImgIdx(i)}
@@ -81,7 +93,7 @@ export function ProductDetailPage(): JSX.Element {
             ))}
           </div>
           <div className="order-1 lg:order-2 flex-1 aspect-square overflow-hidden bg-ink-50">
-            <img src={PRODUCT.images[imgIdx]} alt={PRODUCT.name} className="h-full w-full object-cover" />
+            <img src={product.images[imgIdx]} alt={product.name} className="h-full w-full object-cover" />
           </div>
         </section>
 
@@ -89,8 +101,8 @@ export function ProductDetailPage(): JSX.Element {
         <section className="space-y-7">
           <header>
             <p className="text-eyebrow uppercase text-ink-500">Bridal · Bangle</p>
-            <h1 className="font-display text-[34px] md:text-[40px] leading-[1.1] text-ink-900 mt-2">{PRODUCT.name}</h1>
-            <p className="mt-2 text-sm text-ink-600">{PRODUCT.weightG.toFixed(2)} g · {PRODUCT.purity}</p>
+            <h1 className="font-display text-[34px] md:text-[40px] leading-[1.1] text-ink-900 mt-2">{product.name}</h1>
+            <p className="mt-2 text-sm text-ink-600">{weightG.toFixed(2)} g · {purity}</p>
           </header>
 
           <div className="flex items-baseline gap-3">
@@ -101,7 +113,7 @@ export function ProductDetailPage(): JSX.Element {
           {/* Today's rate pill */}
           <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-brand-50 text-brand-800 text-xs font-mono tabular-nums">
             <span className="h-1.5 w-1.5 rounded-full bg-brand-500" />
-            Today&apos;s 22K rate · ₹{(PRODUCT.ratePerGram / 100).toLocaleString('en-IN')}/g
+            Today&apos;s 22K rate · ₹{(RATE_PER_GRAM_22K_PAISE / 100).toLocaleString('en-IN')}/g
             <span className="text-brand-700/70">· Updated 11:02 AM</span>
           </div>
 
@@ -109,7 +121,7 @@ export function ProductDetailPage(): JSX.Element {
           <div className="rounded-md border border-ink-100 bg-ink-25 p-5 space-y-2.5 text-sm">
             <p className="text-eyebrow uppercase text-ink-500">Price breakdown</p>
             <Row
-              label={`Gold value · ${PRODUCT.weightG.toFixed(2)} g × ₹${(PRODUCT.ratePerGram / 100).toLocaleString('en-IN')}/g × 22/24`}
+              label={`Gold value · ${weightG.toFixed(2)} g × ₹${(RATE_PER_GRAM_22K_PAISE / 100).toLocaleString('en-IN')}/g × 22/24`}
               value={<Money paise={gold} />}
             />
             <Row label="Making charges" value={<Money paise={making} />} />
@@ -160,15 +172,15 @@ export function ProductDetailPage(): JSX.Element {
                 dispatch(
                   addToCart({
                     slug,
-                    name: PRODUCT.name,
-                    weight: `${PRODUCT.weightG.toFixed(2)} g · ${PRODUCT.purity}`,
+                    name: product.name,
+                    weight: `${weightG.toFixed(2)} g · ${purity}`,
                     priceLabel: `₹${(total / 100).toLocaleString('en-IN')}`,
                     pricePaise: total,
-                    img: PRODUCT.images[0] ?? '',
+                    img: product.images[0] ?? '',
                     qty,
                   }),
                 );
-                toast.success(`${PRODUCT.name} added to bag`);
+                toast.success(`${product.name} added to bag`);
               }}
               className="flex-1 h-12 px-7 rounded-full bg-ink-900 text-ink-0 text-sm font-medium hover:bg-ink-700 transition-colors duration-fast"
             >
@@ -187,10 +199,10 @@ export function ProductDetailPage(): JSX.Element {
                 dispatch(
                   toggleWishlist({
                     slug,
-                    name: PRODUCT.name,
-                    weight: `${PRODUCT.weightG.toFixed(2)} g · ${PRODUCT.purity}`,
+                    name: product.name,
+                    weight: `${weightG.toFixed(2)} g · ${purity}`,
                     priceLabel: `₹${(total / 100).toLocaleString('en-IN')}`,
-                    img: PRODUCT.images[0] ?? '',
+                    img: product.images[0] ?? '',
                   }),
                 );
                 toast.success(wishlisted ? 'Removed from wishlist' : 'Saved to wishlist');
@@ -239,9 +251,9 @@ export function ProductDetailPage(): JSX.Element {
             >
               <dl className="grid grid-cols-2 gap-y-2 text-sm">
                 <dt className="text-ink-500">SKU</dt>
-                <dd className="text-ink-800 font-mono text-xs">{PRODUCT.sku}</dd>
+                <dd className="text-ink-800 font-mono text-xs">{product.slug}</dd>
                 <dt className="text-ink-500">Gross weight</dt>
-                <dd className="text-ink-800 tabular-nums">{PRODUCT.weightG.toFixed(2)} g</dd>
+                <dd className="text-ink-800 tabular-nums">{weightG.toFixed(2)} g</dd>
                 <dt className="text-ink-500">Metal</dt>
                 <dd className="text-ink-800">22K Gold (916 hallmark)</dd>
                 <dt className="text-ink-500">Setting</dt>
@@ -283,15 +295,24 @@ export function ProductDetailPage(): JSX.Element {
           </Link>
         </div>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-x-5 gap-y-10 md:gap-x-6">
-          {RELATED.map((p) => (
+          {related.map((p) => (
             <Link key={p.slug} to={`/store/products/${p.slug}`} className="group block">
               <div className="aspect-[4/5] overflow-hidden bg-ink-100">
-                <img src={p.img} alt={p.name} className="h-full w-full object-cover group-hover:scale-[1.03] transition-transform duration-slow" loading="lazy" />
+                <img
+                  src={p.images[0] ?? ''}
+                  alt={p.name}
+                  className="h-full w-full object-cover group-hover:scale-[1.03] transition-transform duration-slow"
+                  loading="lazy"
+                />
               </div>
               <div className="mt-4">
                 <h3 className="font-display text-[17px] leading-tight text-ink-900">{p.name}</h3>
-                <p className="text-xs text-ink-500 mt-1">{p.weight}</p>
-                <p className="text-sm text-ink-900 font-mono tabular-nums mt-1.5">{p.priceLabel}</p>
+                <p className="text-xs text-ink-500 mt-1">
+                  {(p.weightMg / 1000).toFixed(2)} g · {p.purityCaratX100 / 100}K
+                </p>
+                <p className="text-sm text-ink-900 font-mono tabular-nums mt-1.5">
+                  ₹{((p.basePricePaise + p.stoneChargePaise) / 100).toLocaleString('en-IN')}
+                </p>
               </div>
             </Link>
           ))}
@@ -316,8 +337,8 @@ export function ProductDetailPage(): JSX.Element {
       <ReserveModal
         open={reserveOpen}
         onClose={() => setReserveOpen(false)}
-        productName={PRODUCT.name}
-        purity={PRODUCT.purity}
+        productName={product.name}
+        purity={purity}
         size={size}
         qty={qty}
         totalPaise={total}

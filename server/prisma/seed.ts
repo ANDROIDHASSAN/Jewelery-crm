@@ -1,13 +1,25 @@
-// server/prisma/seed.ts — 1 tenant, 2 shops, 1 vendor, 1 category, 50 items, 3 customers, 4 users.
-// Run: `npm run db:seed`. Uses rawPrisma (no tenant extension) since we're populating from scratch.
+// server/prisma/seed.ts — comprehensive demo fixtures so every admin module
+// has live data. Run: `npm run db:seed`. Uses rawPrisma (no tenant extension)
+// since we're populating from scratch.
 
 import { rawPrisma as prisma } from '../src/lib/prisma.js';
+import { redis } from '../src/lib/redis.js';
 
 async function main(): Promise<void> {
-  await prisma.$transaction(async (tx) => {
-    // Idempotent: nuke prior seed tenant if it exists.
+  // Long timeout because the seed touches many tables; Neon's default 5s
+  // interactive-tx limit closes mid-insert otherwise.
+  await prisma.$transaction(
+    async (tx) => {
+    // Idempotent reseed:
+    //   1. Capture the current StorefrontContent (CMS edits) BEFORE cascading delete.
+    //   2. Drop+recreate the demo tenant + all its rows for clean fixtures.
+    //   3. Restore the captured StorefrontContent at the end, so user CMS edits
+    //      survive across deploys. (If none was ever published, the seed default
+    //      below is used.)
     const existing = await tx.tenant.findUnique({ where: { ownerEmail: 'owner@goldos.dev' } });
+    let preservedContent: Awaited<ReturnType<typeof tx.storefrontContent.findUnique>> = null;
     if (existing) {
+      preservedContent = await tx.storefrontContent.findUnique({ where: { tenantId: existing.id } });
       await tx.tenant.delete({ where: { id: existing.id } });
     }
 
@@ -61,16 +73,39 @@ async function main(): Promise<void> {
       },
     });
 
-    await tx.vendor.create({
-      data: {
-        tenantId: tenant.id,
-        name: 'Surat Bullion Co.',
-        gstNumber: '24AAACS1429C1ZP',
-        phone: '+912614435560',
-        address: 'Mahidharpura, Surat 395003',
-        outstandingPaise: 0,
-      },
-    });
+    // Multiple vendors so the Vendors tab + Purchase Orders tab feel real.
+    const [vendorSurat, vendorMumbai, vendorJaipur] = await Promise.all([
+      tx.vendor.create({
+        data: {
+          tenantId: tenant.id,
+          name: 'Surat Bullion Co.',
+          gstNumber: '24AAACS1429C1ZP',
+          phone: '+912614435560',
+          address: 'Mahidharpura, Surat 395003',
+          outstandingPaise: 2_45_000_00,
+        },
+      }),
+      tx.vendor.create({
+        data: {
+          tenantId: tenant.id,
+          name: 'Zaveri Bazaar Imports',
+          gstNumber: '27AABCZ4567E1Z9',
+          phone: '+912266443322',
+          address: 'Zaveri Bazaar, Mumbai 400003',
+          outstandingPaise: 0,
+        },
+      }),
+      tx.vendor.create({
+        data: {
+          tenantId: tenant.id,
+          name: 'Jaipur Kundan Karigars',
+          gstNumber: '08AAKCJ2233D1Z2',
+          phone: '+911414235566',
+          address: 'Johari Bazaar, Jaipur 302003',
+          outstandingPaise: 78_500_00,
+        },
+      }),
+    ]);
 
     const itemsData = Array.from({ length: 50 }, (_, i) => {
       const shopId = i % 2 === 0 ? shopMain.id : shopBranch.id;
@@ -177,10 +212,233 @@ async function main(): Promise<void> {
       }),
     });
 
-    // Default storefront content — drives the public homepage. Editable from
-    // the Website CMS (PUT /api/v1/storefront).
-    await tx.storefrontContent.create({
+    // Products — e-commerce catalog rows that the public storefront PDP fetches
+    // via /api/v1/website/products. Slugs match the demo storefront's URLs.
+    const PRODUCT_IMG = {
+      bangle: [
+        'https://images.unsplash.com/photo-1611591437281-460bfbe1220a?auto=format&fit=crop&w=1400&q=85',
+        'https://images.unsplash.com/photo-1599643477877-530eb83abc8e?auto=format&fit=crop&w=1400&q=85',
+        'https://images.unsplash.com/photo-1605100804763-247f67b3557e?auto=format&fit=crop&w=1400&q=85',
+        'https://images.unsplash.com/photo-1603561591411-07134e71a2a9?auto=format&fit=crop&w=1400&q=85',
+      ],
+      mangalsutra: [
+        'https://images.unsplash.com/photo-1599643477877-530eb83abc8e?auto=format&fit=crop&w=1400&q=85',
+        'https://images.unsplash.com/photo-1611591437281-460bfbe1220a?auto=format&fit=crop&w=1400&q=85',
+      ],
+      ring: [
+        'https://images.unsplash.com/photo-1603561591411-07134e71a2a9?auto=format&fit=crop&w=1400&q=85',
+        'https://images.unsplash.com/photo-1605100804763-247f67b3557e?auto=format&fit=crop&w=1400&q=85',
+      ],
+      jhumka: [
+        'https://images.unsplash.com/photo-1605100804763-247f67b3557e?auto=format&fit=crop&w=1400&q=85',
+        'https://images.unsplash.com/photo-1611591437281-460bfbe1220a?auto=format&fit=crop&w=1400&q=85',
+      ],
+      chain: [
+        'https://images.unsplash.com/photo-1611591437281-460bfbe1220a?auto=format&fit=crop&w=1400&q=85',
+        'https://images.unsplash.com/photo-1599643477877-530eb83abc8e?auto=format&fit=crop&w=1400&q=85',
+      ],
+      haar: [
+        'https://images.unsplash.com/photo-1602173574767-37ac01994b2a?auto=format&fit=crop&w=1400&q=85',
+        'https://images.unsplash.com/photo-1611591437281-460bfbe1220a?auto=format&fit=crop&w=1400&q=85',
+      ],
+    };
+    await tx.product.createMany({
+      data: [
+        {
+          tenantId: tenant.id, categoryId: category.id, slug: 'mira-bangle', name: 'Mira bangle',
+          descriptionMd: 'Hand-set 22K bangle from the 2025 Bridal Edit. BIS hallmarked, weighed in front of you.',
+          images: PRODUCT_IMG.bangle, weightMg: 12_450, purityCaratX100: 2200,
+          makingChargeBps: 1325, basePricePaise: 86_366_00, stoneChargePaise: 0, isPublished: true,
+        },
+        {
+          tenantId: tenant.id, categoryId: category.id, slug: 'tara-mangalsutra', name: 'Tara mangalsutra',
+          descriptionMd: 'Lightweight 22K mangalsutra with black-bead accents. Everyday-wear length.',
+          images: PRODUCT_IMG.mangalsutra, weightMg: 8_100, purityCaratX100: 2200,
+          makingChargeBps: 1100, basePricePaise: 62_200_00, stoneChargePaise: 0, isPublished: true,
+        },
+        {
+          tenantId: tenant.id, categoryId: category.id, slug: 'aarya-ring', name: 'Aarya solitaire',
+          descriptionMd: '0.32ct lab-grown solitaire set in 18K white gold. Certified, sized to order.',
+          images: PRODUCT_IMG.ring, weightMg: 4_200, purityCaratX100: 1800,
+          makingChargeBps: 1500, basePricePaise: 48_900_00, stoneChargePaise: 18_000_00, isPublished: true,
+        },
+        {
+          tenantId: tenant.id, categoryId: category.id, slug: 'riya-jhumka', name: 'Riya jhumkas',
+          descriptionMd: 'Classic 22K jhumkas with hand-set pearls. A festive everyday.',
+          images: PRODUCT_IMG.jhumka, weightMg: 5_200, purityCaratX100: 2200,
+          makingChargeBps: 1250, basePricePaise: 31_400_00, stoneChargePaise: 0, isPublished: true,
+        },
+        {
+          tenantId: tenant.id, categoryId: category.id, slug: 'diya-chain', name: 'Diya chain',
+          descriptionMd: '18-inch 22K chain with a fine rope link. BIS hallmarked.',
+          images: PRODUCT_IMG.chain, weightMg: 7_400, purityCaratX100: 2200,
+          makingChargeBps: 1050, basePricePaise: 54_800_00, stoneChargePaise: 0, isPublished: true,
+        },
+        {
+          tenantId: tenant.id, categoryId: category.id, slug: 'niya-haar', name: 'Niya haar',
+          descriptionMd: 'Statement bridal haar with kundan and pearl drops. Made-to-order, ~6 weeks.',
+          images: PRODUCT_IMG.haar, weightMg: 65_000, purityCaratX100: 2200,
+          makingChargeBps: 1800, basePricePaise: 4_85_000_00, stoneChargePaise: 1_25_000_00, isPublished: true,
+        },
+      ],
+    });
+
+    // Purchase orders — one per vendor with realistic line items.
+    const poSurat = await tx.purchaseOrder.create({
       data: {
+        tenantId: tenant.id,
+        vendorId: vendorSurat.id,
+        status: 'RECEIVED',
+        totalPaise: 6_25_000_00,
+        createdAt: daysAgo(20),
+        items: {
+          create: [
+            { itemSku: 'BAR-22K-100G', weightMg: 100_000, purity: 2200, costPaise: 6_25_000_00 },
+          ],
+        },
+      },
+    });
+    const poJaipur = await tx.purchaseOrder.create({
+      data: {
+        tenantId: tenant.id,
+        vendorId: vendorJaipur.id,
+        status: 'PLACED',
+        totalPaise: 78_500_00,
+        createdAt: daysAgo(7),
+        items: {
+          create: [
+            { itemSku: 'KUN-EAR-S001', weightMg: 6_500, purity: 2200, costPaise: 38_500_00 },
+            { itemSku: 'KUN-PEN-S002', weightMg: 7_200, purity: 2200, costPaise: 40_000_00 },
+          ],
+        },
+      },
+    });
+    void poSurat;
+    void poJaipur;
+    const poMumbai = await tx.purchaseOrder.create({
+      data: {
+        tenantId: tenant.id,
+        vendorId: vendorMumbai.id,
+        status: 'DRAFT',
+        totalPaise: 1_20_000_00,
+        createdAt: daysAgo(2),
+        items: {
+          create: [
+            { itemSku: 'CHAIN-22K-15G', weightMg: 15_000, purity: 2200, costPaise: 96_000_00 },
+            { itemSku: 'BRACELET-22K-8G', weightMg: 8_000, purity: 2200, costPaise: 24_000_00 },
+          ],
+        },
+      },
+    });
+    void poMumbai;
+
+    // Item movements: a few transfers + wastage entries so those tabs have signal.
+    const allItems = await tx.item.findMany({ where: { tenantId: tenant.id } });
+    const transferTargets = allItems.slice(0, 4);
+    await tx.itemMovement.createMany({
+      data: [
+        ...transferTargets.map((it, i) => ({
+          tenantId: tenant.id,
+          itemId: it.id,
+          fromShopId: it.shopId,
+          toShopId: it.shopId === shopMain.id ? shopBranch.id : shopMain.id,
+          type: 'TRANSFER' as const,
+          reason: i === 0 ? 'Customer requested viewing at Karnal' : 'Branch rebalancing — Apr',
+          createdAt: daysAgo(10 + i * 2),
+        })),
+        ...allItems.slice(48, 50).map((it, i) => ({
+          tenantId: tenant.id,
+          itemId: it.id,
+          fromShopId: it.shopId,
+          type: 'WASTAGE' as const,
+          reason: i === 0 ? 'Re-melted into 22K bar — design discontinued' : 'Damaged in display case',
+          createdAt: daysAgo(5 + i),
+        })),
+      ],
+    });
+
+    // Storefront orders — what the EcommerceAdminPage shows. We need products + customers first.
+    const products = await tx.product.findMany({
+      where: { tenantId: tenant.id, isPublished: true },
+      select: { id: true, basePricePaise: true, stoneChargePaise: true },
+    });
+    const customers = await tx.customer.findMany({ where: { tenantId: tenant.id } });
+    if (products.length > 0 && customers.length > 0) {
+      const orderFixtures = [
+        { days: 0, status: 'PENDING' as const, productIdxs: [0], qty: [1], method: 'reserve-at-store' },
+        { days: 1, status: 'CONFIRMED' as const, productIdxs: [1, 3], qty: [1, 1], method: 'razorpay' },
+        { days: 3, status: 'PROCESSING' as const, productIdxs: [2], qty: [1], method: 'razorpay' },
+        { days: 5, status: 'SHIPPED' as const, productIdxs: [4], qty: [1], method: 'razorpay' },
+        { days: 9, status: 'DELIVERED' as const, productIdxs: [0, 3], qty: [1, 2], method: 'cod' },
+        { days: 14, status: 'DELIVERED' as const, productIdxs: [1], qty: [1], method: 'razorpay' },
+        { days: 21, status: 'DELIVERED' as const, productIdxs: [5], qty: [1], method: 'razorpay' },
+        { days: 26, status: 'CANCELLED' as const, productIdxs: [2], qty: [1], method: 'razorpay' },
+      ];
+      for (let i = 0; i < orderFixtures.length; i += 1) {
+        const f = orderFixtures[i]!;
+        const lineItems = f.productIdxs.map((idx, j) => {
+          const p = products[idx]!;
+          return { productId: p.id, qty: f.qty[j]!, pricePaise: p.basePricePaise + p.stoneChargePaise };
+        });
+        const subtotal = lineItems.reduce((s, l) => s + l.pricePaise * l.qty, 0);
+        const tax = Math.round((subtotal * 300) / 10_000);
+        await tx.order.create({
+          data: {
+            tenantId: tenant.id,
+            customerId: customers[i % customers.length]!.id,
+            status: f.status,
+            subtotalPaise: subtotal,
+            shippingPaise: 0,
+            taxPaise: tax,
+            totalPaise: subtotal + tax,
+            paymentMethod: f.method,
+            createdAt: daysAgo(f.days),
+            items: { create: lineItems },
+          },
+        });
+      }
+    }
+
+    // Audit log — seed CREATE rows for the demo items + vendors so the trail is non-empty.
+    await tx.auditLog.createMany({
+      data: [
+        ...allItems.slice(0, 10).map((it) => ({
+          tenantId: tenant.id,
+          entityType: 'Item',
+          entityId: it.id,
+          action: 'CREATE',
+          afterJson: { sku: it.sku, weightMg: it.weightMg, purityCaratX100: it.purityCaratX100 },
+          createdAt: it.createdAt,
+        })),
+        {
+          tenantId: tenant.id,
+          entityType: 'Vendor',
+          entityId: vendorSurat.id,
+          action: 'CREATE',
+          afterJson: { name: 'Surat Bullion Co.' },
+        },
+        {
+          tenantId: tenant.id,
+          entityType: 'Vendor',
+          entityId: vendorMumbai.id,
+          action: 'CREATE',
+          afterJson: { name: 'Zaveri Bazaar Imports' },
+        },
+      ],
+    });
+
+    // Default storefront content — drives the public homepage. Editable from
+    // the Website CMS (PUT /api/v1/storefront). If a previous version exists
+    // (preservedContent above), restore it after the reseed so user edits stick.
+    await tx.storefrontContent.create({
+      data: preservedContent
+        ? {
+            tenantId: tenant.id,
+            content: preservedContent.content,
+            version: preservedContent.version,
+            updatedBy: preservedContent.updatedBy,
+          }
+        : {
         tenantId: tenant.id,
         content: {
           brand: {
@@ -247,10 +505,32 @@ async function main(): Promise<void> {
         },
       },
     });
-  });
+    },
+    { timeout: 120_000, maxWait: 30_000 },
+  );
+
+  // Prime the gold-rate cache so the dashboard tile + stock valuation render
+  // numbers in dev before the MCX worker runs. Values track the MCX dev defaults.
+  try {
+    await Promise.all([
+      redis.set('goldrate:2400', '700000'), // 24K ₹7,000/g
+      redis.set('goldrate:2200', '642000'), // 22K ₹6,420/g
+      redis.set('goldrate:1800', '525500'), // 18K ₹5,255/g
+      redis.set('goldrate:1400', '410000'), // 14K ₹4,100/g
+      redis.set('goldrate:0', '8450'),      // Silver ₹84.50/g
+      redis.set('goldrate:meta', JSON.stringify({ stale: false, asOf: new Date().toISOString() })),
+    ]);
+    // eslint-disable-next-line no-console
+    console.log('[seed] gold rates primed in Redis.');
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.warn('[seed] gold-rate priming skipped (Redis unreachable).', err);
+  }
 
   // eslint-disable-next-line no-console
   console.log('[seed] done.');
+  // Force-close redis client so the script exits cleanly.
+  await redis.quit().catch(() => {});
 }
 
 main()

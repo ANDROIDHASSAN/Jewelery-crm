@@ -11,7 +11,6 @@ import {
   Flame,
   FileText,
   Users,
-  ShieldCheck,
   TrendingDown,
   Coins,
   ScrollText,

@@ -51,7 +51,7 @@ const SOURCE_LABEL: Record<string, string> = {
 };
 
 export function CrmPage(): JSX.Element {
-  const { data, isLoading, isError } = useGetLeadsQuery(undefined, { pollingInterval: 30_000 });
+  const { data, isLoading, isError, error } = useGetLeadsQuery(undefined, { pollingInterval: 30_000 });
   const [tab, setTab] = useState<TabId>('inbox');
   const [newOpen, setNewOpen] = useState(false);
 
@@ -69,7 +69,11 @@ export function CrmPage(): JSX.Element {
         </div>
         <div className="flex items-center gap-2">
           {isLoading && <span className="text-xs text-ink-500">Loading…</span>}
-          {isError && <span className="text-xs text-rose-600">Failed to load leads</span>}
+          {isError && (
+            <span className="text-xs text-rose-600" title={JSON.stringify(error)}>
+              Failed to load leads ({(error as { status?: number | string })?.status ?? 'network'})
+            </span>
+          )}
           <Button onClick={() => setNewOpen(true)} className="gap-1.5">
             <Plus className="h-4 w-4" /> New lead
           </Button>
@@ -823,22 +827,37 @@ function NewLeadModal({ onClose }: { onClose: () => void }): JSX.Element {
 
   async function submit(e: React.FormEvent): Promise<void> {
     e.preventDefault();
-    if (!form.name.trim() || form.phone.replace(/\D/g, '').length < 10) {
-      toast.error('Name and a valid phone are required');
+    const cleanedPhone = form.phone.replace(/[\s-]/g, '');
+    if (!form.name.trim()) {
+      toast.error('Name is required');
       return;
     }
+    if (!/^\+91[6-9]\d{9}$/.test(cleanedPhone)) {
+      toast.error('Phone must be +91 followed by 10 digits starting 6-9');
+      return;
+    }
+    // Build payload with only set fields — Zod is strict about extras when
+    // optional+nullable fields are sent as empty strings.
+    const payload: Record<string, unknown> = {
+      name: form.name.trim(),
+      phone: cleanedPhone,
+      source: form.source,
+    };
+    if (form.interest.trim())     payload['interest']     = form.interest.trim();
+    if (form.utmCampaign.trim())  payload['utmCampaign']  = form.utmCampaign.trim();
     try {
-      await createLead({
-        name: form.name.trim(),
-        phone: form.phone.replace(/\s/g, ''),
-        source: form.source,
-        interest: form.interest || null,
-        utmCampaign: form.utmCampaign || null,
-      } as never).unwrap();
+      await createLead(payload as never).unwrap();
       toast.success('Lead added to NEW column');
       onClose();
-    } catch {
-      toast.error('Could not add lead');
+    } catch (err) {
+      const e = err as { status?: number | string; data?: { error?: { message?: string; fields?: Record<string, string> }; message?: string } };
+      const baseMsg = e?.data?.error?.message ?? e?.data?.message ?? `HTTP ${e?.status ?? '?'}`;
+      const fieldDetail = e?.data?.error?.fields
+        ? Object.entries(e.data.error.fields).map(([k, v]) => `${k}: ${v}`).join('; ')
+        : '';
+      toast.error(`Could not add lead — ${baseMsg}`, fieldDetail ? { description: fieldDetail } : undefined);
+      // eslint-disable-next-line no-console
+      console.error('[crm] createLead failed:', err);
     }
   }
 

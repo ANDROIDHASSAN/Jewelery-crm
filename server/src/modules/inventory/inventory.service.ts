@@ -48,6 +48,35 @@ export async function createItem(input: ItemInput, performedByUserId?: string) {
   return item;
 }
 
+export async function updateItem(id: string, patch: Partial<ItemInput>, performedByUserId?: string) {
+  const before = await prisma.item.findUnique({ where: { id } });
+  if (!before) throw new NotFoundError();
+  const item = await prisma.item.update({ where: { id }, data: patch });
+  await writeAudit('Item', id, 'UPDATE', before, item, performedByUserId);
+  return item;
+}
+
+export async function deleteItem(id: string, performedByUserId?: string) {
+  const before = await prisma.item.findUnique({ where: { id } });
+  if (!before) throw new NotFoundError();
+  if (before.status === 'SOLD') {
+    throw new BusinessRuleError('ITEM_SOLD', 'Sold items cannot be deleted — they live on the bill.');
+  }
+  // Soft delete: mark MELTED and log the action. Hard-deleting an item would
+  // orphan bill lines, movements, and audit history.
+  const after = await prisma.item.update({ where: { id }, data: { status: 'MELTED' } });
+  await prisma.itemMovement.create({
+    data: {
+      itemId: id,
+      fromShopId: before.shopId,
+      type: 'WASTAGE',
+      reason: 'Manually removed from inventory',
+      performedByUserId: performedByUserId ?? null,
+    },
+  });
+  await writeAudit('Item', id, 'DELETE', before, after, performedByUserId);
+}
+
 export async function transferItem(id: string, toShopId: string, reason: string, performedByUserId?: string) {
   const item = await prisma.item.findUnique({ where: { id } });
   if (!item) throw new NotFoundError();
@@ -174,6 +203,29 @@ export async function createVendor(input: VendorInput) {
   const vendor = await prisma.vendor.create({ data: input });
   await writeAudit('Vendor', vendor.id, 'CREATE', null, vendor);
   return vendor;
+}
+
+export async function updateVendor(id: string, patch: Partial<VendorInput>) {
+  const before = await prisma.vendor.findUnique({ where: { id } });
+  if (!before) throw new NotFoundError();
+  const vendor = await prisma.vendor.update({ where: { id }, data: patch });
+  await writeAudit('Vendor', id, 'UPDATE', before, vendor);
+  return vendor;
+}
+
+export async function deleteVendor(id: string) {
+  const before = await prisma.vendor.findUnique({ where: { id } });
+  if (!before) throw new NotFoundError();
+  // Refuse if linked POs exist — vendor history matters for accounting.
+  const poCount = await prisma.purchaseOrder.count({ where: { vendorId: id } });
+  if (poCount > 0) {
+    throw new BusinessRuleError(
+      'VENDOR_HAS_POS',
+      `Cannot delete vendor with ${poCount} purchase order${poCount === 1 ? '' : 's'}.`,
+    );
+  }
+  await prisma.vendor.delete({ where: { id } });
+  await writeAudit('Vendor', id, 'DELETE', before, null);
 }
 
 // --- Purchase Orders ---
