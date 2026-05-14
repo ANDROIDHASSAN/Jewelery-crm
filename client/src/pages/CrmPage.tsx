@@ -48,6 +48,7 @@ const SOURCE_LABEL: Record<string, string> = {
   google: 'Google Ads',
   walkin: 'Walk-in',
   referral: 'Referral',
+  'store-reservation': 'Storefront reservation',
 };
 
 export function CrmPage(): JSX.Element {
@@ -995,6 +996,7 @@ function ChannelChip({ source, compact = false }: { source: string; compact?: bo
     : source === 'facebook' ? 'bg-blue-50 text-blue-700'
     : source === 'google' ? 'bg-amber-50 text-amber-800'
     : source === 'walkin' ? 'bg-ink-100 text-ink-700'
+    : source === 'store-reservation' ? 'bg-brand-100 text-brand-800 ring-1 ring-brand-200'
     : 'bg-ink-50 text-ink-700';
   return (
     <span className={cn('inline-flex items-center rounded px-1.5 py-0.5 font-medium', tone, compact ? 'text-[9px]' : 'text-[10px]')}>

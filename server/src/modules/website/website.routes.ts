@@ -6,6 +6,7 @@ import { z } from 'zod';
 import { LeadInputSchema, IndianPhoneSchema } from '@goldos/shared/schemas';
 import { rawPrisma } from '../../lib/prisma.js';
 import { runWithTenant } from '../../lib/async-context.js';
+import { resolveCanonicalTenantId } from '../../lib/canonical-tenant.js';
 
 export const websiteRouter: Router = Router();
 
@@ -22,24 +23,21 @@ websiteRouter.use((req, res, next) => {
 });
 
 // Day 17 wires per-tenant subdomain resolution; for now accept ?tenant=, falling
-// back to the first tenant in the database (single-tenant dev mode).
+// back to the canonical tenant (same one the admin sentinel resolves to — see
+// lib/canonical-tenant.ts) so storefront writes and admin reads always agree.
 async function resolveTenant(req: { query: Record<string, unknown> }): Promise<string> {
   const t = req.query['tenant'];
   if (typeof t === 'string' && t.length > 0) return t;
-  const first = await rawPrisma.tenant.findFirst({ select: { id: true }, orderBy: { createdAt: 'asc' } });
-  if (!first) throw new Error('No tenant configured. Run `npm run db:seed`.');
-  return first.id;
+  return resolveCanonicalTenantId();
 }
 
-// Resolve tenant from ?tenant= (subdomain support arrives in v1.5). For
-// single-tenant deployments, fall back to the first tenant so the public site
-// works without query strings.
+// Same resolver — kept under the old name so downstream call-sites don't
+// need touching. Both used to diverge (`asc` vs `desc`) and silently routed
+// public-form writes to a different tenant than the admin reads from.
 async function tenantFromQueryOrFirst(req: { query: Record<string, unknown> }): Promise<string> {
   const t = req.query['tenant'];
   if (typeof t === 'string' && t.length > 0) return t;
-  const first = await rawPrisma.tenant.findFirst({ select: { id: true }, orderBy: { createdAt: 'asc' } });
-  if (!first) throw new Error('No tenant configured. Run `npm run db:seed`.');
-  return first.id;
+  return resolveCanonicalTenantId();
 }
 
 // Public read of the storefront content blob. Drives the entire homepage.
@@ -169,6 +167,11 @@ websiteRouter.post('/orders', async (req, res, next) => {
             },
           });
 
+      // Shiprocket-style default arrival SLA: 5 calendar days from order
+      // placement. Admin can override per-order from EcommerceAdminPage; when
+      // a real Shiprocket AWB is attached the courier's estimate replaces this.
+      const expectedDeliveryAt = new Date(Date.now() + 5 * 24 * 60 * 60 * 1000);
+
       const created = await rawPrisma.order.create({
         data: {
           tenantId,
@@ -179,6 +182,7 @@ websiteRouter.post('/orders', async (req, res, next) => {
           taxPaise,
           totalPaise,
           paymentMethod: body.paymentMethod,
+          expectedDeliveryAt,
           items: {
             create: body.items.map((i) => ({
               productId: i.productId,
@@ -211,7 +215,13 @@ websiteRouter.post('/orders', async (req, res, next) => {
       return { order: created };
     });
 
-    res.status(201).json({ data: { id: order.id, totalPaise: order.totalPaise } });
+    res.status(201).json({
+      data: {
+        id: order.id,
+        totalPaise: order.totalPaise,
+        expectedDeliveryAt: order.expectedDeliveryAt?.toISOString() ?? null,
+      },
+    });
   } catch (err) {
     next(err);
   }

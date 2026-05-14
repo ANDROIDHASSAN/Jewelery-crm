@@ -5,7 +5,7 @@ import type { NextFunction, Request, Response } from 'express';
 import { jwtVerify } from 'jose';
 import { UnauthorizedError } from '../lib/errors.js';
 import { env } from '../env.js';
-import { rawPrisma } from '../lib/prisma.js';
+import { resolveCanonicalTenantId } from '../lib/canonical-tenant.js';
 import type { Role } from '@goldos/shared/constants';
 
 export interface AuthUser {
@@ -23,34 +23,17 @@ declare module 'express-serve-static-core' {
 
 const accessSecret = new TextEncoder().encode(env.JWT_ACCESS_SECRET);
 
-// Cached admin tenantId — resolved on first admin request when ADMIN_TENANT_ID isn't pinned.
-// We re-validate the cached id every request, because the seed script deletes &
-// recreates the demo tenant — a stale cached id would silently 0-out queries
-// AND break writes (foreign-key violation on Lead.tenantId etc.).
-let cachedAdminTenantId: string | null = null;
-
+// Admin sentinel uses the same canonical resolver as the public storefront
+// (lib/canonical-tenant.ts) so a reservation submitted on the marketing site
+// is guaranteed to land in the same tenant the admin reads from. ADMIN_TENANT_ID
+// pin still wins for production-multi-tenant deployments.
 async function resolveAdminTenantId(): Promise<string> {
   if (env.ADMIN_TENANT_ID) return env.ADMIN_TENANT_ID;
-  if (cachedAdminTenantId) {
-    const stillExists = await rawPrisma.tenant.findUnique({
-      where: { id: cachedAdminTenantId },
-      select: { id: true },
-    });
-    if (stillExists) return cachedAdminTenantId;
-    cachedAdminTenantId = null; // fall through and re-resolve
+  try {
+    return await resolveCanonicalTenantId();
+  } catch {
+    throw new UnauthorizedError('No tenant provisioned for admin session');
   }
-  // Prefer the canonical demo tenant if present (the one the seed script owns),
-  // otherwise fall back to whichever tenant exists.
-  const seedTenant = await rawPrisma.tenant.findUnique({
-    where: { ownerEmail: 'owner@goldos.dev' },
-    select: { id: true },
-  });
-  const tenant =
-    seedTenant ??
-    (await rawPrisma.tenant.findFirst({ orderBy: { createdAt: 'desc' }, select: { id: true } }));
-  if (!tenant) throw new UnauthorizedError('No tenant provisioned for admin session');
-  cachedAdminTenantId = tenant.id;
-  return tenant.id;
 }
 
 export async function authMiddleware(req: Request, _res: Response, next: NextFunction): Promise<void> {

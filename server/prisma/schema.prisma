@@ -574,6 +574,11 @@ model Order {
   paymentMethod   String
   razorpayOrderId String?
   shiprocketAwb   String?
+  // Estimated arrival date. Server seeds with `createdAt + 5 days` on create
+  // (Shiprocket default for the Pune→PAN-India ground SLA). Admin can override
+  // from EcommerceAdminPage; once a real Shiprocket AWB is attached, the
+  // courier's estimated date should overwrite this.
+  expectedDeliveryAt DateTime?
   createdAt       DateTime    @default(now())
 
   tenant          Tenant      @relation(fields: [tenantId], references: [id], onDelete: Cascade)

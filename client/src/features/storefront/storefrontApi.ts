@@ -84,7 +84,7 @@ export const storefrontApi = baseApi.injectEndpoints({
       transformResponse: (raw: { data: never }) => raw.data,
     }),
     createPublicOrder: build.mutation<
-      { id: string; totalPaise: number },
+      { id: string; totalPaise: number; expectedDeliveryAt: string | null },
       {
         customer: { name: string; phone: string };
         items: Array<{ productId: string; qty: number }>;
@@ -92,7 +92,7 @@ export const storefrontApi = baseApi.injectEndpoints({
       }
     >({
       query: (body) => ({ url: '/website/orders', method: 'POST', body }),
-      transformResponse: (raw: { data: { id: string; totalPaise: number } }) => raw.data,
+      transformResponse: (raw: { data: { id: string; totalPaise: number; expectedDeliveryAt: string | null } }) => raw.data,
       invalidatesTags: [{ type: 'Order', id: 'LIST' }],
     }),
     // Public lead/enquiry submission. Reservations from the storefront PDP land here as Leads.
