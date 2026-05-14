@@ -139,7 +139,21 @@ websiteRouter.post('/orders', async (req, res, next) => {
     const taxPaise = Math.round((subtotalPaise * 300) / 10_000); // 3% GST
     const totalPaise = subtotalPaise + body.shippingPaise + taxPaise;
 
-    const order = await runWithTenant({ tenantId }, async () => {
+    // Build a human-readable interest string mirroring the PDP reserve modal so
+    // the Reservations tab can parse both the same way (piece · qty · total ·
+    // store · visit by).
+    const productNames = await rawPrisma.product.findMany({
+      where: { tenantId, id: { in: productIds } },
+      select: { id: true, name: true },
+    });
+    const nameById = new Map(productNames.map((p) => [p.id, p.name]));
+    const piecesLabel = body.items
+      .map((i) => `${nameById.get(i.productId) ?? 'Piece'} × ${i.qty}`)
+      .join(', ');
+    const totalLabel = `Total ₹${(totalPaise / 100).toLocaleString('en-IN')}`;
+    const interest = `RESERVE: ${piecesLabel} · ${totalLabel} · via cart checkout`.slice(0, 400);
+
+    const { order } = await runWithTenant({ tenantId }, async () => {
       // Upsert customer by phone.
       const existing = await rawPrisma.customer.findFirst({
         where: { tenantId, phone: body.customer.phone },
@@ -155,7 +169,7 @@ websiteRouter.post('/orders', async (req, res, next) => {
             },
           });
 
-      return rawPrisma.order.create({
+      const created = await rawPrisma.order.create({
         data: {
           tenantId,
           customerId: customer.id,
@@ -175,6 +189,26 @@ websiteRouter.post('/orders', async (req, res, next) => {
         },
         include: { items: true },
       });
+
+      // Also drop a Lead so the admin Reservations tab surfaces this reserve
+      // regardless of which "Reserve at store" button (PDP vs cart) was used.
+      // Failure here must NOT roll back the order — wrap in try/catch.
+      try {
+        await rawPrisma.lead.create({
+          data: {
+            tenantId,
+            source: 'store-reservation',
+            name: body.customer.name,
+            phone: body.customer.phone,
+            interest,
+            status: 'NEW',
+          },
+        });
+      } catch {
+        /* lead-mirror failure shouldn't break checkout */
+      }
+
+      return { order: created };
     });
 
     res.status(201).json({ data: { id: order.id, totalPaise: order.totalPaise } });
