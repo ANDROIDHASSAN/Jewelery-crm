@@ -11,6 +11,10 @@ export const analyticsRouter: Router = Router();
 // Heavy aggregation but cheap on small/medium tenants; cache later if needed.
 analyticsRouter.get('/summary', async (req, res, next) => {
   try {
+    // Tenant-private cache: only edge-cache when the requester is admin (no
+    // user-specific filters), and bound it short so the dashboard's 60s
+    // polling cadence is the source of truth, not the CDN.
+    res.setHeader('Cache-Control', 'private, max-age=30, stale-while-revalidate=120');
     const q = z.object({ shopId: z.string().optional() }).parse(req.query);
     const shopWhere = q.shopId ? { shopId: q.shopId } : {};
 
@@ -67,11 +71,18 @@ analyticsRouter.get('/summary', async (req, res, next) => {
       revenuePaise,
     }));
 
-    // Stock valuation — re-use the inventory math inline (avoid a second findMany).
+    // Stock valuation — reuse the rates already fetched in the Promise.all above.
+    // Previously this loop called `readGoldRatePaise` once per item (50+ items ×
+    // 2 Redis round-trips on Upstash = ~10s), which is what was timing out
+    // /analytics/summary at the 15s client deadline. Now: O(1) map lookup per
+    // item, zero Redis hits inside the loop.
+    const rateByPurity = new Map<number, number>();
+    for (const p of purities) {
+      rateByPurity.set(p.purity, p.cached?.paise ?? 642_000);
+    }
     let stockValuationPaise = 0;
     for (const it of items) {
-      const cached = await readGoldRatePaise(it.purityCaratX100);
-      const ratePerGramPaise = cached?.paise ?? 642_000;
+      const ratePerGramPaise = rateByPurity.get(it.purityCaratX100) ?? 642_000;
       stockValuationPaise += computeGoldValuePaise(it.weightMg, it.purityCaratX100, ratePerGramPaise);
     }
 
