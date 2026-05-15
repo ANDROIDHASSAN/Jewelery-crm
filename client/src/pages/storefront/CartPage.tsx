@@ -153,7 +153,7 @@ function CheckoutDialog({ open, onClose }: { open: boolean; onClose: () => void 
   const cart = useAppSelector((s) => s.shop.cart);
   const account = useAppSelector((s) => s.shop.account);
   const dispatch = useAppDispatch();
-  const { data: products } = useGetPublicProductsQuery();
+  const { data: products, refetch: refetchProducts } = useGetPublicProductsQuery();
   const [createOrder, { isLoading }] = useCreatePublicOrderMutation();
   const [name, setName] = useState(account.name);
   const [phone, setPhone] = useState(account.phone || '+91 ');
@@ -168,10 +168,17 @@ function CheckoutDialog({ open, onClose }: { open: boolean; onClose: () => void 
     const digits = phone.replace(/\D/g, '');
     const local = digits.startsWith('91') ? digits.slice(2) : digits;
     if (!/^[6-9]\d{9}$/.test(local)) return void toast.error('Please enter a valid Indian phone number');
-    if (!products || products.length === 0) return void toast.error('Catalog is still loading, try again');
+    // Refetch the catalog before mapping slugs → product IDs. The product list
+    // is cached (keepUnusedDataFor: 5 min); after a re-seed the cached IDs go
+    // stale and the server rejects them with PRODUCT_UNAVAILABLE. Pull fresh
+    // IDs at submit time so the server-side lookup always matches.
+    const fresh = await refetchProducts().unwrap().catch(() => products);
+    const liveProducts = fresh ?? products;
+    if (!liveProducts || liveProducts.length === 0) {
+      return void toast.error('Catalog is still loading, try again');
+    }
 
-    // Map cart slugs → product IDs. Skip items not in the live catalog (shouldn't happen).
-    const productIdBySlug = new Map(products.map((p) => [p.slug, p.id]));
+    const productIdBySlug = new Map(liveProducts.map((p) => [p.slug, p.id]));
     const items = cart
       .map((c) => {
         const id = productIdBySlug.get(c.slug);

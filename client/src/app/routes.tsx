@@ -12,6 +12,7 @@ import { CrmPage } from '@/pages/CrmPage';
 import { EcommerceAdminPage } from '@/pages/EcommerceAdminPage';
 import { WebsiteAdminPage } from '@/pages/WebsiteAdminPage';
 import { AnalyticsPage } from '@/pages/AnalyticsPage';
+import { SettingsPage } from '@/pages/SettingsPage';
 
 import { StorefrontHome } from '@/pages/storefront/StorefrontHome';
 import { CollectionPage } from '@/pages/storefront/CollectionPage';
@@ -82,6 +83,7 @@ const router = createBrowserRouter([
       { path: 'ecommerce', element: <EcommerceAdminPage /> },
       { path: 'website', element: <WebsiteAdminPage /> },
       { path: 'analytics', element: <AnalyticsPage /> },
+      { path: 'settings', element: <SettingsPage /> },
     ],
   },
   // Backwards-compat: old /login URL → /admin/login.
