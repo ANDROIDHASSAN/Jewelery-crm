@@ -77,16 +77,33 @@ export const prisma = rawPrisma.$extends({
               `Middleware order must be auth → tenant-scope → route, OR call runWithTenant() in workers.`,
           );
         }
+        // findUnique / findUniqueOrThrow accept ONLY unique-constraint fields
+        // in `where` — injecting `tenantId` there violates that and Prisma
+        // silently returns null (you can't satisfy a unique key with extra
+        // arbitrary filters). That made `prisma.shop.findUnique({ where: { id } })`
+        // return null → "Shop not found" → POS bills couldn't be created.
+        //
+        // The fix: don't touch the where clause for findUnique. Run the query
+        // as written, then enforce tenant isolation by checking the returned
+        // row's tenantId after the fact. Cross-tenant leak still impossible.
+        if (operation === 'findUnique' || operation === 'findUniqueOrThrow') {
+          const result = await query(args);
+          if (result && typeof result === 'object' && 'tenantId' in result && result.tenantId !== tenantId) {
+            if (operation === 'findUniqueOrThrow') {
+              throw new Error(`[prisma.tenant-extension] ${model} found but belongs to a different tenant`);
+            }
+            return null;
+          }
+          return result;
+        }
         // Read operations: inject into where
         if (
           operation === 'findFirst' ||
-          operation === 'findUnique' ||
           operation === 'findMany' ||
           operation === 'count' ||
           operation === 'aggregate' ||
           operation === 'groupBy' ||
-          operation === 'findFirstOrThrow' ||
-          operation === 'findUniqueOrThrow'
+          operation === 'findFirstOrThrow'
         ) {
           return query(injectTenantWhere(args as Record<string, unknown>, tenantId));
         }
