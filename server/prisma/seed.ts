@@ -225,24 +225,153 @@ async function main(): Promise<void> {
       }),
     ]);
 
-    const itemsData = Array.from({ length: 50 }, (_, i) => {
-      const shopId = i % 2 === 0 ? shopMain.id : shopBranch.id;
-      const sku = `DW-${String(i + 1).padStart(4, '0')}`;
-      const weightMg = 5000 + i * 250; // 5g to 17.25g
-      return {
+    // ── Real jewellery items, spread across categories ────────────────
+    // 40 named pieces with proper Unsplash images so the POS catalog
+    // looks like an actual showroom inventory rather than a SKU list.
+    // Each SKU is unique + categorised + priced from a realistic cost
+    // basis (~₹6,000/g cost on 22K which leaves room for making + GST).
+    const IMG = {
+      ring: [
+        'https://images.unsplash.com/photo-1605100804763-247f67b3557e?auto=format&fit=crop&w=900&q=80',
+        'https://images.unsplash.com/photo-1603561591411-07134e71a2a9?auto=format&fit=crop&w=900&q=80',
+        'https://images.unsplash.com/photo-1602173574767-37ac01994b2a?auto=format&fit=crop&w=900&q=80',
+      ],
+      necklace: [
+        'https://images.unsplash.com/photo-1599643477877-530eb83abc8e?auto=format&fit=crop&w=900&q=80',
+        'https://images.unsplash.com/photo-1611591437281-460bfbe1220a?auto=format&fit=crop&w=900&q=80',
+      ],
+      bangle: [
+        'https://images.unsplash.com/photo-1611591437281-460bfbe1220a?auto=format&fit=crop&w=900&q=80',
+        'https://images.unsplash.com/photo-1605100804763-247f67b3557e?auto=format&fit=crop&w=900&q=80',
+      ],
+      earring: [
+        'https://images.unsplash.com/photo-1535632066927-ab7c9ab30908?auto=format&fit=crop&w=900&q=80',
+        'https://images.unsplash.com/photo-1635767582909-345b2ee1ad4d?auto=format&fit=crop&w=900&q=80',
+      ],
+      mangalsutra: [
+        'https://images.unsplash.com/photo-1599643477877-530eb83abc8e?auto=format&fit=crop&w=900&q=80',
+      ],
+      chain: [
+        'https://images.unsplash.com/photo-1611591437281-460bfbe1220a?auto=format&fit=crop&w=900&q=80',
+      ],
+      pendant: [
+        'https://images.unsplash.com/photo-1603561591411-07134e71a2a9?auto=format&fit=crop&w=900&q=80',
+      ],
+      bridalSet: [
+        'https://images.unsplash.com/photo-1611591437281-460bfbe1220a?auto=format&fit=crop&w=1200&q=80',
+        'https://images.unsplash.com/photo-1599643477877-530eb83abc8e?auto=format&fit=crop&w=1200&q=80',
+      ],
+      diamond: [
+        'https://images.unsplash.com/photo-1605100804763-247f67b3557e?auto=format&fit=crop&w=900&q=80',
+        'https://images.unsplash.com/photo-1603561591411-07134e71a2a9?auto=format&fit=crop&w=900&q=80',
+      ],
+      silver: [
+        'https://images.unsplash.com/photo-1602173574767-37ac01994b2a?auto=format&fit=crop&w=900&q=80',
+      ],
+    };
+
+    type ItemSeed = {
+      sku: string;
+      name: string;
+      categoryId: string;
+      weightG: number;
+      purity: 2400 | 2200 | 1800 | 1400 | 0 | 925;
+      makingBps: number;
+      stoneWeightMg?: number;
+      hallmark?: 'PENDING' | 'SUBMITTED' | 'CERTIFIED' | 'EXEMPT';
+      hallmarkRef?: string;
+      images: string[];
+      shop: 'MAIN' | 'BRANCH';
+    };
+
+    const itemSeeds: ItemSeed[] = [
+      // ── Bridal (heavy, statement, 22K) ────────────────────────────────
+      { sku: 'BRD-NEC-001', name: 'Niya Bridal Haar (Kundan + Pearl)', categoryId: catBridal.id, weightG: 65.50, purity: 2200, makingBps: 1800, stoneWeightMg: 2400, hallmark: 'CERTIFIED', hallmarkRef: 'BR0001', images: IMG.bridalSet, shop: 'MAIN' },
+      { sku: 'BRD-SET-002', name: 'Isha Bridal Set (Necklace + Jhumka + Tikka)', categoryId: catBridal.id, weightG: 82.00, purity: 2200, makingBps: 1900, stoneWeightMg: 3200, hallmark: 'CERTIFIED', hallmarkRef: 'BR0002', images: IMG.bridalSet, shop: 'MAIN' },
+      { sku: 'BRD-CHK-003', name: 'Kavya Polki Choker', categoryId: catBridal.id, weightG: 38.20, purity: 2200, makingBps: 1750, stoneWeightMg: 1800, hallmark: 'CERTIFIED', hallmarkRef: 'BR0003', images: IMG.necklace, shop: 'MAIN' },
+      { sku: 'BRD-BNG-004', name: 'Mira Wedding Bangle (Pair)', categoryId: catBridal.id, weightG: 24.80, purity: 2200, makingBps: 1500, hallmark: 'CERTIFIED', hallmarkRef: 'BR0004', images: IMG.bangle, shop: 'MAIN' },
+      { sku: 'BRD-EAR-005', name: 'Aanya Bridal Jhumka', categoryId: catBridal.id, weightG: 18.60, purity: 2200, makingBps: 1600, stoneWeightMg: 600, hallmark: 'CERTIFIED', hallmarkRef: 'BR0005', images: IMG.earring, shop: 'BRANCH' },
+
+      // ── Daily Wear (light, everyday, 22K) ─────────────────────────────
+      { sku: 'DW-MNG-006', name: 'Tara Lightweight Mangalsutra', categoryId: catDaily.id, weightG: 8.10, purity: 2200, makingBps: 1100, hallmark: 'CERTIFIED', hallmarkRef: 'DW0006', images: IMG.mangalsutra, shop: 'MAIN' },
+      { sku: 'DW-CHN-007', name: 'Diya Rope Chain 18-inch', categoryId: catDaily.id, weightG: 7.40, purity: 2200, makingBps: 1050, hallmark: 'CERTIFIED', hallmarkRef: 'DW0007', images: IMG.chain, shop: 'MAIN' },
+      { sku: 'DW-STD-008', name: 'Sara Classic Studs', categoryId: catDaily.id, weightG: 2.40, purity: 2200, makingBps: 1000, hallmark: 'CERTIFIED', hallmarkRef: 'DW0008', images: IMG.earring, shop: 'MAIN' },
+      { sku: 'DW-NSP-009', name: 'Meera Single-Stone Nose Pin', categoryId: catDaily.id, weightG: 0.90, purity: 2200, makingBps: 1100, stoneWeightMg: 50, hallmark: 'CERTIFIED', hallmarkRef: 'DW0009', images: IMG.earring, shop: 'BRANCH' },
+      { sku: 'DW-RNG-010', name: 'Nisha Everyday Ring', categoryId: catDaily.id, weightG: 3.20, purity: 2200, makingBps: 1100, hallmark: 'CERTIFIED', hallmarkRef: 'DW0010', images: IMG.ring, shop: 'BRANCH' },
+      { sku: 'DW-BNG-011', name: 'Lata Plain Bangle (Single)', categoryId: catDaily.id, weightG: 9.50, purity: 2200, makingBps: 1100, hallmark: 'CERTIFIED', hallmarkRef: 'DW0011', images: IMG.bangle, shop: 'MAIN' },
+      { sku: 'DW-PND-012', name: 'Anya Mini Pendant', categoryId: catDaily.id, weightG: 2.80, purity: 2200, makingBps: 1150, hallmark: 'CERTIFIED', hallmarkRef: 'DW0012', images: IMG.pendant, shop: 'BRANCH' },
+
+      // ── Festive (mid-weight, statement-but-wearable, 22K) ─────────────
+      { sku: 'FST-JHM-013', name: 'Riya Pearl Jhumka', categoryId: catFestive.id, weightG: 5.20, purity: 2200, makingBps: 1250, stoneWeightMg: 200, hallmark: 'CERTIFIED', hallmarkRef: 'FT0013', images: IMG.earring, shop: 'MAIN' },
+      { sku: 'FST-NEC-014', name: 'Aanya Temple Haar', categoryId: catFestive.id, weightG: 28.00, purity: 2200, makingBps: 1450, hallmark: 'CERTIFIED', hallmarkRef: 'FT0014', images: IMG.necklace, shop: 'MAIN' },
+      { sku: 'FST-BNG-015', name: 'Vanya Patterned Bangle (Pair)', categoryId: catFestive.id, weightG: 22.00, purity: 2200, makingBps: 1300, hallmark: 'CERTIFIED', hallmarkRef: 'FT0015', images: IMG.bangle, shop: 'MAIN' },
+      { sku: 'FST-JHM-016', name: 'Priya Ruby-Drop Jhumka', categoryId: catFestive.id, weightG: 8.60, purity: 2200, makingBps: 1350, stoneWeightMg: 400, hallmark: 'CERTIFIED', hallmarkRef: 'FT0016', images: IMG.earring, shop: 'BRANCH' },
+      { sku: 'FST-CHN-017', name: 'Devi Festive Chain', categoryId: catFestive.id, weightG: 12.40, purity: 2200, makingBps: 1300, hallmark: 'CERTIFIED', hallmarkRef: 'FT0017', images: IMG.chain, shop: 'BRANCH' },
+      { sku: 'FST-NSP-018', name: 'Kashvi Floral Nose Ring', categoryId: catFestive.id, weightG: 1.60, purity: 2200, makingBps: 1350, stoneWeightMg: 80, hallmark: 'CERTIFIED', hallmarkRef: 'FT0018', images: IMG.earring, shop: 'MAIN' },
+      { sku: 'FST-PND-019', name: 'Saanvi Coin Pendant', categoryId: catFestive.id, weightG: 6.40, purity: 2200, makingBps: 1300, hallmark: 'CERTIFIED', hallmarkRef: 'FT0019', images: IMG.pendant, shop: 'BRANCH' },
+
+      // ── Diamond (18K, certified) ─────────────────────────────────────
+      { sku: 'DIA-RNG-020', name: 'Aarya Solitaire Ring (0.32ct)', categoryId: catDiamond.id, weightG: 4.20, purity: 1800, makingBps: 1500, stoneWeightMg: 64, hallmark: 'CERTIFIED', hallmarkRef: 'DI0020', images: IMG.diamond, shop: 'MAIN' },
+      { sku: 'DIA-BR-021', name: 'Nyra Tennis Bracelet (2.4ct)', categoryId: catDiamond.id, weightG: 9.80, purity: 1800, makingBps: 1500, stoneWeightMg: 480, hallmark: 'CERTIFIED', hallmarkRef: 'DI0021', images: IMG.bangle, shop: 'MAIN' },
+      { sku: 'DIA-RNG-022', name: 'Zara Halo Ring (0.50ct)', categoryId: catDiamond.id, weightG: 3.80, purity: 1800, makingBps: 1600, stoneWeightMg: 100, hallmark: 'CERTIFIED', hallmarkRef: 'DI0022', images: IMG.ring, shop: 'MAIN' },
+      { sku: 'DIA-STD-023', name: 'Rhea Round-Brilliant Studs (0.20ct)', categoryId: catDiamond.id, weightG: 1.90, purity: 1800, makingBps: 1400, stoneWeightMg: 40, hallmark: 'CERTIFIED', hallmarkRef: 'DI0023', images: IMG.earring, shop: 'BRANCH' },
+      { sku: 'DIA-PND-024', name: 'Inara Diamond Pendant (0.18ct)', categoryId: catDiamond.id, weightG: 2.10, purity: 1800, makingBps: 1450, stoneWeightMg: 36, hallmark: 'CERTIFIED', hallmarkRef: 'DI0024', images: IMG.diamond, shop: 'BRANCH' },
+      { sku: 'DIA-MNG-025', name: 'Aditi Diamond Mangalsutra', categoryId: catDiamond.id, weightG: 11.20, purity: 1800, makingBps: 1500, stoneWeightMg: 220, hallmark: 'CERTIFIED', hallmarkRef: 'DI0025', images: IMG.mangalsutra, shop: 'MAIN' },
+
+      // ── Silver (sterling 92.5) ────────────────────────────────────────
+      { sku: 'SL-ANK-026', name: 'Tia Silver Anklet (Pair)', categoryId: catSilver.id, weightG: 36.00, purity: 925, makingBps: 800, hallmark: 'EXEMPT', images: IMG.silver, shop: 'BRANCH' },
+      { sku: 'SL-BNG-027', name: 'Maya Oxidised Silver Bangle', categoryId: catSilver.id, weightG: 24.00, purity: 925, makingBps: 900, hallmark: 'EXEMPT', images: IMG.silver, shop: 'BRANCH' },
+      { sku: 'SL-JHM-028', name: 'Leela Silver Temple Jhumka', categoryId: catSilver.id, weightG: 12.00, purity: 925, makingBps: 900, hallmark: 'EXEMPT', images: IMG.earring, shop: 'MAIN' },
+      { sku: 'SL-CHN-029', name: 'Aria Silver Chain (20-inch)', categoryId: catSilver.id, weightG: 14.50, purity: 925, makingBps: 700, hallmark: 'EXEMPT', images: IMG.chain, shop: 'MAIN' },
+      { sku: 'SL-RNG-030', name: 'Avni Silver Adjustable Ring', categoryId: catSilver.id, weightG: 4.20, purity: 925, makingBps: 800, hallmark: 'EXEMPT', images: IMG.ring, shop: 'BRANCH' },
+
+      // ── 24K coins + 14K range under Daily Wear ────────────────────────
+      { sku: 'COIN-24K-5', name: '5 g Pure Gold Coin (Lakshmi)', categoryId: catDaily.id, weightG: 5.00, purity: 2400, makingBps: 600, hallmark: 'CERTIFIED', hallmarkRef: 'CN0031', images: IMG.diamond, shop: 'MAIN' },
+      { sku: 'COIN-24K-10', name: '10 g Pure Gold Coin (Ganesha)', categoryId: catDaily.id, weightG: 10.00, purity: 2400, makingBps: 500, hallmark: 'CERTIFIED', hallmarkRef: 'CN0032', images: IMG.diamond, shop: 'MAIN' },
+      { sku: 'DW-14K-033', name: 'Ira 14K Tennis Pendant', categoryId: catDaily.id, weightG: 3.40, purity: 1400, makingBps: 1300, stoneWeightMg: 30, hallmark: 'CERTIFIED', hallmarkRef: 'DW0033', images: IMG.pendant, shop: 'BRANCH' },
+      { sku: 'DW-14K-034', name: 'Kiara 14K Heart Ring', categoryId: catDaily.id, weightG: 2.20, purity: 1400, makingBps: 1400, hallmark: 'CERTIFIED', hallmarkRef: 'DW0034', images: IMG.ring, shop: 'BRANCH' },
+
+      // ── Branch-only spread (Karnal sees a different mix) ──────────────
+      { sku: 'FST-BNG-035', name: 'Riddhi Karva-Chauth Bangle', categoryId: catFestive.id, weightG: 16.20, purity: 2200, makingBps: 1300, hallmark: 'CERTIFIED', hallmarkRef: 'FT0035', images: IMG.bangle, shop: 'BRANCH' },
+      { sku: 'DW-EAR-036', name: 'Pari Hoop Earrings', categoryId: catDaily.id, weightG: 4.80, purity: 2200, makingBps: 1100, hallmark: 'CERTIFIED', hallmarkRef: 'DW0036', images: IMG.earring, shop: 'BRANCH' },
+      { sku: 'DW-RNG-037', name: 'Avya Stackable Ring', categoryId: catDaily.id, weightG: 2.60, purity: 2200, makingBps: 1150, hallmark: 'CERTIFIED', hallmarkRef: 'DW0037', images: IMG.ring, shop: 'BRANCH' },
+      { sku: 'FST-NEC-038', name: 'Vidya Long Layered Necklace', categoryId: catFestive.id, weightG: 32.50, purity: 2200, makingBps: 1400, hallmark: 'CERTIFIED', hallmarkRef: 'FT0038', images: IMG.necklace, shop: 'MAIN' },
+      { sku: 'BRD-EAR-039', name: 'Saira Statement Chandelier Earrings', categoryId: catBridal.id, weightG: 22.00, purity: 2200, makingBps: 1700, stoneWeightMg: 800, hallmark: 'CERTIFIED', hallmarkRef: 'BR0039', images: IMG.earring, shop: 'MAIN' },
+      { sku: 'DW-MNG-040', name: 'Suhani Lightweight Mangalsutra', categoryId: catDaily.id, weightG: 7.20, purity: 2200, makingBps: 1100, hallmark: 'CERTIFIED', hallmarkRef: 'DW0040', images: IMG.mangalsutra, shop: 'BRANCH' },
+    ];
+
+    // Cost basis: 22K = ~₹6,200/g cost (room for making + GST + margin),
+    // 24K = ~₹6,800/g, 18K = ~₹5,100/g, 14K = ~₹4,000/g, Silver = ~₹85/g.
+    function costPerGramPaise(purity: ItemSeed['purity']): number {
+      if (purity === 2400) return 6_80_000;
+      if (purity === 2200) return 6_20_000;
+      if (purity === 1800) return 5_10_000;
+      if (purity === 1400) return 4_00_000;
+      if (purity === 925) return 85_00;
+      return 6_20_000;
+    }
+
+    await tx.item.createMany({
+      data: itemSeeds.map((s) => ({
         tenantId: tenant.id,
-        shopId,
-        categoryId: category.id,
-        sku,
-        barcodeData: sku,
-        weightMg,
-        purityCaratX100: 2200,
-        hallmarkStatus: 'CERTIFIED' as const,
-        hallmarkRef: `H${String(100000 + i).slice(-6)}`,
-        costPricePaise: weightMg * 6, // ~₹60/g cost placeholder
-      };
+        shopId: s.shop === 'MAIN' ? shopMain.id : shopBranch.id,
+        categoryId: s.categoryId,
+        sku: s.sku,
+        barcodeData: s.sku,
+        name: s.name,
+        images: s.images,
+        weightMg: Math.round(s.weightG * 1000),
+        // Silver 925 doesn't fit the carat-x100 enum, so we store it as 0
+        // (the canonical "silver" marker in this codebase) and let the
+        // billing layer pick up the silver rate via purity===0.
+        purityCaratX100: s.purity === 925 ? 0 : s.purity,
+        stoneWeightMg: s.stoneWeightMg ?? null,
+        hallmarkStatus: s.hallmark ?? 'CERTIFIED',
+        hallmarkRef: s.hallmarkRef ?? null,
+        costPricePaise: Math.round(s.weightG * costPerGramPaise(s.purity)),
+        makingChargeBps: s.makingBps,
+      })),
     });
-    await tx.item.createMany({ data: itemsData });
 
     await tx.customer.createMany({
       data: [
@@ -627,7 +756,7 @@ async function main(): Promise<void> {
           reason: i === 0 ? 'Customer requested viewing at Karnal' : 'Branch rebalancing — Apr',
           createdAt: daysAgo(10 + i * 2),
         })),
-        ...allItems.slice(48, 50).map((it, i) => ({
+        ...allItems.slice(-2).map((it, i) => ({
           tenantId: tenant.id,
           itemId: it.id,
           fromShopId: it.shopId,
