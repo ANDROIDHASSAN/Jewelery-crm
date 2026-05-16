@@ -58,13 +58,24 @@ export function sumPaise(values: Paise[]): Paise {
   return s;
 }
 
-/** Compute gold value in paise: weightMg × ratePerGramPaise × (purity / 2400). Banker-rounded. */
+/**
+ * Compute metal value in paise.
+ *
+ * For gold the formula is weightMg × ratePerGramPaise × (purity / 2400).
+ * For silver — stored as purityCaratX100 === 0 in this codebase — the
+ * `ratePerGramPaise` already IS the silver rate per gram (Redis key
+ * `goldrate:0`), so we just do weight × rate, no carat-ratio scaling.
+ * Previously this returned 0 for silver, which made every silver bill
+ * line show ₹0 — visible in the POS catalog cards.
+ */
 export function computeGoldValuePaise(
   weightMg: number,
   purityCaratX100: number,
   ratePerGramPaise: Paise,
 ): Paise {
-  if (purityCaratX100 === 0) return 0; // silver / non-gold handled separately
+  if (purityCaratX100 === 0) {
+    return bankersRound((weightMg * ratePerGramPaise) / 1000);
+  }
   // weightMg / 1000 -> grams; multiply by rate then by purity fraction (purity / 2400).
   // Keep integer math: (weightMg * ratePerGramPaise * purityCaratX100) / (1000 * 2400)
   const numerator = weightMg * ratePerGramPaise * purityCaratX100;

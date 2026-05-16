@@ -114,6 +114,12 @@ function rateForPurity(
 }
 
 function computeGoldValuePaise(weightMg: number, purityCaratX100: number, ratePerGramPaise: number): number {
+  // Silver is stored as purity=0 with the silver rate already in paise/g, so
+  // we skip the carat-ratio scaling for it (otherwise 0/2400 = 0 and every
+  // silver line displays ₹0).
+  if (purityCaratX100 === 0) {
+    return Math.round((weightMg * ratePerGramPaise) / 1000);
+  }
   // weight × rate × (purity/2400) → all integer maths, paise out.
   return Math.round((weightMg * ratePerGramPaise * purityCaratX100) / (1000 * 2400));
 }
@@ -775,30 +781,42 @@ function ProductCard({
     >
       {/* Image area */}
       <div className="relative aspect-square bg-gradient-to-br from-brand-50/60 via-ink-50 to-brand-50/30">
-        {heroImage ? (
+        {/* Always render the placeholder behind — if <img> fails to load
+            we hide the broken icon and the placeholder shows through. */}
+        <div className="absolute inset-0 flex items-center justify-center text-3xl text-brand-300/60 font-display">
+          ✦
+        </div>
+        {heroImage && (
           <img
             src={heroImage}
             alt={displayName}
             loading="lazy"
             className="absolute inset-0 h-full w-full object-cover"
+            onError={(e) => {
+              // Broken Unsplash / Cloudinary URL — drop the <img> so the
+              // gold-on-cream placeholder shows instead of the browser's
+              // alt-text "broken image" glyph.
+              (e.currentTarget as HTMLImageElement).style.display = 'none';
+            }}
           />
-        ) : (
-          <div className="absolute inset-0 flex items-center justify-center text-3xl text-brand-300/60 font-display">
-            ✦
-          </div>
         )}
         <span className="absolute top-2 left-2 bg-brand-100/95 backdrop-blur text-brand-800 text-[10px] font-semibold rounded px-1.5 py-0.5">
           {purityLabel}
         </span>
-        {/* Hover-only add chip on desktop */}
-        <span className="absolute bottom-2 right-2 hidden sm:inline-flex opacity-0 group-hover:opacity-100 transition-opacity items-center gap-1 bg-brand-500 text-ink-0 text-[10px] font-medium rounded-full px-2 py-1">
+        {/* Always-visible Add chip — touch screens never see hover, and
+            even on desktop the cashier shouldn't have to fish for it.
+            More prominent on hover for desktop discoverability. */}
+        <span className="absolute bottom-2 right-2 inline-flex items-center gap-1 bg-brand-500 text-ink-0 text-[10px] font-medium rounded-full px-2 py-1 shadow-sm group-hover:bg-brand-600 transition-colors">
           <Plus className="h-3 w-3" /> Add
         </span>
       </div>
-      {/* Body */}
-      <div className="p-3 space-y-0.5">
-        <div className="text-sm font-medium text-ink-900 truncate">{displayName}</div>
-        <div className="text-[11px] text-ink-500 truncate tabular-nums">
+      {/* Body — allow 2-line names so "Niya Bridal Haar (Kundan + Pearl)"
+          doesn't truncate to a useless "Niya Bridal Haar (Kund..." */}
+      <div className="p-3 space-y-0.5 min-h-[82px] flex flex-col">
+        <div className="text-sm font-medium text-ink-900 line-clamp-2 leading-snug">
+          {displayName}
+        </div>
+        <div className="text-[11px] text-ink-500 truncate tabular-nums mt-auto">
           {item.sku} · {(item.weightMg / 1000).toFixed(2)} g
         </div>
         <div className="text-sm font-mono font-semibold text-ink-900 mt-1">
@@ -911,12 +929,9 @@ function BillAndPaymentColumn(props: BillColumnProps): JSX.Element {
 
       {/* Action row + totals */}
       {lines.length > 0 && (
-        <div className="px-4 sm:px-5 pb-3 pt-2 border-t border-ink-50 grid grid-cols-2 gap-2">
+        <div className="px-4 sm:px-5 pb-3 pt-2 border-t border-ink-50">
           <Button variant="outline" size="sm" onClick={onPark} disabled={parking} className="w-full">
-            <Hand className="h-4 w-4 mr-1.5" />{parking ? 'Parking…' : 'Park bill'}
-          </Button>
-          <Button variant="outline" size="sm" disabled className="w-full">
-            <Save className="h-4 w-4 mr-1.5" />Save as draft
+            <Hand className="h-4 w-4 mr-1.5" />{parking ? 'Parking the bill…' : 'Park this bill for now'}
           </Button>
         </div>
       )}
@@ -954,16 +969,30 @@ function BillLineRow({ line, onRemove }: { line: CartLine; onRemove: () => void 
   return (
     <div className="flex items-start gap-3 py-2.5 border-b border-ink-50 last:border-b-0">
       <div className="relative h-14 w-14 rounded-md overflow-hidden bg-gradient-to-br from-brand-50 to-ink-50 shrink-0">
-        {thumb ? (
-          <img src={thumb} alt={line.name} className="absolute inset-0 h-full w-full object-cover" loading="lazy" />
-        ) : (
-          <span className="absolute inset-0 flex items-center justify-center text-brand-300 text-lg font-display">✦</span>
+        <span className="absolute inset-0 flex items-center justify-center text-brand-300 text-lg font-display">✦</span>
+        {thumb && (
+          <img
+            src={thumb}
+            alt={line.name || line.sku || 'Product'}
+            loading="lazy"
+            className="absolute inset-0 h-full w-full object-cover"
+            onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = 'none'; }}
+          />
         )}
       </div>
       <div className="min-w-0 flex-1">
-        <div className="text-sm font-medium text-ink-900 truncate">{line.name || line.sku}</div>
-        <div className="text-[11px] text-ink-500 truncate mt-0.5">
-          {line.sku} <span className="text-ink-300">·</span> <span className="text-brand-700 font-medium">{purityLabel}</span> <span className="text-ink-300">·</span> {(line.weightMg / 1000).toFixed(2)} g <span className="text-ink-300">·</span> ₹{Math.round(line.ratePerGramPaise / 100)}/g
+        <div className="text-sm font-medium text-ink-900 line-clamp-1">{line.name || line.sku}</div>
+        {/* Two-line metadata so SKU + weight + rate don't collide with
+            the price column. */}
+        <div className="text-[11px] text-ink-500 mt-0.5 flex items-center gap-1.5 flex-wrap">
+          <span className="font-mono text-ink-600">{line.sku}</span>
+          <span className="text-ink-300">·</span>
+          <span className="text-brand-700 font-medium">{purityLabel}</span>
+          <span className="text-ink-300">·</span>
+          <span className="tabular-nums">{(line.weightMg / 1000).toFixed(2)} g</span>
+        </div>
+        <div className="text-[11px] text-ink-400 mt-0.5 tabular-nums">
+          @ ₹{Math.round(line.ratePerGramPaise / 100).toLocaleString('en-IN')}/g
         </div>
       </div>
       <div className="text-right shrink-0">
@@ -1026,8 +1055,15 @@ function PaymentTab(p: BillColumnProps): JSX.Element {
     loyaltyApply, onLoyaltyChange, exchange, onExchangeChange, customer,
   } = p;
   const due = grandTotal - paid;
+  // Two-region layout: scrollable middle (discount / exchange / payment
+  // grid / splits) and a sticky footer carrying the always-visible Pay
+  // button + paid/due indicator. Earlier the Pay button lived INSIDE the
+  // scrollable region with `max-h-[55vh]` and disappeared below the fold
+  // on common viewports — that's the "only shows on hover" report.
   return (
-    <div className="px-4 sm:px-5 py-3 space-y-3 overflow-y-auto max-h-[55vh]">
+    <div className="flex flex-col">
+      {/* Scrollable middle */}
+      <div className="px-4 sm:px-5 py-3 space-y-3 overflow-y-auto max-h-[40vh]">
       {/* Total payable hero */}
       <div className="flex items-center justify-between">
         <span className="text-xs text-ink-500 uppercase tracking-wider">Total payable</span>
@@ -1208,23 +1244,28 @@ function PaymentTab(p: BillColumnProps): JSX.Element {
         </div>
       ))}
 
-      {/* Paid + due */}
-      <div className="flex items-center justify-between text-xs">
-        <span className="text-ink-500">Paid {paid > 0 && <>· <Money paise={paid} className="font-mono" /></>}</span>
-        <span className={cn('font-mono tabular-nums', due === 0 ? 'text-success-700' : due > 0 ? 'text-danger-700' : 'text-info-700')}>
-          {due === 0 ? '✓ Settled' : due > 0 ? `Due ₹${(due / 100).toFixed(2)}` : `Change ₹${(Math.abs(due) / 100).toFixed(2)}`}
-        </span>
       </div>
 
-      <Button
-        size="lg"
-        onClick={onCharge}
-        disabled={charging || p.lines.length === 0}
-        className="w-full h-12 text-base bg-success-600 hover:bg-success-700 text-ink-0"
-      >
-        {charging ? 'Charging…' : <>Pay <Money paise={grandTotal} className="ml-1.5 font-mono font-semibold" /></>}
-      </Button>
-      <p className="text-[11px] text-ink-500 text-center">Press F9 to charge</p>
+      {/* Sticky pay footer — always visible regardless of payment-tab
+          scroll. The "Pay" button is the primary action; it cannot be
+          allowed to fall off the fold. */}
+      <div className="px-4 sm:px-5 py-3 border-t border-ink-100 bg-ink-0 space-y-2 shrink-0">
+        <div className="flex items-center justify-between text-xs">
+          <span className="text-ink-500">Paid {paid > 0 && <>· <Money paise={paid} className="font-mono" /></>}</span>
+          <span className={cn('font-mono tabular-nums', due === 0 ? 'text-success-700' : due > 0 ? 'text-danger-700' : 'text-info-700')}>
+            {due === 0 ? '✓ Settled' : due > 0 ? `Due ₹${(due / 100).toFixed(2)}` : `Change ₹${(Math.abs(due) / 100).toFixed(2)}`}
+          </span>
+        </div>
+        <Button
+          size="lg"
+          onClick={onCharge}
+          disabled={charging || p.lines.length === 0}
+          className="w-full h-12 text-base bg-success-600 hover:bg-success-700 text-ink-0"
+        >
+          {charging ? 'Charging…' : <>Pay <Money paise={grandTotal} className="ml-1.5 font-mono font-semibold" /></>}
+        </Button>
+        <p className="text-[11px] text-ink-500 text-center">Press F9 to charge</p>
+      </div>
     </div>
   );
 }

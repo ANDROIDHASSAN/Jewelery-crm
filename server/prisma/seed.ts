@@ -245,8 +245,10 @@ async function main(): Promise<void> {
         'https://images.unsplash.com/photo-1605100804763-247f67b3557e?auto=format&fit=crop&w=900&q=80',
       ],
       earring: [
-        'https://images.unsplash.com/photo-1535632066927-ab7c9ab30908?auto=format&fit=crop&w=900&q=80',
-        'https://images.unsplash.com/photo-1635767582909-345b2ee1ad4d?auto=format&fit=crop&w=900&q=80',
+        // Reuse the bangle/necklace bank — the dedicated earring photo
+        // IDs returned 404 in the live catalog. These render reliably.
+        'https://images.unsplash.com/photo-1605100804763-247f67b3557e?auto=format&fit=crop&w=900&q=80',
+        'https://images.unsplash.com/photo-1603561591411-07134e71a2a9?auto=format&fit=crop&w=900&q=80',
       ],
       mangalsutra: [
         'https://images.unsplash.com/photo-1599643477877-530eb83abc8e?auto=format&fit=crop&w=900&q=80',
