@@ -11,7 +11,8 @@ coverage/
 .turbo/
 .cache/
 .idea/
-.vscode/
+.vscode/*
+!.vscode/settings.json
 *.tsbuildinfo
 playwright-report/
 test-results/
@@ -22,7 +23,11 @@ yarn-error.log*
 
 # Repo cruft / local-only references
 * copy.md
-gold-os-complete/
+# claude/ holds tracked docs (specs, infra) AND local scratch. Track specs+infra,
+# ignore the scratch subdirs.
+claude/gold-os-complete/
+claude/ui-screens/
+claude/FIRST_PROMPT.md
 .vercel
 Thumbs.db
 

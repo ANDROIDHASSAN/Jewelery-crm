@@ -9,17 +9,17 @@ Multi-tenant SaaS for Indian jewellery businesses. 7 modules: Stock & Inventory,
 
 ## Read these specs before any non-trivial task
 
-- `specs/mission.md` — what we're building, who for, what success means
-- `specs/tech-stack.md` — exact versions; do not deviate
-- `specs/architecture.md` — monolith structure, request lifecycle
-- `specs/features.md` — full feature list per module (definition of done)
-- `specs/data-model.md` — database schema and tenant isolation rules
-- `specs/api-design.md` — REST conventions, RTK Query patterns
-- `specs/design-system.md` — colors, typography, components, the visual bar
-- `specs/design-references.md` — Tanishq for storefront, Linear for admin, what to mimic and what not to
-- `specs/gotchas.md` — jewellery domain rules + silent-breakage warnings
-- `specs/validation.md` — how each module is verified
-- `specs/phases.md` — day-by-day build plan
+- `claude/specs/mission.md` — what we're building, who for, what success means
+- `claude/specs/tech-stack.md` — exact versions; do not deviate
+- `claude/specs/architecture.md` — monolith structure, request lifecycle
+- `claude/specs/features.md` — full feature list per module (definition of done)
+- `claude/specs/data-model.md` — database schema and tenant isolation rules
+- `claude/specs/api-design.md` — REST conventions, RTK Query patterns
+- `claude/specs/design-system.md` — colors, typography, components, the visual bar
+- `claude/specs/design-references.md` — Tanishq for storefront, Linear for admin, what to mimic and what not to
+- `claude/specs/gotchas.md` — jewellery domain rules + silent-breakage warnings
+- `claude/specs/validation.md` — how each module is verified
+- `claude/specs/phases.md` — day-by-day build plan
 
 If a spec doesn't answer the question, ask before coding. Never invent domain rules.
 
@@ -59,8 +59,11 @@ gold-os/
 │   ├── schemas.ts         Zod schemas (validation rules, single source of truth)
 │   └── constants.ts       Roles, statuses, GST rates, etc.
 │
-├── specs/                 Read these first
-├── .claude/               Skills + slash commands
+├── claude/                Docs and local scratch (gitignored)
+│   ├── specs/             Source-of-truth specs — read these first
+│   ├── infra/             nginx config and other deploy bits
+│   └── …                  scratch dirs (gold-os-complete, ui-screens, FIRST_PROMPT.md)
+├── .claude/               Skills + slash commands (Claude Code config)
 └── docker-compose.yml     Postgres + Redis + Meilisearch (local dev only)
 ```
 
@@ -113,14 +116,14 @@ gold-os/
 6. **No PII in logs.** Phone, GST, address, customer name — use `redact()`.
 7. **Migrations forward-only.** Never edit a committed migration. Add new.
 8. **POS works offline.** IndexedDB queue, syncs when network returns. Web-only does not mean online-only.
-9. **Design quality is non-negotiable.** Before any UI work, read `specs/design-references.md` and `specs/design-system.md`. Generic AI-looking UI gets rejected and rebuilt.
+9. **Design quality is non-negotiable.** Before any UI work, read `claude/specs/design-references.md` and `claude/specs/design-system.md`. Generic AI-looking UI gets rejected and rebuilt.
 
 ## Workflow
 
 - Plan mode (shift+tab) for anything touching more than one file.
 - After every feature: `npm run typecheck && npm test && npm run lint` before declaring done.
-- New feature → check `specs/features.md` first. Not listed? Ask before building.
-- Domain question (making charges, hallmarking, gold loan, exchange flow) → `specs/gotchas.md`.
+- New feature → check `claude/specs/features.md` first. Not listed? Ask before building.
+- Domain question (making charges, hallmarking, gold loan, exchange flow) → `claude/specs/gotchas.md`.
 - Any UI work → load `.claude/skills/frontend-design.md` first. Mandatory.
 - Every feature ships with a test or a manual demo path. No exceptions.
 
@@ -141,8 +144,8 @@ If an MCP isn't configured but would help (e.g. Figma for design specs, Linear f
 These plugins are active in this project. Reach for them when the task fits — don't re-implement what they already do.
 
 **Build & design**
-- `frontend-design` — `/frontend-design` skill. Mandatory for any UI work. Produces distinctive, non-generic interfaces. Pair with `specs/design-references.md` and `specs/design-system.md`.
-- `ui-ux-pro-max` (from `nextlevelbuilder/ui-ux-pro-max-skill` marketplace) — design intelligence: 67 UI styles, ~160 palettes, font pairings, chart types, UX guidelines. Ships sub-skills `banner-design`, `brand`, `design-system`, `design`, `slides`, `ui-styling`, `ui-ux-pro-max`. Use to pick palette/typography/style direction before `frontend-design` builds the actual components — never let its output override `specs/design-system.md` brand tokens (Tanishq storefront, Linear admin).
+- `frontend-design` — `/frontend-design` skill. Mandatory for any UI work. Produces distinctive, non-generic interfaces. Pair with `claude/specs/design-references.md` and `claude/specs/design-system.md`.
+- `ui-ux-pro-max` (from `nextlevelbuilder/ui-ux-pro-max-skill` marketplace) — design intelligence: 67 UI styles, ~160 palettes, font pairings, chart types, UX guidelines. Ships sub-skills `banner-design`, `brand`, `design-system`, `design`, `slides`, `ui-styling`, `ui-ux-pro-max`. Use to pick palette/typography/style direction before `frontend-design` builds the actual components — never let its output override `claude/specs/design-system.md` brand tokens (Tanishq storefront, Linear admin).
 - `feature-dev` — `/feature-dev` skill + `code-architect`, `code-explorer`, `code-reviewer` agents. Use for guided feature work that spans more than one file (auth, POS flow, finance ledger, etc.).
 - `code-simplifier` — agent. Run after a feature lands to refine code for clarity without changing behavior.
 

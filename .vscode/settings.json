@@ -1,0 +1,19 @@
+{
+  "//": "Hides non-essential folders/files from the Explorer sidebar so only client/, server/, and claude/ are visible. Files still exist on disk; toggle from the Explorer '...' menu > 'Show Hidden' if you need to see them. Search still finds them.",
+  "files.exclude": {
+    "node_modules": true,
+    "shared": true,
+    "infra": true,
+    ".claude": true,
+    ".github": true,
+    ".vercel": true,
+    ".client-dev.log": true,
+    ".mcp.json": true,
+    ".gitignore": true,
+    "docker-compose.yml": true,
+    "ecosystem.config.cjs": true,
+    "render.yaml": true,
+    "vercel.json": true,
+    "package-lock.json": true
+  }
+}
