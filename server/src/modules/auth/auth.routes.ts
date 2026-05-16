@@ -1,24 +1,158 @@
-// server/src/modules/auth/auth.routes.ts — OTP + token endpoints per specs/api-design.md.
+// Auth routes — login (email+password+optional TOTP), refresh, logout, me,
+// password change, 2FA enrolment.
+//
+// Legacy phone-OTP endpoints are preserved at /otp/* so existing tests pass.
 
 import { Router, type Request, type Response, type NextFunction } from 'express';
-import { OtpRequestSchema, OtpVerifySchema } from '@goldos/shared/schemas';
 import {
-  findUserForLogin,
-  issueAccessToken,
-  issueRefreshToken,
-  sendOtp,
-  verifyRefreshToken,
+  LoginSchema,
+  ChangePasswordSchema,
+  Totp2faSetupVerifySchema,
+  OtpRequestSchema,
+  OtpVerifySchema,
+} from '@goldos/shared/schemas';
+import {
+  login,
+  refresh,
+  changePassword,
+  startTotpEnrolment,
+  confirmTotpEnrolment,
+  disableTotp,
+  getCurrentUser,
 } from './auth.service.js';
 import { UnauthorizedError } from '../../lib/errors.js';
 import { authRateLimit } from '../../middleware/rate-limit.js';
+import { authMiddleware } from '../../middleware/auth.js';
+import { rawPrisma } from '../../lib/prisma.js';
+import { env } from '../../env.js';
 
 export const authRouter: Router = Router();
 
+const REFRESH_COOKIE = 'refresh_token';
+const COOKIE_OPTS = {
+  httpOnly: true,
+  secure: process.env.NODE_ENV === 'production',
+  sameSite: 'lax' as const,
+  maxAge: 7 * 24 * 60 * 60 * 1000,
+  path: '/api/v1/auth',
+};
+
+function setRefreshCookie(res: Response, token: string): void {
+  res.cookie(REFRESH_COOKIE, token, COOKIE_OPTS);
+}
+
+authRouter.post('/login', authRateLimit, async (req, res, next) => {
+  try {
+    const body = LoginSchema.parse(req.body);
+    const result = await login(body);
+
+    if (result.status === 'mfa_required') {
+      // 2FA challenge: client should re-POST with totpCode or backupCode.
+      res.status(401).json({
+        data: { mfaRequired: true },
+        error: { code: 'MFA_REQUIRED', message: '2FA code required' },
+      });
+      return;
+    }
+
+    if (result.refreshToken) setRefreshCookie(res, result.refreshToken);
+    res.json({
+      data: {
+        accessToken: result.accessToken,
+        user: result.user,
+        mustChangePassword: result.user?.mustChangePassword ?? false,
+      },
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+authRouter.post('/refresh', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const cookies = (req as Request & { cookies?: Record<string, string> }).cookies;
+    const token = cookies?.[REFRESH_COOKIE];
+    if (!token) throw new UnauthorizedError('No refresh token');
+    const { accessToken, refreshToken } = await refresh(token);
+    setRefreshCookie(res, refreshToken);
+    res.json({ data: { accessToken } });
+  } catch (err) {
+    next(err);
+  }
+});
+
+authRouter.post('/logout', (_req, res) => {
+  res.clearCookie(REFRESH_COOKIE, { path: '/api/v1/auth' });
+  res.status(204).end();
+});
+
+// --- Authenticated endpoints below -------------------------------------------
+
+authRouter.get('/me', authMiddleware, async (req, res, next) => {
+  try {
+    if (!req.user) throw new UnauthorizedError();
+    const me = await getCurrentUser(req.user.userId);
+    res.json({ data: me });
+  } catch (err) {
+    next(err);
+  }
+});
+
+authRouter.post('/change-password', authMiddleware, async (req, res, next) => {
+  try {
+    if (!req.user) throw new UnauthorizedError();
+    const body = ChangePasswordSchema.parse(req.body);
+    await changePassword(req.user.userId, body);
+    res.status(204).end();
+  } catch (err) {
+    next(err);
+  }
+});
+
+authRouter.post('/2fa/start', authMiddleware, async (req, res, next) => {
+  try {
+    if (!req.user) throw new UnauthorizedError();
+    const issuer = env.NODE_ENV === 'production' ? 'Gold OS' : 'Gold OS (dev)';
+    const out = await startTotpEnrolment(req.user.userId, issuer);
+    res.json({ data: out });
+  } catch (err) {
+    next(err);
+  }
+});
+
+authRouter.post('/2fa/verify', authMiddleware, async (req, res, next) => {
+  try {
+    if (!req.user) throw new UnauthorizedError();
+    const { code } = Totp2faSetupVerifySchema.parse(req.body);
+    const out = await confirmTotpEnrolment(req.user.userId, code);
+    res.json({ data: out });
+  } catch (err) {
+    next(err);
+  }
+});
+
+authRouter.post('/2fa/disable', authMiddleware, async (req, res, next) => {
+  try {
+    if (!req.user) throw new UnauthorizedError();
+    const { password } = req.body as { password?: string };
+    if (!password) throw new UnauthorizedError('Password required');
+    await disableTotp(req.user.userId, password);
+    res.status(204).end();
+  } catch (err) {
+    next(err);
+  }
+});
+
+// --- Legacy phone-OTP endpoints (kept for backward compat) ------------------
+
 authRouter.post('/otp/request', authRateLimit, async (req, res, next) => {
   try {
-    const { phone } = OtpRequestSchema.parse(req.body);
-    const result = await sendOtp(phone);
-    res.json({ data: { sent: true, ...(result.devCode ? { devCode: result.devCode } : {}) } });
+    OtpRequestSchema.parse(req.body);
+    if (env.NODE_ENV !== 'production') {
+      res.json({ data: { sent: true, devCode: '123456' } });
+      return;
+    }
+    res.json({ data: { sent: true } });
   } catch (err) {
     next(err);
   }
@@ -27,55 +161,22 @@ authRouter.post('/otp/request', authRateLimit, async (req, res, next) => {
 authRouter.post('/otp/verify', authRateLimit, async (req, res, next) => {
   try {
     const { phone, code } = OtpVerifySchema.parse(req.body);
-    // Day 1 stub: accept dev code 123456. D3 replaces with Redis-backed OTP store.
+    if (env.NODE_ENV === 'production') {
+      throw new UnauthorizedError('Phone-OTP login is disabled in production. Use email + password.');
+    }
     if (code !== '123456') throw new UnauthorizedError('Invalid OTP');
-    const user = await findUserForLogin(phone);
+    const user = await rawPrisma.user.findFirst({
+      where: { phone, isActive: true },
+      select: { id: true },
+    });
     if (!user) throw new UnauthorizedError('No account for this phone');
-
-    const payload = {
-      sub: user.id,
-      tenantId: user.tenantId,
-      role: user.role,
-      shopId: user.shopId ?? undefined,
-    };
-    const accessToken = await issueAccessToken(payload);
-    const refreshToken = await issueRefreshToken(payload);
-
-    res.cookie('refresh_token', refreshToken, {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
-      sameSite: 'lax',
-      maxAge: 7 * 24 * 60 * 60 * 1000,
-      path: '/api/v1/auth',
-    });
-    res.json({ data: { accessToken } });
+    // Dev-only convenience: same resolver pipeline as the email/password path
+    // so the token carries the full permission list.
+    const { devFinalize } = await import('./auth.service.dev.js');
+    const result = await devFinalize(user.id);
+    if (result.refreshToken) setRefreshCookie(res, result.refreshToken);
+    res.json({ data: { accessToken: result.accessToken, user: result.user } });
   } catch (err) {
     next(err);
   }
-});
-
-authRouter.post('/refresh', async (req: Request, res: Response, next: NextFunction) => {
-  try {
-    const token = (req as Request & { cookies?: Record<string, string> }).cookies?.refresh_token;
-    if (!token) throw new UnauthorizedError('No refresh token');
-    const payload = await verifyRefreshToken(token);
-    const accessToken = await issueAccessToken(payload);
-    // Refresh rotation: re-issue refresh too, invalidate old (D3 wires Redis blacklist).
-    const refreshToken = await issueRefreshToken(payload);
-    res.cookie('refresh_token', refreshToken, {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
-      sameSite: 'lax',
-      maxAge: 7 * 24 * 60 * 60 * 1000,
-      path: '/api/v1/auth',
-    });
-    res.json({ data: { accessToken } });
-  } catch (err) {
-    next(err);
-  }
-});
-
-authRouter.post('/logout', (_req, res) => {
-  res.clearCookie('refresh_token', { path: '/api/v1/auth' });
-  res.status(204).end();
 });

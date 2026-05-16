@@ -39,10 +39,10 @@ export function StorefrontFooter(): JSX.Element {
     <footer className="bg-ink-50 border-t border-ink-100">
       {/* Newsletter — inline, never a popup */}
       <div className="border-b border-ink-100 bg-ink-25">
-        <div className="max-w-[1280px] mx-auto px-6 py-12 md:py-14 grid grid-cols-1 md:grid-cols-[1fr_auto] gap-6 md:gap-10 items-center">
+        <div className="max-w-[1280px] mx-auto px-4 sm:px-6 py-10 sm:py-12 md:py-14 grid grid-cols-1 md:grid-cols-[1fr_auto] gap-6 md:gap-10 items-center">
           <div className="max-w-md">
             <p className="text-eyebrow uppercase text-ink-500">Stay in the loop</p>
-            <h2 className="font-display text-[26px] md:text-[32px] leading-tight text-ink-900 mt-2">
+            <h2 className="font-display text-2xl sm:text-[26px] md:text-[32px] leading-tight text-ink-900 mt-2">
               New collections, in your inbox.
             </h2>
             <p className="mt-2 text-sm text-ink-600">Quiet, once a month. Unsubscribe anytime.</p>
@@ -61,9 +61,10 @@ export function StorefrontFooter(): JSX.Element {
             <button
               type="submit"
               disabled={subscribing}
-              className="h-12 px-5 rounded-full bg-ink-900 text-ink-0 text-sm font-medium hover:bg-ink-800 disabled:opacity-60 transition-colors inline-flex items-center gap-1.5"
+              className="h-12 px-4 sm:px-5 rounded-full bg-ink-900 text-ink-0 text-sm font-medium hover:bg-ink-800 disabled:opacity-60 transition-colors inline-flex items-center gap-1.5 shrink-0"
             >
-              {subscribing ? 'Subscribing…' : 'Subscribe'}
+              <span className="hidden sm:inline">{subscribing ? 'Subscribing…' : 'Subscribe'}</span>
+              <span className="sm:hidden">{subscribing ? '…' : 'Join'}</span>
               <ArrowRight className="h-4 w-4" />
             </button>
           </form>
@@ -71,7 +72,7 @@ export function StorefrontFooter(): JSX.Element {
       </div>
 
       {/* Main footer */}
-      <div className="max-w-[1280px] mx-auto px-6 py-14 md:py-16 grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-10">
+      <div className="max-w-[1280px] mx-auto px-4 sm:px-6 py-12 sm:py-14 md:py-16 grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-8 sm:gap-10">
         <div className="col-span-2 max-w-sm">
           <Link to="/store" className="font-display text-[22px] text-ink-900 inline-flex items-center gap-2.5">
             {brand.logo && (
@@ -129,7 +130,7 @@ export function StorefrontFooter(): JSX.Element {
 
       {/* Compliance microbar */}
       <div className="border-t border-ink-100 bg-ink-25">
-        <div className="max-w-[1280px] mx-auto px-6 py-5 text-xs text-ink-500 flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+        <div className="max-w-[1280px] mx-auto px-4 sm:px-6 py-5 text-xs text-ink-500 flex flex-col md:flex-row md:items-center md:justify-between gap-3">
           <p>© {new Date().getFullYear()} {brand.name} · BIS Hallmark #IND-916 · GSTIN 27ABCDE1234F1Z5</p>
           <div className="flex items-center gap-4">
             <Link to="/store/privacy" className="hover:text-ink-700">Privacy</Link>

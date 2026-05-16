@@ -84,26 +84,26 @@ export function AnalyticsPage(): JSX.Element {
   );
 
   return (
-    <div className="space-y-6">
-      <header className="flex items-end justify-between">
+    <div className="space-y-4 sm:space-y-6">
+      <header className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-3">
         <div>
           <p className="text-eyebrow uppercase text-ink-500">Reports & analytics</p>
-          <h1 className="font-display text-display-sm text-ink-900">Real-time</h1>
+          <h1 className="font-display text-xl sm:text-display-sm text-ink-900">Real-time</h1>
         </div>
-        <div className="inline-flex rounded-md border border-ink-200 overflow-hidden text-sm">
+        <div className="inline-flex rounded-md border border-ink-200 overflow-hidden text-xs sm:text-sm self-start sm:self-auto">
           {(['week', 'month', 'quarter'] as const).map((p) => (
             <button
               key={p}
               type="button"
               onClick={() => setPeriod(p)}
-              className={`px-4 h-9 ${period === p ? 'bg-ink-900 text-ink-0' : 'text-ink-700 hover:bg-ink-50'}`}
+              className={`px-3 sm:px-4 h-9 whitespace-nowrap ${period === p ? 'bg-ink-900 text-ink-0' : 'text-ink-700 hover:bg-ink-50'}`}
             >
               {p === 'week' ? 'Last 7 days' : p === 'month' ? 'Last 30 days' : 'Last 90 days'}
             </button>
           ))}
         </div>
       </header>
-      <section className="grid grid-cols-1 md:grid-cols-4 gap-4">
+      <section className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
         <MetricCard
           label="Revenue (today)"
           value={today ? <Money paise={today.revenuePaise} /> : todayLoading ? '…' : '—'}
@@ -131,7 +131,7 @@ export function AnalyticsPage(): JSX.Element {
           delta={{ value: `${month?.newLeads ?? 0} new leads`, direction: 'flat' }}
         />
       </section>
-      <section className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+      <section className="grid grid-cols-1 lg:grid-cols-2 gap-3 sm:gap-4">
         <ChartCard title="Sales · last 7 days" eyebrow="Trend">
           {trendData.length > 0 ? (
             <RevenueAreaChart data={trendData} height={260} />

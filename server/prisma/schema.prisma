@@ -19,13 +19,6 @@ datasource db {
 // Tenancy
 // --------------------------------------------------------------------------
 
-enum Role {
-  OWNER
-  MANAGER
-  BILLING
-  VIEWER
-}
-
 enum Plan {
   STARTER
   GROWTH
@@ -45,6 +38,7 @@ model Tenant {
 
   shops         Shop[]
   users         User[]
+  roles         Role[]
   categories    Category[]
   items         Item[]
   itemMovements ItemMovement[]
@@ -61,6 +55,16 @@ model Tenant {
   orders        Order[]
   auditLogs     AuditLog[]
   storefrontContent StorefrontContent?
+  registerSessions  RegisterSession[]
+  parkedBills       ParkedBill[]
+  estimates         Estimate[]
+  repairs           Repair[]
+  advances          Advance[]
+  cashMovements     CashMovement[]
+  vendorPayments    VendorPayment[]
+  bankAccounts      BankAccount[]
+  bankTransactions  BankTransaction[]
+  reconciliations   Reconciliation[]
 
   @@index([ownerEmail])
 }
@@ -79,27 +83,129 @@ model Shop {
   items        Item[]
   bills        Bill[]
   expenses     Expense[]
+  registerSessions RegisterSession[]
+  parkedBills      ParkedBill[]
+  estimates        Estimate[]
+  repairs          Repair[]
+  advances         Advance[]
+  cashMovements    CashMovement[]
 
   @@index([tenantId])
   @@index([tenantId, isActive])
 }
 
-model User {
-  id           String   @id @default(cuid())
-  tenantId     String
-  shopId       String?
-  name         String
-  phone        String
-  role         Role
-  passwordHash String?
-  isActive     Boolean  @default(true)
+// --------------------------------------------------------------------------
+// RBAC: Role, Permission, RolePermission, UserPermission
+// --------------------------------------------------------------------------
+
+// Roles live per-tenant. The 4 built-in role slugs (SUPER_ADMIN, ACCOUNTANT,
+// EMPLOYEE, POS_USER) are seeded for every tenant with `isSystem=true`. A
+// super-admin can create custom roles in the same table with `isSystem=false`,
+// using any free-form slug, and edit the permission set on every role
+// including the built-ins.
+//
+// Per-tenant copies of built-ins let tenants rename "Accountant" → "Munim"
+// or remove a perm from "Employee" without affecting other tenants.
+model Role {
+  id          String   @id @default(cuid())
+  tenantId    String
+  slug        String   // "SUPER_ADMIN", "ACCOUNTANT", custom "BRIDAL_DESK", etc.
+  name        String   // display label
+  description String?
+  isSystem    Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  tenant      Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  users       User[]
+  permissions RolePermission[]
+
+  @@unique([tenantId, slug])
+  @@index([tenantId])
+}
+
+// Permission catalog. Global, system-managed (seeded on app boot). Users
+// cannot create new permissions — only super admins assigning them.
+model Permission {
+  id          String   @id @default(cuid())
+  key         String   @unique   // "inventory.read"
+  module      String              // "inventory"
+  action      String              // "read"
+  description String
+
+  roles       RolePermission[]
+  userGrants  UserPermission[]
+
+  @@index([module])
+}
+
+// Many-to-many: which permissions a role carries.
+model RolePermission {
+  roleId       String
+  permissionId String
   createdAt    DateTime @default(now())
 
-  tenant       Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  shop         Shop?    @relation(fields: [shopId], references: [id])
+  role         Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permission   Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
 
+  @@id([roleId, permissionId])
+  @@index([permissionId])
+}
+
+// Per-user override on top of role grants. `granted=true` = explicit grant
+// beyond role; `granted=false` = explicit deny (overrides role grant).
+// Effective permissions = (role grants ∪ user grants) \ user denies.
+model UserPermission {
+  userId       String
+  permissionId String
+  granted      Boolean
+  reason       String?  // free-form audit note
+  createdAt    DateTime @default(now())
+
+  user         User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  permission   Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  @@id([userId, permissionId])
+  @@index([permissionId])
+}
+
+model User {
+  id                   String    @id @default(cuid())
+  tenantId             String
+  shopId               String?
+  roleId               String
+  name                 String
+  email                String
+  phone                String?
+  passwordHash         String?
+  mustChangePassword   Boolean   @default(true)
+  passwordChangedAt    DateTime?
+  totpSecret           String?
+  totpEnabled          Boolean   @default(false)
+  totpBackupCodes      String[]  @default([]) // bcrypt-hashed one-time codes
+  failedLoginAttempts  Int       @default(0)
+  lockedUntil          DateTime?
+  lastLoginAt          DateTime?
+  isActive             Boolean   @default(true)
+  createdAt            DateTime  @default(now())
+  createdByUserId      String?
+
+  tenant               Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  shop                 Shop?     @relation(fields: [shopId], references: [id])
+  role                 Role      @relation(fields: [roleId], references: [id])
+  permissionOverrides  UserPermission[]
+  registerSessions     RegisterSession[]
+  parkedBills          ParkedBill[]
+  estimates            Estimate[]
+  repairsIntake        Repair[]   @relation("RepairIntakeBy")
+  advancesCreated      Advance[]
+  cashMovements        CashMovement[]
+
+  @@unique([tenantId, email])
   @@unique([tenantId, phone])
   @@index([tenantId])
+  @@index([tenantId, roleId])
+  @@index([tenantId, shopId])
 }
 
 // --------------------------------------------------------------------------
@@ -169,6 +275,12 @@ model Item {
   categoryId        String
   sku               String
   barcodeData       String
+  // Item display name shown in POS catalog & on the printed receipt. Falls
+  // back to `sku` in legacy rows that pre-date this column.
+  name              String?
+  // Cloudinary-hosted product images. First entry is the hero shown in the
+  // catalog grid + bill thumbnails; the rest power a future image carousel.
+  images            String[]       @default([])
   weightMg          Int
   purityCaratX100   Int
   stoneWeightMg     Int?
@@ -189,6 +301,7 @@ model Item {
   @@index([tenantId])
   @@index([tenantId, shopId])
   @@index([tenantId, categoryId])
+  @@index([barcodeData])
 }
 
 model ItemMovement {
@@ -222,8 +335,34 @@ model Vendor {
 
   tenant             Tenant  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   purchaseOrders     PurchaseOrder[]
+  payments           VendorPayment[]
+  expenses           Expense[]
 
   @@index([tenantId])
+}
+
+// VendorPayment records cash going OUT to a vendor — used to drive the vendor
+// ledger (purchases - payments = outstanding). Separate from Expense so the
+// jewellery owner sees "paid Rajesh ₹2L" distinctly from "paid rent ₹40k".
+model VendorPayment {
+  id            String   @id @default(cuid())
+  tenantId      String
+  vendorId      String
+  shopId        String?
+  amountPaise   Int
+  paymentMode   PaymentMode
+  referenceId   String?
+  paidAt        DateTime
+  notes         String?
+  bankAccountId String?
+  createdAt     DateTime @default(now())
+
+  tenant        Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  vendor        Vendor       @relation(fields: [vendorId], references: [id], onDelete: Cascade)
+  bankAccount   BankAccount? @relation(fields: [bankAccountId], references: [id])
+
+  @@index([tenantId, vendorId, paidAt])
+  @@index([tenantId, paidAt])
 }
 
 model PurchaseOrder {
@@ -256,7 +395,7 @@ model PurchaseOrderItem {
 }
 
 // --------------------------------------------------------------------------
-// Sales / POS
+// Sales / POS — core billing
 // --------------------------------------------------------------------------
 
 enum PaymentMode {
@@ -266,6 +405,8 @@ enum PaymentMode {
   CHEQUE
   GOLD_EXCHANGE
   LOYALTY
+  STORE_CREDIT
+  ADVANCE
 }
 
 enum PaymentStatus {
@@ -285,6 +426,7 @@ model Customer {
   tags             String[]
   loyaltyPoints    Int       @default(0)
   totalSpendPaise  Int       @default(0)
+  storeCreditPaise Int       @default(0)
   lastVisitAt      DateTime?
   createdAt        DateTime  @default(now())
 
@@ -293,9 +435,13 @@ model Customer {
   orders           Order[]
   leads            Lead[]
   goldLoans        GoldLoan[]
+  estimates        Estimate[]
+  repairs          Repair[]
+  advances         Advance[]
 
   @@unique([tenantId, phone])
   @@index([tenantId])
+  @@index([tenantId, name])
 }
 
 model Bill {
@@ -304,6 +450,10 @@ model Bill {
   shopId              String
   billNumber          String
   customerId          String?
+  // Salesperson on the floor — feeds commission reports. Distinct from
+  // createdByUserId (cashier at the till), which we already track.
+  salespersonUserId   String?
+  registerSessionId   String?
   subtotalPaise       Int
   makingChargesPaise  Int           @default(0)
   stoneChargesPaise   Int           @default(0)
@@ -316,21 +466,28 @@ model Bill {
   paymentStatus       PaymentStatus @default(PENDING)
   idempotencyKey      String
   createdByUserId     String?
+  voidedAt            DateTime?
+  voidReason          String?
   createdAt           DateTime      @default(now())
   syncedAt            DateTime?
 
   tenant              Tenant        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   shop                Shop          @relation(fields: [shopId], references: [id])
   customer            Customer?     @relation(fields: [customerId], references: [id])
+  registerSession     RegisterSession? @relation(fields: [registerSessionId], references: [id])
   lines               BillLine[]
   payments            Payment[]
   oldGoldExchange     OldGoldExchange?
+  refunds             Refund[]
 
   @@unique([tenantId, idempotencyKey])
   @@unique([shopId, billNumber])
   @@index([tenantId])
   @@index([tenantId, shopId])
   @@index([tenantId, createdAt])
+  @@index([tenantId, customerId])
+  @@index([tenantId, salespersonUserId])
+  @@index([registerSessionId])
 }
 
 model BillLine {
@@ -374,6 +531,238 @@ model OldGoldExchange {
   bill              Bill   @relation(fields: [billId], references: [id], onDelete: Cascade)
 }
 
+// Returns / refunds against a posted bill. One bill can have multiple
+// partial refunds (e.g. one item returned today, another next week).
+model Refund {
+  id                String   @id @default(cuid())
+  billId            String
+  amountPaise       Int
+  reason            String
+  refundedAt        DateTime @default(now())
+  processedByUserId String?
+
+  bill              Bill     @relation(fields: [billId], references: [id], onDelete: Cascade)
+
+  @@index([billId])
+}
+
+// --------------------------------------------------------------------------
+// POS — register sessions (day-open / day-close), parked bills, estimates,
+// repairs, advances, cash drawer movements.
+// --------------------------------------------------------------------------
+
+enum RegisterSessionStatus {
+  OPEN
+  CLOSED
+}
+
+// One row per "till session" per cashier per shop. Opens when the cashier
+// counts the morning float, closes when they reconcile cash at end of day.
+// Bills written during the session pin to this row so day-close can compute
+// expected cash = opening + cash sales - pay-outs.
+model RegisterSession {
+  id                  String                @id @default(cuid())
+  tenantId            String
+  shopId              String
+  openedByUserId      String
+  openedAt            DateTime              @default(now())
+  openingFloatPaise   Int
+  closedAt            DateTime?
+  closedByUserId      String?
+  countedCashPaise    Int?
+  expectedCashPaise   Int?
+  variancePaise       Int?
+  notes               String?
+  status              RegisterSessionStatus @default(OPEN)
+
+  tenant              Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  shop                Shop         @relation(fields: [shopId], references: [id])
+  openedBy            User         @relation(fields: [openedByUserId], references: [id])
+  bills               Bill[]
+  cashMovements       CashMovement[]
+
+  @@index([tenantId, shopId, status])
+  @@index([tenantId, openedAt])
+}
+
+enum CashMovementType {
+  PAY_IN
+  PAY_OUT
+  OPENING_FLOAT
+  DEPOSIT
+}
+
+// Audit trail for non-bill cash drawer activity. Bill cash flows are not
+// duplicated here — derive from bills.
+model CashMovement {
+  id                  String           @id @default(cuid())
+  tenantId            String
+  shopId              String
+  registerSessionId   String?
+  type                CashMovementType
+  amountPaise         Int
+  reason              String
+  performedByUserId   String?
+  createdAt           DateTime         @default(now())
+
+  tenant              Tenant           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  shop                Shop             @relation(fields: [shopId], references: [id])
+  session             RegisterSession? @relation(fields: [registerSessionId], references: [id])
+  performedBy         User?            @relation(fields: [performedByUserId], references: [id])
+
+  @@index([tenantId, shopId, createdAt])
+  @@index([registerSessionId])
+}
+
+enum ParkedBillStatus {
+  ACTIVE
+  RESUMED
+  ABANDONED
+}
+
+// "Park this bill" — customer is browsing more, cashier needs to ring up the
+// next person at the counter.
+model ParkedBill {
+  id                  String           @id @default(cuid())
+  tenantId            String
+  shopId              String
+  parkedByUserId      String
+  customerLabel       String           // free-text: customer name or "blue saree lady"
+  customerPhone       String?
+  draft               Json             // BillCreateSchema-shaped JSON
+  status              ParkedBillStatus @default(ACTIVE)
+  resumedAt           DateTime?
+  abandonedAt         DateTime?
+  createdAt           DateTime         @default(now())
+
+  tenant              Tenant           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  shop                Shop             @relation(fields: [shopId], references: [id])
+  parkedBy            User             @relation(fields: [parkedByUserId], references: [id])
+
+  @@index([tenantId, shopId, status])
+  @@index([tenantId, createdAt])
+}
+
+enum EstimateStatus {
+  DRAFT
+  SENT
+  CONVERTED
+  EXPIRED
+}
+
+// Kachi parchi — the "thinking about it" rough quote that gold shop owners
+// hand to customers before they commit. Convert to a Bill when accepted.
+model Estimate {
+  id                  String           @id @default(cuid())
+  tenantId            String
+  shopId              String
+  estimateNumber      String
+  customerId          String?
+  customerLabel       String
+  customerPhone       String?
+  createdByUserId     String
+  // Frozen rate per purity at time of quote (denormalized JSON: { "2200": 642000 }).
+  // Gold rates fluctuate — the kachi parchi guarantees the quoted rate for
+  // the validity window.
+  ratesSnapshotJson   Json
+  lines               Json             // BillLineInput[] structure
+  subtotalPaise       Int
+  makingChargesPaise  Int
+  totalPaise          Int
+  validUntil          DateTime
+  convertedBillId     String?
+  status              EstimateStatus   @default(DRAFT)
+  createdAt           DateTime         @default(now())
+
+  tenant              Tenant           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  shop                Shop             @relation(fields: [shopId], references: [id])
+  customer            Customer?        @relation(fields: [customerId], references: [id])
+  createdBy           User             @relation(fields: [createdByUserId], references: [id])
+
+  @@unique([shopId, estimateNumber])
+  @@index([tenantId, shopId])
+  @@index([tenantId, customerId])
+  @@index([tenantId, status])
+}
+
+enum RepairStatus {
+  INTAKE
+  IN_WORKSHOP
+  READY
+  DELIVERED
+  CANCELLED
+}
+
+// Repair / job-work intake: customer drops off a piece for re-polish,
+// re-sizing, soldering. Tracks weight in/out, problem, ETA, advance taken.
+model Repair {
+  id                  String       @id @default(cuid())
+  tenantId            String
+  shopId              String
+  ticketNumber        String
+  customerId          String?
+  customerName        String
+  customerPhone       String
+  itemDescription     String
+  weightInMg          Int
+  weightOutMg         Int?
+  purityCaratX100     Int
+  problem             String
+  estimatedCostPaise  Int
+  finalCostPaise      Int?
+  advancePaise        Int          @default(0)
+  intakeUserId        String
+  promisedAt          DateTime?
+  status              RepairStatus @default(INTAKE)
+  notes               String?
+  createdAt           DateTime     @default(now())
+  updatedAt           DateTime     @updatedAt
+
+  tenant              Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  shop                Shop         @relation(fields: [shopId], references: [id])
+  customer            Customer?    @relation(fields: [customerId], references: [id])
+  intakeUser          User         @relation("RepairIntakeBy", fields: [intakeUserId], references: [id])
+
+  @@unique([shopId, ticketNumber])
+  @@index([tenantId, status])
+  @@index([tenantId, customerPhone])
+}
+
+enum AdvanceStatus {
+  ACTIVE
+  CONSUMED
+  REFUNDED
+}
+
+// Advance / booking receipt: customer pays ₹50,000 to lock today's gold
+// rate against a future bridal-set order. Consumed when the final bill is
+// generated (consumedBillId).
+model Advance {
+  id                  String        @id @default(cuid())
+  tenantId            String
+  shopId              String
+  receiptNumber       String
+  customerId          String
+  amountPaise         Int
+  lockedRatesJson     Json?
+  notes               String?
+  validUntil          DateTime?
+  status              AdvanceStatus @default(ACTIVE)
+  consumedBillId      String?
+  refundedAt          DateTime?
+  createdByUserId     String
+  createdAt           DateTime      @default(now())
+
+  tenant              Tenant        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  shop                Shop          @relation(fields: [shopId], references: [id])
+  customer            Customer      @relation(fields: [customerId], references: [id])
+  createdBy           User          @relation(fields: [createdByUserId], references: [id])
+
+  @@unique([shopId, receiptNumber])
+  @@index([tenantId, customerId])
+  @@index([tenantId, status])
+}
+
 // --------------------------------------------------------------------------
 // Finance
 // --------------------------------------------------------------------------
@@ -385,21 +774,40 @@ enum GoldLoanStatus {
   DEFAULTED
 }
 
+// Capital expenses (machinery, furniture, vehicles) are amortised; revenue
+// expenses (rent, electricity, vendor bills) hit P&L immediately. CA-friendly
+// classification surfaced in the Finance UI and Tally export.
+enum ExpenseClassification {
+  REVENUE
+  CAPITAL
+}
+
 model Expense {
-  id          String   @id @default(cuid())
-  tenantId    String
-  shopId      String
-  category    String
-  amountPaise Int
-  paidAt      DateTime
-  notes       String?
-  createdAt   DateTime @default(now())
+  id                   String                @id @default(cuid())
+  tenantId             String
+  shopId               String
+  category             String
+  amountPaise          Int
+  paidAt               DateTime
+  notes                String?
+  receiptUrl           String?
+  classification       ExpenseClassification @default(REVENUE)
+  isRecurring          Boolean               @default(false)
+  recurringIntervalDays Int?
+  paymentMode          PaymentMode?
+  vendorId             String?
+  bankAccountId        String?
+  createdAt            DateTime              @default(now())
 
   tenant      Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   shop        Shop     @relation(fields: [shopId], references: [id])
+  vendor      Vendor?  @relation(fields: [vendorId], references: [id])
+  bankAccount BankAccount? @relation(fields: [bankAccountId], references: [id])
 
   @@index([tenantId])
   @@index([tenantId, shopId, paidAt])
+  @@index([tenantId, classification, paidAt])
+  @@index([tenantId, vendorId])
 }
 
 model GoldLoan {
@@ -574,10 +982,6 @@ model Order {
   paymentMethod   String
   razorpayOrderId String?
   shiprocketAwb   String?
-  // Estimated arrival date. Server seeds with `createdAt + 5 days` on create
-  // (Shiprocket default for the Pune→PAN-India ground SLA). Admin can override
-  // from EcommerceAdminPage; once a real Shiprocket AWB is attached, the
-  // courier's estimated date should overwrite this.
   expectedDeliveryAt DateTime?
   createdAt       DateTime    @default(now())
 
@@ -603,15 +1007,7 @@ model OrderItem {
 }
 
 // --------------------------------------------------------------------------
-// Audit
-// --------------------------------------------------------------------------
-
-// --------------------------------------------------------------------------
 // Storefront content (CMS-driven public website)
-// One row per tenant. Content is a single JSON blob whose shape lives in
-// shared/schemas.ts as StorefrontContentSchema. Keeps the editorial surface
-// (hero, brand, rates, collections, story, testimonial, locations, whatsapp)
-// editable without per-section migrations during the build phase.
 // --------------------------------------------------------------------------
 
 model StorefrontContent {
@@ -623,6 +1019,10 @@ model StorefrontContent {
 
   tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 }
+
+// --------------------------------------------------------------------------
+// Audit
+// --------------------------------------------------------------------------
 
 model AuditLog {
   id          String   @id @default(cuid())
@@ -642,4 +1042,117 @@ model AuditLog {
   @@index([tenantId])
   @@index([tenantId, entityType, entityId])
   @@index([tenantId, createdAt])
+  @@index([tenantId, userId, createdAt])
+}
+
+// --------------------------------------------------------------------------
+// Daily gold/silver rate snapshot. Global (not tenant-scoped) — Indian retail
+// gold rate is a national benchmark. One row per IST calendar day; the worker
+// checks for today's row before calling GoldAPI.io so restarts and redeploys
+// cannot trigger duplicate fetches. Daily call budget stays at ~30/month.
+// --------------------------------------------------------------------------
+
+model GoldRateDaily {
+  date         DateTime @id @db.Date
+  fetchedAt    DateTime @default(now())
+  source       String   @default("goldapi.io")
+  premiumBps   Int
+  rate24KPaise Int
+  rate22KPaise Int
+  rate18KPaise Int
+  rate14KPaise Int
+  silverPaise  Int
+
+  @@index([fetchedAt])
+}
+
+// --------------------------------------------------------------------------
+// Finance — Banking & Reconciliation
+// --------------------------------------------------------------------------
+
+enum BankAccountType {
+  CURRENT
+  SAVINGS
+  OD
+  CC
+  OTHER
+}
+
+enum BankTxnDirection {
+  CREDIT
+  DEBIT
+}
+
+// One row per bank account the business operates. Future-ready for actual
+// API integrations (Razorpay X, Decentro, plaid-style aggregators); for v1
+// the bookkeeping is manual but the schema is shaped to absorb a sync feed.
+model BankAccount {
+  id               String          @id @default(cuid())
+  tenantId         String
+  nickname         String          // "HDFC current — Gurugram main"
+  bankName         String
+  accountLast4     String          // never store full account number
+  ifsc             String?
+  type             BankAccountType @default(CURRENT)
+  openingBalancePaise Int          @default(0)
+  isActive         Boolean         @default(true)
+  createdAt        DateTime        @default(now())
+
+  tenant           Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  transactions     BankTransaction[]
+  vendorPayments   VendorPayment[]
+  expenses         Expense[]
+
+  @@index([tenantId, isActive])
+}
+
+model BankTransaction {
+  id            String           @id @default(cuid())
+  tenantId      String
+  accountId     String
+  direction     BankTxnDirection
+  amountPaise   Int
+  balancePaise  Int?             // running balance after this txn, if known
+  description   String
+  referenceId   String?
+  occurredAt    DateTime
+  // Optional links so a bank credit can be tied back to a bill/expense for
+  // recon. None of these are required — manual entries leave them null.
+  billId        String?
+  expenseId     String?
+  vendorPaymentId String?
+  reconciledAt  DateTime?
+  createdAt     DateTime         @default(now())
+
+  tenant        Tenant           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  account       BankAccount      @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, accountId, occurredAt])
+  @@index([tenantId, reconciledAt])
+}
+
+// One row per shop per day per cashier — close-of-day reconciliation log.
+// Expected vs counted for cash, UPI, card. Variance > 0 = excess, < 0 = short.
+model Reconciliation {
+  id                    String   @id @default(cuid())
+  tenantId              String
+  shopId                String
+  reconciledDate        DateTime @db.Date
+  expectedCashPaise     Int      @default(0)
+  countedCashPaise      Int      @default(0)
+  expectedUpiPaise      Int      @default(0)
+  settledUpiPaise       Int      @default(0)
+  expectedCardPaise     Int      @default(0)
+  settledCardPaise      Int      @default(0)
+  varianceCashPaise     Int      @default(0)
+  varianceUpiPaise      Int      @default(0)
+  varianceCardPaise     Int      @default(0)
+  notes                 String?
+  reconciledByUserId    String?
+  createdAt             DateTime @default(now())
+
+  tenant                Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, shopId, reconciledDate])
+  @@index([tenantId, reconciledDate])
 }

@@ -499,12 +499,12 @@ export function PosPage(): JSX.Element {
   // -------------------------------------------------------------------------
 
   return (
-    <div className="-mx-4 lg:-mx-6 -my-6 h-[calc(100vh-3.5rem)] flex flex-col bg-ink-25">
+    <div className="-mx-3 sm:-mx-4 lg:-mx-6 -my-4 sm:-my-6 min-h-[calc(100vh-3.5rem)] flex flex-col bg-ink-25">
       <RateStrip rates={rates} stale={rateStale} onRefresh={() => void refetchRates()} />
 
-      <div className="flex-1 grid grid-cols-1 lg:grid-cols-[300px_1fr_320px] min-h-0">
+      <div className="flex-1 grid grid-cols-1 md:grid-cols-[260px_1fr] lg:grid-cols-[300px_1fr_320px] min-h-0">
         {/* Cart pane ----------------------------------------------------- */}
-        <section className="lg:border-r border-ink-100 bg-ink-0 flex flex-col min-h-0">
+        <section className="md:border-r border-ink-100 bg-ink-0 flex flex-col min-h-0">
           <header className="px-4 h-12 border-b border-ink-100 flex items-center justify-between shrink-0">
             <div className="flex items-center gap-2">
               <span className="text-eyebrow uppercase text-ink-500">Bill</span>
@@ -567,12 +567,12 @@ export function PosPage(): JSX.Element {
 
         {/* Search / scan pane ------------------------------------------- */}
         <section className="flex flex-col min-h-0">
-          <header className="h-12 px-4 border-b border-ink-100 flex items-center gap-2 bg-ink-0 shrink-0">
-            <Search className="h-4 w-4 text-ink-400" />
+          <header className="h-12 px-3 sm:px-4 border-b border-ink-100 flex items-center gap-2 bg-ink-0 shrink-0">
+            <Search className="h-4 w-4 text-ink-400 shrink-0" />
             <Input
               id="pos-search"
               placeholder="SKU, barcode, or name… (F2)"
-              className="border-0 focus:ring-0 h-9"
+              className="border-0 focus:ring-0 h-9 min-w-0"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               autoFocus
@@ -580,20 +580,20 @@ export function PosPage(): JSX.Element {
             <Button
               variant="secondary"
               size="md"
-              className="h-10 px-4"
+              className="h-10 px-3 sm:px-4 shrink-0"
               onClick={() => {
                 document.getElementById('pos-search')?.focus();
                 toast.message('Scanner ready', { description: 'Scan the barcode now.' });
               }}
             >
               <ScanLine className="h-4 w-4" />
-              Scan
+              <span className="hidden sm:inline">Scan</span>
             </Button>
             {shops.length > 1 && (
               <select
                 value={shopId}
                 onChange={(e) => setShopId(e.target.value)}
-                className="h-10 text-sm border border-ink-200 rounded-md px-2 bg-ink-0"
+                className="h-10 text-sm border border-ink-200 rounded-md px-2 bg-ink-0 shrink-0 max-w-[120px]"
               >
                 {shops.map((s) => (
                   <option key={s.id} value={s.id}>{s.name}</option>
@@ -601,7 +601,7 @@ export function PosPage(): JSX.Element {
               </select>
             )}
           </header>
-          <div className="flex-1 grid grid-cols-2 md:grid-cols-3 gap-3 p-4 overflow-y-auto">
+          <div className="flex-1 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-3 xl:grid-cols-4 gap-3 p-3 sm:p-4 overflow-y-auto">
             {itemsLoading && <p className="col-span-full text-sm text-ink-500">Loading items…</p>}
             {!itemsLoading && filtered.length === 0 && (
               <p className="col-span-full text-sm text-ink-500">
@@ -627,7 +627,7 @@ export function PosPage(): JSX.Element {
         </section>
 
         {/* Customer / payment pane -------------------------------------- */}
-        <section className="lg:border-l border-ink-100 bg-ink-0 flex flex-col min-h-0">
+        <section className="md:col-span-2 lg:col-span-1 lg:border-l border-ink-100 bg-ink-0 flex flex-col min-h-0">
           <header className="px-4 h-12 border-b border-ink-100 flex items-center justify-between shrink-0">
             <span className="text-eyebrow uppercase text-ink-500">Customer</span>
             {customer && (
@@ -746,18 +746,18 @@ function RateStrip({
     paise && paise > 0 ? `₹${(paise / 100).toLocaleString('en-IN', { maximumFractionDigits: 0 })}/g` : '—';
   return (
     <div className={cn(
-      'h-10 px-4 border-b flex items-center justify-between text-xs shrink-0',
+      'h-10 px-3 sm:px-4 border-b flex items-center justify-between text-xs shrink-0 overflow-x-auto',
       stale ? 'bg-warning-50 border-warning-200 text-warning-800' : 'bg-ink-900 border-ink-900 text-ink-0',
     )}>
-      <div className="flex items-center gap-4 font-mono tabular-nums">
+      <div className="flex items-center gap-2 sm:gap-4 font-mono tabular-nums whitespace-nowrap">
         <span>22K <strong className={stale ? 'text-warning-800' : 'text-brand-300'}>{fmt(g22?.ratePerGramPaise)}</strong></span>
         <span className={stale ? 'opacity-70' : 'text-ink-300'}>·</span>
         <span>18K {fmt(g18?.ratePerGramPaise)}</span>
         <span className={stale ? 'opacity-70' : 'text-ink-300'}>·</span>
         <span>Silver {fmt(silver?.ratePerGramPaise)}</span>
       </div>
-      <div className="flex items-center gap-3">
-        {stale && <span className="inline-flex items-center gap-1.5"><span className="h-1.5 w-1.5 rounded-full bg-warning-500 animate-pulse" /> Rate is stale — refresh before billing</span>}
+      <div className="flex items-center gap-2 sm:gap-3 whitespace-nowrap shrink-0 pl-3">
+        {stale && <span className="hidden md:inline-flex items-center gap-1.5"><span className="h-1.5 w-1.5 rounded-full bg-warning-500 animate-pulse" /> Rate is stale — refresh before billing</span>}
         <button
           type="button"
           onClick={onRefresh}

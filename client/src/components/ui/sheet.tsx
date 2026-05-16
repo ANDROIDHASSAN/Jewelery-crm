@@ -34,10 +34,10 @@ export const SheetContent = React.forwardRef<
     <DialogPrimitive.Content
       ref={ref}
       className={cn(
-        'fixed z-50 bg-ink-0 border-ink-100 transition ease-out',
+        'fixed z-50 bg-ink-0 border-ink-100 transition ease-out overflow-y-auto',
         side === 'right'
-          ? 'inset-y-0 right-0 h-full w-3/4 max-w-md border-l data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:slide-out-to-right data-[state=open]:slide-in-from-right'
-          : 'inset-y-0 left-0 h-full w-3/4 max-w-md border-r data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:slide-out-to-left data-[state=open]:slide-in-from-left',
+          ? 'inset-y-0 right-0 h-full w-full sm:w-3/4 max-w-md border-l data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:slide-out-to-right data-[state=open]:slide-in-from-right'
+          : 'inset-y-0 left-0 h-full w-full sm:w-3/4 max-w-md border-r data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:slide-out-to-left data-[state=open]:slide-in-from-left',
         className,
       )}
       {...props}
@@ -53,7 +53,7 @@ export const SheetContent = React.forwardRef<
 SheetContent.displayName = 'SheetContent';
 
 export const SheetHeader = ({ className, ...props }: React.HTMLAttributes<HTMLDivElement>): JSX.Element => (
-  <div className={cn('px-6 py-5 border-b border-ink-100', className)} {...props} />
+  <div className={cn('px-4 sm:px-6 py-4 sm:py-5 border-b border-ink-100', className)} {...props} />
 );
 export const SheetTitle = React.forwardRef<
   React.ElementRef<typeof DialogPrimitive.Title>,
@@ -67,5 +67,5 @@ export const SheetTitle = React.forwardRef<
 ));
 SheetTitle.displayName = 'SheetTitle';
 export const SheetBody = ({ className, ...props }: React.HTMLAttributes<HTMLDivElement>): JSX.Element => (
-  <div className={cn('px-6 py-5', className)} {...props} />
+  <div className={cn('px-4 sm:px-6 py-4 sm:py-5', className)} {...props} />
 );

@@ -4,6 +4,17 @@
 
 import { rawPrisma as prisma } from '../src/lib/prisma.js';
 import { redis } from '../src/lib/redis.js';
+import { hashPassword } from '../src/modules/auth/password.js';
+import { PERMISSIONS, ROLE_DEFAULT_PERMISSIONS } from '@goldos/shared/constants';
+
+// Demo accounts the dev login page uses out of the box. Print these in the
+// final boot banner so the operator can copy them.
+const DEMO_ACCOUNTS = [
+  { email: 'owner@goldos.dev', password: 'Owner@2026demo', role: 'SUPER_ADMIN', name: 'Anant K.', phone: '+919876543210' },
+  { email: 'accountant@goldos.dev', password: 'Account@2026', role: 'ACCOUNTANT', name: 'Priya M.', phone: '+919811112222' },
+  { email: 'employee@goldos.dev', password: 'Staff@2026demo', role: 'EMPLOYEE', name: 'Ravi S.', phone: '+919811113333' },
+  { email: 'cashier@goldos.dev', password: 'Cashier@2026', role: 'POS_USER', name: 'Neha T.', phone: '+919811114444' },
+] as const;
 
 async function main(): Promise<void> {
   // Long timeout because the seed touches many tables; Neon's default 5s
@@ -26,7 +37,31 @@ async function main(): Promise<void> {
       // with FK violations. Manually clean them in dependency order first.
       await tx.orderItem.deleteMany({ where: { order: { tenantId: existing.id } } });
       await tx.billLine.deleteMany({ where: { bill: { tenantId: existing.id } } });
+      await tx.refund.deleteMany({ where: { bill: { tenantId: existing.id } } });
       await tx.itemMovement.deleteMany({ where: { tenantId: existing.id } });
+      // POS shop-owner rows.
+      await tx.cashMovement.deleteMany({ where: { tenantId: existing.id } });
+      await tx.parkedBill.deleteMany({ where: { tenantId: existing.id } });
+      await tx.estimate.deleteMany({ where: { tenantId: existing.id } });
+      await tx.repair.deleteMany({ where: { tenantId: existing.id } });
+      await tx.advance.deleteMany({ where: { tenantId: existing.id } });
+      await tx.registerSession.deleteMany({ where: { tenantId: existing.id } });
+      // Finance v2 — order matters because BankTransaction FK to BankAccount.
+      await tx.bankTransaction.deleteMany({ where: { tenantId: existing.id } });
+      await tx.vendorPayment.deleteMany({ where: { tenantId: existing.id } });
+      await tx.reconciliation.deleteMany({ where: { tenantId: existing.id } });
+      await tx.bankAccount.deleteMany({ where: { tenantId: existing.id } });
+      // Payroll + GoldLoan: tenant cascade covers both, but their FKs to User
+      // (RESTRICT) can fight us when we delete users below — clear first.
+      await tx.payroll.deleteMany({ where: { tenantId: existing.id } });
+      await tx.goldLoanRepayment.deleteMany({ where: { loan: { tenantId: existing.id } } });
+      await tx.goldLoan.deleteMany({ where: { tenantId: existing.id } });
+      // RBAC rows. UserPermission cascades from User; clear roles after users
+      // are gone so User.roleId RESTRICT doesn't fight us.
+      await tx.userPermission.deleteMany({ where: { user: { tenantId: existing.id } } });
+      await tx.user.deleteMany({ where: { tenantId: existing.id } });
+      await tx.rolePermission.deleteMany({ where: { role: { tenantId: existing.id } } });
+      await tx.role.deleteMany({ where: { tenantId: existing.id } });
       await tx.tenant.delete({ where: { id: existing.id } });
     }
 
@@ -62,13 +97,67 @@ async function main(): Promise<void> {
       }),
     ]);
 
+    // ── RBAC seed ────────────────────────────────────────────────────────
+    // Permission catalog is global. Use upsert-by-key so this seed is
+    // idempotent when re-run on a fresh DB.
+    for (const p of PERMISSIONS) {
+      await tx.permission.upsert({
+        where: { key: p.key },
+        update: { module: p.module, action: p.action, description: p.description },
+        create: { key: p.key, module: p.module, action: p.action, description: p.description },
+      });
+    }
+    const allPerms = await tx.permission.findMany({ select: { id: true, key: true } });
+    const permIdByKey = new Map(allPerms.map((p) => [p.key, p.id] as const));
+
+    // Roles per tenant (system roles).
+    type RoleSlug = 'SUPER_ADMIN' | 'ACCOUNTANT' | 'EMPLOYEE' | 'POS_USER';
+    const ROLE_DEFS: Array<{ slug: RoleSlug; name: string; description: string }> = [
+      { slug: 'SUPER_ADMIN', name: 'Super Admin', description: 'Full access across every module.' },
+      { slug: 'ACCOUNTANT', name: 'Accountant', description: 'Stock, finance, accounting, and reports.' },
+      { slug: 'EMPLOYEE', name: 'Employee', description: 'Stock, e-commerce, leads, and reports.' },
+      { slug: 'POS_USER', name: 'POS Cashier', description: 'Offline POS subdomain only.' },
+    ];
+
+    const roleBySlug = new Map<RoleSlug, string>();
+    for (const def of ROLE_DEFS) {
+      const role = await tx.role.create({
+        data: {
+          tenantId: tenant.id,
+          slug: def.slug,
+          name: def.name,
+          description: def.description,
+          isSystem: true,
+        },
+      });
+      roleBySlug.set(def.slug, role.id);
+      const keys = def.slug === 'SUPER_ADMIN'
+        ? allPerms.map((p) => p.key)
+        : ROLE_DEFAULT_PERMISSIONS[def.slug];
+      await tx.rolePermission.createMany({
+        data: keys
+          .map((k) => permIdByKey.get(k))
+          .filter((id): id is string => id !== undefined)
+          .map((permissionId) => ({ roleId: role.id, permissionId })),
+        skipDuplicates: true,
+      });
+    }
+
+    // Users — email + password (argon2id), one per demo role.
+    // Pre-hash with bcrypt's cousin so the login flow works out-of-the-box.
+    const hashes = await Promise.all(DEMO_ACCOUNTS.map((a) => hashPassword(a.password)));
     await tx.user.createMany({
-      data: [
-        { tenantId: tenant.id, name: 'Anant K.', phone: '+919876543210', role: 'OWNER' },
-        { tenantId: tenant.id, shopId: shopMain.id, name: 'Priya M.', phone: '+919811112222', role: 'MANAGER' },
-        { tenantId: tenant.id, shopId: shopMain.id, name: 'Ravi S.', phone: '+919811113333', role: 'BILLING' },
-        { tenantId: tenant.id, shopId: shopBranch.id, name: 'Neha T.', phone: '+919811114444', role: 'BILLING' },
-      ],
+      data: DEMO_ACCOUNTS.map((a, i) => ({
+        tenantId: tenant.id,
+        shopId: a.role === 'POS_USER' ? shopBranch.id : a.role === 'EMPLOYEE' ? shopMain.id : null,
+        name: a.name,
+        email: a.email,
+        phone: a.phone,
+        roleId: roleBySlug.get(a.role as RoleSlug)!,
+        passwordHash: hashes[i]!,
+        mustChangePassword: false,
+        passwordChangedAt: new Date(),
+      })),
     });
 
     // Re-fetch the cashier users so we can attribute seeded bills to them —
@@ -76,7 +165,7 @@ async function main(): Promise<void> {
     // IS NULL, so without this the leaderboard would render empty even on a
     // freshly-seeded DB.
     const cashiers = await tx.user.findMany({
-      where: { tenantId: tenant.id, role: 'BILLING' },
+      where: { tenantId: tenant.id, roleId: roleBySlug.get('POS_USER')! },
       select: { id: true, shopId: true },
     });
 
@@ -193,16 +282,81 @@ async function main(): Promise<void> {
     const daysAgo = (n: number): Date => new Date(today.getTime() - n * 86_400_000);
     await tx.expense.createMany({
       data: [
-        { tenantId: tenant.id, shopId: shopMain.id,   category: 'Rent',       amountPaise: 8_500_000, paidAt: daysAgo(28), notes: 'May rent — Main' },
-        { tenantId: tenant.id, shopId: shopMain.id,   category: 'Salaries',   amountPaise: 24_000_000, paidAt: daysAgo(2),  notes: 'Staff payroll — Apr' },
-        { tenantId: tenant.id, shopId: shopMain.id,   category: 'Electricity',amountPaise: 1_840_000, paidAt: daysAgo(14), notes: 'Apr bill' },
-        { tenantId: tenant.id, shopId: shopMain.id,   category: 'Marketing',  amountPaise: 4_500_000, paidAt: daysAgo(9),  notes: 'Bridal edit IG ads' },
-        { tenantId: tenant.id, shopId: shopBranch.id, category: 'Rent',       amountPaise: 4_200_000, paidAt: daysAgo(28), notes: 'May rent — Karnal' },
-        { tenantId: tenant.id, shopId: shopBranch.id, category: 'Salaries',   amountPaise: 9_500_000, paidAt: daysAgo(2),  notes: 'Staff payroll — Apr' },
-        { tenantId: tenant.id, shopId: shopBranch.id, category: 'Repairs',    amountPaise: 720_000,   paidAt: daysAgo(5),  notes: 'Showcase glass replacement' },
-        { tenantId: tenant.id, shopId: shopMain.id,   category: 'Insurance',  amountPaise: 6_300_000, paidAt: daysAgo(18), notes: 'Quarterly premium' },
+        // Current month-to-date (so the dashboard MTD tiles aren't empty).
+        { tenantId: tenant.id, shopId: shopMain.id,   category: 'Rent',          amountPaise: 8_500_000,  paidAt: daysAgo(2),  notes: 'May rent — Main',     classification: 'REVENUE', paymentMode: 'UPI', isRecurring: true, recurringIntervalDays: 30 },
+        { tenantId: tenant.id, shopId: shopMain.id,   category: 'Salaries',      amountPaise: 24_000_000, paidAt: daysAgo(2),  notes: 'Staff payroll — May', classification: 'REVENUE', paymentMode: 'CASH' },
+        { tenantId: tenant.id, shopId: shopMain.id,   category: 'Electricity',   amountPaise: 1_840_000,  paidAt: daysAgo(8),  notes: 'May bill',            classification: 'REVENUE', paymentMode: 'UPI' },
+        { tenantId: tenant.id, shopId: shopMain.id,   category: 'Marketing',     amountPaise: 4_500_000,  paidAt: daysAgo(5),  notes: 'Bridal edit IG ads',  classification: 'REVENUE', paymentMode: 'CARD' },
+        { tenantId: tenant.id, shopId: shopBranch.id, category: 'Rent',          amountPaise: 4_200_000,  paidAt: daysAgo(2),  notes: 'May rent — Karnal',   classification: 'REVENUE', paymentMode: 'UPI', isRecurring: true, recurringIntervalDays: 30 },
+        { tenantId: tenant.id, shopId: shopBranch.id, category: 'Salaries',      amountPaise: 9_500_000,  paidAt: daysAgo(2),  notes: 'Staff payroll — May', classification: 'REVENUE', paymentMode: 'CASH' },
+        { tenantId: tenant.id, shopId: shopBranch.id, category: 'Repairs',       amountPaise: 720_000,    paidAt: daysAgo(5),  notes: 'Showcase glass repl.',classification: 'REVENUE', paymentMode: 'CASH' },
+        { tenantId: tenant.id, shopId: shopMain.id,   category: 'Insurance',     amountPaise: 6_300_000,  paidAt: daysAgo(11), notes: 'Quarterly premium',   classification: 'REVENUE', paymentMode: 'CHEQUE' },
+        // Capital expense — surfaces the capital vs revenue split on P&L.
+        { tenantId: tenant.id, shopId: shopMain.id,   category: 'Furniture',     amountPaise: 18_500_000, paidAt: daysAgo(9),  notes: 'New display case',    classification: 'CAPITAL', paymentMode: 'CARD' },
+        // Earlier months — feeds the 6-month trend.
+        { tenantId: tenant.id, shopId: shopMain.id,   category: 'Rent',          amountPaise: 8_500_000,  paidAt: daysAgo(35), notes: 'Apr rent — Main',     classification: 'REVENUE', paymentMode: 'UPI' },
+        { tenantId: tenant.id, shopId: shopMain.id,   category: 'Rent',          amountPaise: 8_500_000,  paidAt: daysAgo(65), notes: 'Mar rent — Main',     classification: 'REVENUE', paymentMode: 'UPI' },
+        { tenantId: tenant.id, shopId: shopBranch.id, category: 'Rent',          amountPaise: 4_200_000,  paidAt: daysAgo(35), notes: 'Apr rent — Karnal',   classification: 'REVENUE', paymentMode: 'UPI' },
+        { tenantId: tenant.id, shopId: shopBranch.id, category: 'Rent',          amountPaise: 4_200_000,  paidAt: daysAgo(65), notes: 'Mar rent — Karnal',   classification: 'REVENUE', paymentMode: 'UPI' },
       ],
     });
+
+    // ── FINANCE: bank accounts ───────────────────────────────────────────
+    const [bankHdfc, bankIcici] = await Promise.all([
+      tx.bankAccount.create({
+        data: {
+          tenantId: tenant.id,
+          nickname: 'HDFC current — Gurugram main',
+          bankName: 'HDFC Bank',
+          accountLast4: '4521',
+          ifsc: 'HDFC0001234',
+          type: 'CURRENT',
+          openingBalancePaise: 25_00_000_00,
+        },
+      }),
+      tx.bankAccount.create({
+        data: {
+          tenantId: tenant.id,
+          nickname: 'ICICI current — Karnal branch',
+          bankName: 'ICICI Bank',
+          accountLast4: '8801',
+          ifsc: 'ICIC0009876',
+          type: 'CURRENT',
+          openingBalancePaise: 12_00_000_00,
+        },
+      }),
+    ]);
+
+    // Bank transactions — a mix of credits (deposits) and debits (transfers
+    // out) so the bank tab has running history.
+    await tx.bankTransaction.createMany({
+      data: [
+        { tenantId: tenant.id, accountId: bankHdfc.id, direction: 'CREDIT', amountPaise: 5_45_000_00, description: 'POS settlement — Razorpay', referenceId: 'RZP_8821', occurredAt: daysAgo(7) },
+        { tenantId: tenant.id, accountId: bankHdfc.id, direction: 'CREDIT', amountPaise: 2_40_000_00, description: 'POS settlement — Razorpay', referenceId: 'RZP_8923', occurredAt: daysAgo(4) },
+        { tenantId: tenant.id, accountId: bankHdfc.id, direction: 'DEBIT',  amountPaise: 24_00_000_0,  description: 'Payroll transfer',          referenceId: 'PAYR_MAY',  occurredAt: daysAgo(2) },
+        { tenantId: tenant.id, accountId: bankHdfc.id, direction: 'DEBIT',  amountPaise: 8_50_000_0,   description: 'Rent — Main showroom',      referenceId: 'RENT_MAY',  occurredAt: daysAgo(2) },
+        { tenantId: tenant.id, accountId: bankIcici.id, direction: 'CREDIT', amountPaise: 1_80_000_00, description: 'POS settlement — Karnal',   referenceId: 'RZP_9011', occurredAt: daysAgo(6) },
+        { tenantId: tenant.id, accountId: bankIcici.id, direction: 'DEBIT',  amountPaise: 9_50_000_0,  description: 'Karnal payroll',            referenceId: 'PAYR_KARNAL', occurredAt: daysAgo(2) },
+      ],
+    });
+
+    // ── FINANCE: vendor payments — moves outstanding visibly ─────────────
+    // Bump vendor outstandings first so payments have somewhere to land.
+    await tx.vendor.update({ where: { id: vendorSurat.id },  data: { outstandingPaise: 45_00_000_00 } });
+    await tx.vendor.update({ where: { id: vendorMumbai.id }, data: { outstandingPaise: 22_50_000_00 } });
+    await tx.vendor.update({ where: { id: vendorJaipur.id }, data: { outstandingPaise: 8_75_000_00 } });
+    await tx.vendorPayment.createMany({
+      data: [
+        { tenantId: tenant.id, vendorId: vendorSurat.id,  shopId: shopMain.id,   amountPaise: 15_00_000_00, paymentMode: 'UPI',    referenceId: 'UPI/8821',  paidAt: daysAgo(6),  notes: 'Partial against Surat PO',    bankAccountId: bankHdfc.id },
+        { tenantId: tenant.id, vendorId: vendorSurat.id,  shopId: shopMain.id,   amountPaise: 5_00_000_00,  paymentMode: 'CHEQUE', referenceId: 'CHQ/40021', paidAt: daysAgo(12), notes: 'Cheque #40021',               bankAccountId: bankHdfc.id },
+        { tenantId: tenant.id, vendorId: vendorMumbai.id, shopId: shopMain.id,   amountPaise: 8_00_000_00,  paymentMode: 'UPI',    referenceId: 'UPI/9012',  paidAt: daysAgo(4),  notes: 'Zaveri Bazaar settlement',    bankAccountId: bankHdfc.id },
+        { tenantId: tenant.id, vendorId: vendorJaipur.id, shopId: shopBranch.id, amountPaise: 2_50_000_00,  paymentMode: 'UPI',    referenceId: 'UPI/9233',  paidAt: daysAgo(9),  notes: 'Jaipur partial',              bankAccountId: bankIcici.id },
+      ],
+    });
+    // Decrement vendor outstandings to reflect the payments above.
+    await tx.vendor.update({ where: { id: vendorSurat.id },  data: { outstandingPaise: 45_00_000_00 - 20_00_000_00 } });
+    await tx.vendor.update({ where: { id: vendorMumbai.id }, data: { outstandingPaise: 22_50_000_00 - 8_00_000_00 } });
+    await tx.vendor.update({ where: { id: vendorJaipur.id }, data: { outstandingPaise: 8_75_000_00 - 2_50_000_00 } });
 
     // Bills — sample sales across last 30 days so Dashboard + Analytics have signal.
     const sampleBills = [
@@ -526,6 +680,172 @@ async function main(): Promise<void> {
       }
     }
 
+    // ── FINANCE: gold loans + repayments ───────────────────────────────
+    // Pick 3 customers from the freshly-seeded list. customerIds was
+    // captured earlier when we wrote bills.
+    const goldLoanCustomers = customerIds.slice(0, 3);
+    if (goldLoanCustomers.length === 3) {
+      const [loanActive, loanPartial, loanClosed] = await Promise.all([
+        tx.goldLoan.create({
+          data: {
+            tenantId: tenant.id,
+            customerId: goldLoanCustomers[0]!.id,
+            principalPaise: 1_50_000_00,
+            interestRateBps: 200,
+            pledgedWeightMg: 22_500,
+            dueAt: new Date(today.getTime() + 90 * 86_400_000),
+            status: 'ACTIVE',
+          },
+        }),
+        tx.goldLoan.create({
+          data: {
+            tenantId: tenant.id,
+            customerId: goldLoanCustomers[1]!.id,
+            principalPaise: 2_50_000_00,
+            interestRateBps: 175,
+            pledgedWeightMg: 38_000,
+            dueAt: new Date(today.getTime() + 30 * 86_400_000),
+            status: 'PARTIALLY_REPAID',
+          },
+        }),
+        tx.goldLoan.create({
+          data: {
+            tenantId: tenant.id,
+            customerId: goldLoanCustomers[2]!.id,
+            principalPaise: 80_000_00,
+            interestRateBps: 200,
+            pledgedWeightMg: 12_000,
+            dueAt: new Date(today.getTime() - 5 * 86_400_000),
+            status: 'CLOSED',
+          },
+        }),
+      ]);
+      await tx.goldLoanRepayment.createMany({
+        data: [
+          { loanId: loanPartial.id, amountPaise: 1_00_000_00, paidAt: daysAgo(20) },
+          { loanId: loanClosed.id,  amountPaise: 80_000_00,   paidAt: daysAgo(10) },
+        ],
+      });
+    }
+
+    // ── FINANCE: payroll register for current + previous month ─────────
+    const allStaff = await tx.user.findMany({ where: { tenantId: tenant.id }, select: { id: true } });
+    const fmtMonth = (d: Date): string =>
+      `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}`;
+    const thisMonth = fmtMonth(today);
+    const lastMonth = fmtMonth(new Date(today.getUTCFullYear(), today.getUTCMonth() - 1, 1));
+    if (allStaff.length > 0) {
+      const payrollRows = allStaff.flatMap((u) => [
+        {
+          tenantId: tenant.id,
+          userId: u.id,
+          month: lastMonth,
+          basePaise: 35_000_00,
+          commissionPaise: 4_500_00,
+          advancePaise: 0,
+          netPaise: 39_500_00,
+          paidAt: daysAgo(25),
+        },
+        {
+          tenantId: tenant.id,
+          userId: u.id,
+          month: thisMonth,
+          basePaise: 35_000_00,
+          commissionPaise: 6_200_00,
+          advancePaise: 5_000_00,
+          netPaise: 36_200_00,
+          // Half the current-month rows unpaid so the "Mark paid" UX has work to do.
+          paidAt: null,
+        },
+      ]);
+      await tx.payroll.createMany({ data: payrollRows, skipDuplicates: true });
+    }
+
+    // ── FINANCE: daily reconciliation log — last 7 days, both shops ──
+    const reconRows: Array<{
+      tenantId: string;
+      shopId: string;
+      reconciledDate: Date;
+      expectedCashPaise: number;
+      countedCashPaise: number;
+      expectedUpiPaise: number;
+      settledUpiPaise: number;
+      expectedCardPaise: number;
+      settledCardPaise: number;
+      varianceCashPaise: number;
+      varianceUpiPaise: number;
+      varianceCardPaise: number;
+      notes: string | null;
+    }> = [];
+    for (let i = 1; i <= 7; i += 1) {
+      const day = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate() - i));
+      for (const sh of [shopMain, shopBranch]) {
+        const expCash = 40_000_00 + Math.round(Math.random() * 10_000_00);
+        const expUpi = 25_000_00 + Math.round(Math.random() * 8_000_00);
+        const expCard = 18_000_00 + Math.round(Math.random() * 6_000_00);
+        const varianceCash = Math.round((Math.random() - 0.5) * 600_00);
+        reconRows.push({
+          tenantId: tenant.id,
+          shopId: sh.id,
+          reconciledDate: day,
+          expectedCashPaise: expCash,
+          countedCashPaise: expCash + varianceCash,
+          expectedUpiPaise: expUpi,
+          settledUpiPaise: expUpi,
+          expectedCardPaise: expCard,
+          settledCardPaise: expCard,
+          varianceCashPaise: varianceCash,
+          varianceUpiPaise: 0,
+          varianceCardPaise: 0,
+          notes: varianceCash === 0 ? null : varianceCash > 0 ? 'Cash count excess' : 'Cash count short',
+        });
+      }
+    }
+    await tx.reconciliation.createMany({ data: reconRows, skipDuplicates: true });
+
+    // ── FINANCE: customer advances (some active, some consumed) ────────
+    if (customerIds.length >= 2) {
+      const owner = await tx.user.findFirst({ where: { tenantId: tenant.id }, select: { id: true } });
+      if (owner) {
+        await tx.advance.createMany({
+          data: [
+            {
+              tenantId: tenant.id,
+              shopId: shopMain.id,
+              receiptNumber: 'ADV-2026-001',
+              customerId: customerIds[0]!.id,
+              amountPaise: 50_000_00,
+              status: 'ACTIVE',
+              validUntil: new Date(today.getTime() + 60 * 86_400_000),
+              createdByUserId: owner.id,
+              notes: 'Bridal set booking',
+            },
+            {
+              tenantId: tenant.id,
+              shopId: shopBranch.id,
+              receiptNumber: 'ADV-2026-002',
+              customerId: customerIds[1]!.id,
+              amountPaise: 25_000_00,
+              status: 'ACTIVE',
+              validUntil: new Date(today.getTime() + 30 * 86_400_000),
+              createdByUserId: owner.id,
+              notes: 'Custom mangalsutra',
+            },
+            {
+              tenantId: tenant.id,
+              shopId: shopMain.id,
+              receiptNumber: 'ADV-2026-003',
+              customerId: customerIds[0]!.id,
+              amountPaise: 15_000_00,
+              status: 'CONSUMED',
+              createdByUserId: owner.id,
+              notes: 'Adjusted on bill',
+            },
+          ],
+        });
+      }
+    }
+
     // Audit log — seed CREATE rows for the demo items + vendors so the trail is non-empty.
     await tx.auditLog.createMany({
       data: [
@@ -656,6 +976,14 @@ async function main(): Promise<void> {
 
   // eslint-disable-next-line no-console
   console.log('[seed] done.');
+  // eslint-disable-next-line no-console
+  console.log('\n[seed] Demo accounts (admin panel):');
+  for (const a of DEMO_ACCOUNTS) {
+    // eslint-disable-next-line no-console
+    console.log(`  ${a.role.padEnd(12)}  email=${a.email.padEnd(28)} password=${a.password}`);
+  }
+  // eslint-disable-next-line no-console
+  console.log('\n[seed] POS subdomain: pos.<your-domain>  |  cashier login uses POS_USER above\n');
   // Force-close redis client so the script exits cleanly.
   await redis.quit().catch(() => {});
 }

@@ -22,11 +22,11 @@ export function CartPage(): JSX.Element {
 
   if (cart.length === 0) {
     return (
-      <div className="max-w-[760px] mx-auto px-6 py-20 text-center">
+      <div className="max-w-2xl w-full mx-auto px-4 sm:px-6 py-14 sm:py-20 text-center">
         <div className="mx-auto h-16 w-16 rounded-full bg-ink-50 flex items-center justify-center">
           <ShoppingBag className="h-6 w-6 text-ink-500" />
         </div>
-        <h1 className="font-display text-[32px] mt-6 text-ink-900">Your bag is empty</h1>
+        <h1 className="font-display text-2xl sm:text-[32px] mt-6 text-ink-900">Your bag is empty</h1>
         <p className="mt-2 text-ink-600 text-sm">
           Add a piece to your bag or browse our collections — every order is hand-finished in Haryana.
         </p>
@@ -41,23 +41,23 @@ export function CartPage(): JSX.Element {
   }
 
   return (
-    <div className="max-w-[1280px] mx-auto px-6 py-10 md:py-14">
-      <header className="mb-10">
+    <div className="max-w-[1280px] mx-auto px-4 sm:px-6 py-8 sm:py-10 md:py-14">
+      <header className="mb-8 sm:mb-10">
         <p className="text-eyebrow uppercase text-ink-500">Your bag</p>
-        <h1 className="font-display text-[34px] md:text-[40px] text-ink-900 mt-2">
+        <h1 className="font-display text-2xl sm:text-[34px] md:text-[40px] text-ink-900 mt-2">
           {cart.length} {cart.length === 1 ? 'piece' : 'pieces'} in your bag
         </h1>
       </header>
 
-      <div className="grid grid-cols-1 lg:grid-cols-[1fr_380px] gap-10 lg:gap-16">
-        <section className="space-y-6">
+      <div className="grid grid-cols-1 lg:grid-cols-[1fr_380px] gap-8 sm:gap-10 lg:gap-16">
+        <section className="space-y-5 sm:space-y-6">
           {cart.map((item) => (
-            <article key={item.slug} className="flex gap-5 pb-6 border-b border-ink-100">
-              <Link to={`/store/products/${item.slug}`} className="shrink-0 w-28 h-32 sm:w-32 sm:h-36 bg-ink-50 overflow-hidden">
+            <article key={item.slug} className="flex gap-3 sm:gap-5 pb-5 sm:pb-6 border-b border-ink-100">
+              <Link to={`/store/products/${item.slug}`} className="shrink-0 w-20 h-24 sm:w-28 sm:h-32 md:w-32 md:h-36 bg-ink-50 overflow-hidden">
                 <img src={item.img} alt={item.name} className="h-full w-full object-cover" />
               </Link>
               <div className="flex-1 min-w-0 flex flex-col">
-                <Link to={`/store/products/${item.slug}`} className="font-display text-[20px] text-ink-900 truncate hover:underline decoration-ink-300 underline-offset-4">
+                <Link to={`/store/products/${item.slug}`} className="font-display text-base sm:text-[20px] text-ink-900 truncate hover:underline decoration-ink-300 underline-offset-4">
                   {item.name}
                 </Link>
                 <p className="text-xs text-ink-500 mt-1">
@@ -65,7 +65,7 @@ export function CartPage(): JSX.Element {
                 </p>
                 <p className="text-sm text-ink-900 font-mono tabular-nums mt-2">{item.priceLabel}</p>
 
-                <div className="mt-auto flex items-center justify-between pt-4">
+                <div className="mt-auto flex items-center justify-between flex-wrap gap-3 pt-3 sm:pt-4">
                   <div className="inline-flex items-center h-10 rounded-full border border-ink-200 overflow-hidden">
                     <button
                       onClick={() => dispatch(setCartQty({ slug: item.slug, qty: item.qty - 1 }))}
@@ -106,7 +106,7 @@ export function CartPage(): JSX.Element {
         </section>
 
         <aside className="lg:sticky lg:top-28 self-start">
-          <div className="rounded-md border border-ink-100 bg-ink-25 p-6 space-y-3 text-sm">
+          <div className="rounded-md border border-ink-100 bg-ink-25 p-5 sm:p-6 space-y-3 text-sm">
             <p className="text-eyebrow uppercase text-ink-500">Order summary</p>
             <Row label="Subtotal" value={<Money paise={subtotal} />} />
             <Row label="GST (3%)" value={<Money paise={gst} />} />
@@ -223,8 +223,8 @@ function CheckoutDialog({ open, onClose }: { open: boolean; onClose: () => void 
     <Dialog.Root open={open} onOpenChange={(next) => !next && onClose()}>
       <Dialog.Portal>
         <Dialog.Overlay className="fixed inset-0 z-50 bg-ink-900/40 data-[state=open]:animate-in data-[state=open]:fade-in-0" />
-        <Dialog.Content className="fixed left-1/2 top-1/2 z-50 -translate-x-1/2 -translate-y-1/2 w-[92vw] max-w-md bg-ink-0 rounded-lg shadow-xl border border-ink-100">
-          <form onSubmit={handleSubmit} className="p-6 space-y-5">
+        <Dialog.Content className="fixed left-1/2 top-1/2 z-50 -translate-x-1/2 -translate-y-1/2 w-[calc(100vw-2rem)] sm:w-[92vw] max-w-md max-h-[90vh] overflow-y-auto bg-ink-0 rounded-lg shadow-xl border border-ink-100">
+          <form onSubmit={handleSubmit} className="p-5 sm:p-6 space-y-5">
             <div className="flex items-start justify-between gap-4">
               <div>
                 <Dialog.Title className="font-display text-[22px] leading-tight text-ink-900">

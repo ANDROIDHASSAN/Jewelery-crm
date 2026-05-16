@@ -31,7 +31,9 @@ const EnvSchema = z.object({
   TWILIO_ACCOUNT_SID: z.string().optional().default(''),
   TWILIO_AUTH_TOKEN: z.string().optional().default(''),
 
-  MCX_API_KEY: z.string().optional().default(''),
+  // GoldAPI.io key — sole source of gold/silver rates. Required.
+  // Sign up at https://www.goldapi.io for a free 100-req/month key.
+  GOLDAPI_KEY: z.string().min(10, 'GOLDAPI_KEY missing — sign up at goldapi.io for a free key'),
 
   RAZORPAY_KEY_ID: z.string().optional().default(''),
   RAZORPAY_KEY_SECRET: z.string().optional().default(''),

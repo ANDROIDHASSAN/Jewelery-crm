@@ -159,6 +159,7 @@ export function DashboardPage(): JSX.Element {
   const topProducts = topProductsRes?.data ?? [];
   const expenseCats = expensesByCatRes?.data ?? [];
 
+  const rate24 = summary?.goldRate.find((r) => r.purity === 2400);
   const rate22 = summary?.goldRate.find((r) => r.purity === 2200);
   const rate18 = summary?.goldRate.find((r) => r.purity === 1800);
   const rateSilver = summary?.goldRate.find((r) => r.purity === 0);
@@ -230,12 +231,12 @@ export function DashboardPage(): JSX.Element {
   );
 
   return (
-    <div className="space-y-6 pb-12">
+    <div className="space-y-4 sm:space-y-6 pb-8 sm:pb-12">
       {/* ---- 1. Header ---- */}
-      <header className="flex flex-wrap items-end justify-between gap-3">
+      <header className="flex flex-col sm:flex-row sm:flex-wrap sm:items-end sm:justify-between gap-2 sm:gap-3">
         <div className="space-y-1">
           <p className="text-eyebrow uppercase text-ink-500">Today · {new Date().toLocaleDateString('en-IN', { weekday: 'long', day: 'numeric', month: 'long' })}</p>
-          <h1 className="font-display text-display-sm text-ink-900">Welcome back, Anant.</h1>
+          <h1 className="font-display text-xl sm:text-display-sm text-ink-900">Welcome back, Anant.</h1>
         </div>
         <div className="flex items-center gap-2 text-xs text-ink-500">
           <Activity className="h-3.5 w-3.5 text-emerald-500" />
@@ -249,7 +250,7 @@ export function DashboardPage(): JSX.Element {
        *    - Open leads: success (always good to have inbound interest).
        *    - Stock valuation & Bills today: neutral (informational).
        */}
-      <section className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+      <section className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
         <MetricCard
           label="Today's sales"
           value={summary ? <Money paise={summary.today.revenuePaise} /> : isLoading ? '…' : '—'}
@@ -287,7 +288,7 @@ export function DashboardPage(): JSX.Element {
        *  - Revenue MTD: success when net is positive, danger when negative.
        *  - Vendor outstanding: warning when there's money owed, success at ₹0.
        */}
-      <section className="grid grid-cols-2 md:grid-cols-4 gap-4">
+      <section className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
         <MetricCard
           label="Revenue MTD"
           value={pl ? <Money paise={pl.revenuePaise} /> : '—'}
@@ -317,7 +318,7 @@ export function DashboardPage(): JSX.Element {
       <RecentReservations orders={orders} />
 
       {/* ---- 4. Sales chart + Gold rate ---- */}
-      <section className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+      <section className="grid grid-cols-1 lg:grid-cols-3 gap-3 sm:gap-4">
         <ChartCard
           className="lg:col-span-2"
           title="Sales — last 7 days"
@@ -345,6 +346,10 @@ export function DashboardPage(): JSX.Element {
           </div>
           <dl className="space-y-2 text-sm">
             <div className="flex justify-between">
+              <dt className="text-ink-500">24K</dt>
+              <dd className="font-mono">{rate24 ? formatRate(rate24.ratePerGramPaise, rate24.stale) : '—'}</dd>
+            </div>
+            <div className="flex justify-between">
               <dt className="text-ink-500">22K</dt>
               <dd className="font-mono">{rate22 ? formatRate(rate22.ratePerGramPaise, rate22.stale) : '—'}</dd>
             </div>
@@ -358,8 +363,8 @@ export function DashboardPage(): JSX.Element {
             </div>
           </dl>
           <p className="mt-3 text-xs text-ink-400">
-            {summary?.asOf ? `Updated ${new Date(summary.asOf).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })} · MCX` : 'Awaiting feed'}
-            {(rate22?.stale || rate18?.stale || rateSilver?.stale) && ' · stale'}
+            {summary?.asOf ? `Updated ${new Date(summary.asOf).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })} · GoldAPI` : 'Awaiting feed'}
+            {(rate24?.stale || rate22?.stale || rate18?.stale || rateSilver?.stale) && ' · stale'}
           </p>
           <hr className="my-4 border-ink-100" />
           <p className="text-eyebrow uppercase text-ink-500 mb-2">Shops</p>
@@ -375,7 +380,7 @@ export function DashboardPage(): JSX.Element {
       </section>
 
       {/* ---- 5. Lead funnel + Top products ---- */}
-      <section className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+      <section className="grid grid-cols-1 md:grid-cols-2 gap-3 sm:gap-4">
         <div className="rounded-md border border-ink-100 bg-ink-0 p-5">
           <div className="flex items-center justify-between mb-4">
             <div>
@@ -428,7 +433,7 @@ export function DashboardPage(): JSX.Element {
       </section>
 
       {/* ---- 6. Recent storefront orders + Recent bills ---- */}
-      <section className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+      <section className="grid grid-cols-1 md:grid-cols-2 gap-3 sm:gap-4">
         <div className="rounded-md border border-ink-100 bg-ink-0">
           <div className="flex items-center justify-between px-5 pt-5 mb-3">
             <div className="flex items-center gap-2">
@@ -508,7 +513,7 @@ export function DashboardPage(): JSX.Element {
       </section>
 
       {/* ---- 7. Finance — revenue/expense + GST + expense breakdown ---- */}
-      <section className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+      <section className="grid grid-cols-1 lg:grid-cols-3 gap-3 sm:gap-4">
         <ChartCard className="lg:col-span-2" title="Revenue vs expenses (MTD)" eyebrow="Finance">
           {plLoading ? (
             <p className="text-sm text-ink-500">Loading P&L…</p>
@@ -562,7 +567,7 @@ export function DashboardPage(): JSX.Element {
       </section>
 
       {/* ---- 8. Inventory health (low stock + vendor outstanding) ---- */}
-      <section className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+      <section className="grid grid-cols-1 md:grid-cols-2 gap-3 sm:gap-4">
         <div
           className={cn(
             'rounded-md border bg-ink-0 p-5',
@@ -650,7 +655,7 @@ export function DashboardPage(): JSX.Element {
       </section>
 
       {/* ---- 9. Inventory + activity ---- */}
-      <section className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+      <section className="grid grid-cols-1 lg:grid-cols-3 gap-3 sm:gap-4">
         <div className="rounded-md border border-ink-100 bg-ink-0 p-5">
           <div className="flex items-center gap-2 mb-3">
             <Boxes className="h-4 w-4 text-brand-500" />
@@ -722,7 +727,7 @@ export function DashboardPage(): JSX.Element {
       </section>
 
       {/* ---- 10. Quick links footer ---- */}
-      <section className="grid grid-cols-2 md:grid-cols-4 gap-3">
+      <section className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3">
         <QuickLink to="/admin/inventory" icon={Package} label="Open inventory" desc="Stock & SKUs" />
         <QuickLink to="/admin/pos" icon={Receipt} label="Open POS" desc="Billing counter" />
         <QuickLink to="/admin/crm" icon={Users} label="Open CRM" desc="Leads & broadcasts" />

@@ -43,12 +43,46 @@ new Worker<SendWhatsAppJob>(
   logger.error({ jobId: job?.id, err }, '[worker.whatsapp] failed');
 });
 
-// Gold rate cron — every 5 minutes.
+// Gold rate cron — once per day at 10:30 AM IST (5:00 UTC). Indian retail
+// gold prices change once a day, after IBJA's morning publish around 11 AM IST.
+// Polling at 10:30 IST gives a fresh rate before most shops open, and uses
+// ~30 of GoldAPI.io's 100 free requests per month with headroom for restarts.
+function msUntilNextIstHour(istHour: number, istMinute: number): number {
+  // Convert IST target to UTC. IST = UTC+5:30.
+  let utcMinute = istMinute - 30;
+  let utcHour = istHour - 5;
+  if (utcMinute < 0) {
+    utcMinute += 60;
+    utcHour -= 1;
+  }
+  if (utcHour < 0) utcHour += 24;
+
+  const now = new Date();
+  const next = new Date(
+    Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), utcHour, utcMinute, 0, 0),
+  );
+  if (next.getTime() <= now.getTime()) {
+    next.setUTCDate(next.getUTCDate() + 1);
+  }
+  return next.getTime() - now.getTime();
+}
+
 async function startGoldRateCron(): Promise<void> {
+  // Always fetch at boot so a fresh restart never leaves the dashboard blank.
   await pollMcxAndCache();
-  setInterval(() => {
-    void pollMcxAndCache();
-  }, 5 * 60 * 1000);
+
+  const scheduleNext = (): void => {
+    const ms = msUntilNextIstHour(10, 30);
+    setTimeout(async () => {
+      try {
+        await pollMcxAndCache();
+      } catch (err) {
+        logger.error({ err }, '[gold-rate] cron tick threw');
+      }
+      scheduleNext();
+    }, ms);
+  };
+  scheduleNext();
 }
 
 void startGoldRateCron();

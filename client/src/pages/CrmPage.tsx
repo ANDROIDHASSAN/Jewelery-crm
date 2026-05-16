@@ -59,16 +59,16 @@ export function CrmPage(): JSX.Element {
   const leads: Lead[] = data?.data ?? [];
 
   return (
-    <div className="space-y-6">
-      <header className="flex flex-wrap items-end justify-between gap-4">
+    <div className="space-y-4 sm:space-y-6">
+      <header className="flex flex-col sm:flex-row sm:flex-wrap sm:items-end sm:justify-between gap-3 sm:gap-4">
         <div>
           <p className="text-eyebrow uppercase text-ink-500">Lead CRM + Ads</p>
-          <h1 className="font-display text-display-sm text-ink-900">Lead Command Center</h1>
+          <h1 className="font-display text-xl sm:text-display-sm text-ink-900">Lead Command Center</h1>
           <p className="text-sm text-ink-600 mt-1">
             Every enquiry from WhatsApp, Instagram, Facebook, Google &amp; walk-in — in one inbox.
           </p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           {isLoading && <span className="text-xs text-ink-500">Loading…</span>}
           {isError && (
             <span className="text-xs text-rose-600" title={JSON.stringify(error)}>
@@ -83,14 +83,14 @@ export function CrmPage(): JSX.Element {
 
       <CapabilityStrip />
 
-      <nav className="flex flex-wrap gap-1 border-b border-ink-100">
+      <nav className="flex gap-1 border-b border-ink-100 overflow-x-auto -mx-3 sm:-mx-4 lg:-mx-6 px-3 sm:px-4 lg:px-6">
         {TABS.map(({ id, label, icon: Icon }) => (
           <button
             key={id}
             type="button"
             onClick={() => setTab(id)}
             className={cn(
-              'inline-flex items-center gap-2 px-4 py-2.5 text-sm border-b-2 -mb-px transition-colors',
+              'inline-flex items-center gap-2 px-4 py-2.5 text-sm border-b-2 -mb-px transition-colors whitespace-nowrap shrink-0',
               tab === id
                 ? 'border-brand-500 text-ink-900'
                 : 'border-transparent text-ink-600 hover:text-ink-900',
@@ -147,7 +147,7 @@ function CapabilityStrip(): JSX.Element {
           <ChevronRight className="h-3.5 w-3.5" />
         </span>
       </summary>
-      <ul className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-2 px-4 pb-4">
+      <ul className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-2 px-4 pb-4">
         {CAPABILITIES.map(({ icon: Icon, label, desc }) => (
           <li key={label} className="flex items-start gap-2.5 rounded-md bg-ink-0 border border-ink-100 px-3 py-2.5">
             <span className="h-7 w-7 rounded-full bg-brand-50 text-brand-700 inline-flex items-center justify-center shrink-0">
@@ -189,7 +189,7 @@ function InboxView({ leads }: { leads: Lead[] }): JSX.Element {
   const channels = Array.from(new Set(leads.map((l) => l.source)));
 
   return (
-    <div className="grid grid-cols-1 lg:grid-cols-[260px_1fr] gap-6">
+    <div className="grid grid-cols-1 lg:grid-cols-[240px_1fr] gap-4 lg:gap-6">
       <aside className="space-y-3">
         <div className="rounded-md border border-ink-100 bg-ink-0 p-3 space-y-2">
           <p className="text-eyebrow uppercase text-ink-500">Channels</p>
@@ -359,7 +359,7 @@ function PipelineView({ leads }: { leads: Lead[] }): JSX.Element {
         <span className="h-1.5 w-1.5 rounded-full bg-brand-400" />
         Drag a card to move it between stages — changes save instantly.
       </p>
-      <div className="grid grid-cols-1 md:grid-cols-3 xl:grid-cols-6 gap-3">
+      <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-3">
         {LEAD_STATUSES.map((status) => {
           const items = leads.filter((s) => s.status === status);
           const isDropTarget = overStatus === status && dragId !== null;
@@ -444,8 +444,8 @@ function CampaignsView({ leads }: { leads: Lead[] }): JSX.Element {
   }, [leads]);
 
   return (
-    <div className="space-y-6">
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+    <div className="space-y-4 sm:space-y-6">
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-3 sm:gap-4">
         <PlatformCard
           title="Google Ads"
           subtitle="Search & Performance Max"
@@ -480,7 +480,8 @@ function CampaignsView({ leads }: { leads: Lead[] }): JSX.Element {
             inline
           />
         ) : (
-          <table className="w-full text-sm">
+          <div className="overflow-x-auto">
+          <table className="w-full text-sm min-w-[640px]">
             <thead className="bg-ink-25 text-ink-600 text-xs">
               <tr>
                 <th className="text-left px-4 py-2.5 font-medium">Source</th>
@@ -512,6 +513,7 @@ function CampaignsView({ leads }: { leads: Lead[] }): JSX.Element {
               })}
             </tbody>
           </table>
+          </div>
         )}
       </section>
 
@@ -589,7 +591,7 @@ function BroadcastsView({ leads }: { leads: Lead[] }): JSX.Element {
   }
 
   return (
-    <div className="grid grid-cols-1 lg:grid-cols-[1fr_320px] gap-6">
+    <div className="grid grid-cols-1 lg:grid-cols-[1fr_320px] gap-4 lg:gap-6">
       <section className="space-y-4">
         <div className="rounded-md border border-ink-100 bg-ink-0 p-5">
           <p className="text-eyebrow uppercase text-ink-500 mb-3">Template</p>
@@ -692,8 +694,8 @@ function FollowUpsView({ leads }: { leads: Lead[] }): JSX.Element {
   const upcoming = followUps.filter((f) => !f.overdue && f.due - now >= 86_400_000);
 
   return (
-    <div className="space-y-6">
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+    <div className="space-y-4 sm:space-y-6">
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4">
         <Stat label="Overdue" value={overdue.length} tone="rose" icon={<AlertTriangle className="h-4 w-4" />} />
         <Stat label="Due today" value={today.length} tone="amber" icon={<BellRing className="h-4 w-4" />} />
         <Stat label="Upcoming" value={upcoming.length} tone="neutral" icon={<Calendar className="h-4 w-4" />} />
@@ -795,8 +797,8 @@ function ReportsView({ leads }: { leads: Lead[] }): JSX.Element {
   }, [leads]);
 
   return (
-    <div className="space-y-6">
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+    <div className="space-y-4 sm:space-y-6">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
         <Stat label="Total leads" value={total} tone="neutral" icon={<Users className="h-4 w-4" />} />
         <Stat label="Converted" value={converted} tone="emerald" icon={<CheckCircle2 className="h-4 w-4" />} />
         <Stat label="Conv. rate" value={`${conversionRate}%`} tone="emerald" icon={<ArrowUpRight className="h-4 w-4" />} />
@@ -837,7 +839,8 @@ function ReportsView({ leads }: { leads: Lead[] }): JSX.Element {
         {bySource.length === 0 ? (
           <EmptyState icon={<BarChart3 className="h-5 w-5" />} title="No lead data yet" body="Channel ROI fills in as leads start landing." inline />
         ) : (
-          <table className="w-full text-sm">
+          <div className="overflow-x-auto">
+          <table className="w-full text-sm min-w-[560px]">
             <thead className="bg-ink-25 text-ink-600 text-xs">
               <tr>
                 <th className="text-left px-4 py-2.5 font-medium">Channel</th>
@@ -862,6 +865,7 @@ function ReportsView({ leads }: { leads: Lead[] }): JSX.Element {
               })}
             </tbody>
           </table>
+          </div>
         )}
       </section>
 

@@ -1,18 +1,27 @@
-// server/src/middleware/auth.ts — JWT verify, attaches req.user.
+// JWT verify → attaches req.user with effective permission list.
 // Per specs/api-design.md: Authorization: Bearer <accessToken>.
+//
+// The access token carries the resolved permission set (see
+// modules/auth/permissions.ts) so middleware can do O(1) checks without
+// hitting the DB on every request. Token rotates every 15 min, so role
+// changes become effective within that window.
 
 import type { NextFunction, Request, Response } from 'express';
-import { jwtVerify } from 'jose';
+import { verifyAccessToken } from '../modules/auth/auth.service.js';
+import { resolveUser } from '../modules/auth/permissions.js';
 import { UnauthorizedError } from '../lib/errors.js';
 import { env } from '../env.js';
 import { resolveCanonicalTenantId } from '../lib/canonical-tenant.js';
-import type { Role } from '@goldos/shared/constants';
+import { PERMISSION_KEYS, type PermissionKey } from '@goldos/shared/constants';
 
 export interface AuthUser {
   userId: string;
   tenantId: string;
   shopId?: string;
-  role: Role;
+  roleId: string;
+  roleSlug: string;
+  perms: readonly PermissionKey[];
+  mustChangePassword: boolean;
 }
 
 declare module 'express-serve-static-core' {
@@ -21,12 +30,6 @@ declare module 'express-serve-static-core' {
   }
 }
 
-const accessSecret = new TextEncoder().encode(env.JWT_ACCESS_SECRET);
-
-// Admin sentinel uses the same canonical resolver as the public storefront
-// (lib/canonical-tenant.ts) so a reservation submitted on the marketing site
-// is guaranteed to land in the same tenant the admin reads from. ADMIN_TENANT_ID
-// pin still wins for production-multi-tenant deployments.
 async function resolveAdminTenantId(): Promise<string> {
   if (env.ADMIN_TENANT_ID) return env.ADMIN_TENANT_ID;
   try {
@@ -44,22 +47,37 @@ export async function authMiddleware(req: Request, _res: Response, next: NextFun
     }
     const token = header.slice('Bearer '.length).trim();
 
-    // Admin sentinel bypass — client-only login flow (see client/src/features/auth/LoginPage.tsx).
+    // Sentinel-token bypass for legacy admin pages (kept until client login
+    // overhaul lands). Grants full permission set.
     if (env.ADMIN_API_TOKEN && token === env.ADMIN_API_TOKEN) {
       const tenantId = await resolveAdminTenantId();
-      req.user = { userId: 'admin', tenantId, role: 'OWNER' };
+      // Find the SUPER_ADMIN role for this tenant so route handlers that
+      // dereference req.user.roleId still work.
+      const { rawPrisma } = await import('../lib/prisma.js');
+      const superAdmin = await rawPrisma.role.findFirst({
+        where: { tenantId, slug: 'SUPER_ADMIN' },
+        select: { id: true },
+      });
+      req.user = {
+        userId: 'admin',
+        tenantId,
+        roleId: superAdmin?.id ?? 'sentinel',
+        roleSlug: 'SUPER_ADMIN',
+        perms: PERMISSION_KEYS,
+        mustChangePassword: false,
+      };
       return next();
     }
 
-    const { payload } = await jwtVerify(token, accessSecret, { algorithms: ['HS256'] });
-    if (!payload.sub || !payload['tenantId'] || !payload['role']) {
-      throw new UnauthorizedError('Malformed token');
-    }
+    const payload = await verifyAccessToken(token);
     req.user = {
-      userId: String(payload.sub),
-      tenantId: String(payload['tenantId']),
-      shopId: payload['shopId'] ? String(payload['shopId']) : undefined,
-      role: payload['role'] as Role,
+      userId: payload.sub,
+      tenantId: payload.tenantId,
+      shopId: payload.shopId ?? undefined,
+      roleId: payload.roleId,
+      roleSlug: payload.roleSlug,
+      perms: payload.perms,
+      mustChangePassword: payload.mustChangePassword,
     };
     next();
   } catch (err) {
@@ -68,12 +86,31 @@ export async function authMiddleware(req: Request, _res: Response, next: NextFun
   }
 }
 
-export function requireRole(...allowed: Role[]) {
-  return (req: Request, _res: Response, next: NextFunction): void => {
-    if (!req.user) return next(new UnauthorizedError());
-    if (!allowed.includes(req.user.role)) {
-      return next(new UnauthorizedError('Insufficient role'));
-    }
+/**
+ * Strict variant: re-resolves permissions from DB on every request. Use
+ * sparingly (e.g. on permission-mutating routes themselves) so a perm
+ * revocation takes effect immediately rather than waiting for token refresh.
+ */
+export async function authMiddlewareFresh(req: Request, _res: Response, next: NextFunction): Promise<void> {
+  try {
+    const header = req.headers.authorization;
+    if (!header || !header.startsWith('Bearer ')) throw new UnauthorizedError('Missing bearer token');
+    const token = header.slice('Bearer '.length).trim();
+    const payload = await verifyAccessToken(token);
+    const fresh = await resolveUser(payload.sub);
+    if (!fresh) throw new UnauthorizedError('Session no longer valid');
+    req.user = {
+      userId: fresh.id,
+      tenantId: fresh.tenantId,
+      shopId: fresh.shopId ?? undefined,
+      roleId: fresh.roleId,
+      roleSlug: fresh.roleSlug,
+      perms: fresh.permissions,
+      mustChangePassword: payload.mustChangePassword,
+    };
     next();
-  };
+  } catch (err) {
+    if (err instanceof UnauthorizedError) return next(err);
+    next(new UnauthorizedError('Invalid or expired token'));
+  }
 }

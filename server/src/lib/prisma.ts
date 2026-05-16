@@ -35,6 +35,17 @@ const TENANT_SCOPED_MODELS = new Set<string>([
   'Order',
   'AuditLog',
   'StorefrontContent',
+  // POS shop-owner v2 + Finance v2 — also tenant-scoped.
+  'RegisterSession',
+  'CashMovement',
+  'ParkedBill',
+  'Estimate',
+  'Repair',
+  'Advance',
+  'VendorPayment',
+  'BankAccount',
+  'BankTransaction',
+  'Reconciliation',
 ]);
 
 /** Raw client without tenant extension — for super-admin and the tenant-scope middleware itself. */

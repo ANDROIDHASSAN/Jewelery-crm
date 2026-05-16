@@ -108,7 +108,7 @@ export const DEFAULT_CONTENT: StorefrontContent = {
       address: 'MG Road, Gurugram, Haryana 122001',
       phone: '+91 124 444 0011',
       hours: 'Mon–Sat · 10:30 AM – 8:30 PM',
-      image: 'https://images.unsplash.com/photo-1606293459339-aa5d34a7b0e1?auto=format&fit=crop&w=1200&q=80',
+      image: 'https://images.unsplash.com/photo-1602173574767-37ac01994b2a?auto=format&fit=crop&w=1600&q=85',
     },
     {
       id: 'karnal',
@@ -116,7 +116,7 @@ export const DEFAULT_CONTENT: StorefrontContent = {
       address: 'Sector 14, Karnal, Haryana 132001',
       phone: '+91 184 263 0022',
       hours: 'Mon–Sat · 11:00 AM – 9:00 PM',
-      image: 'https://images.unsplash.com/photo-1606293459339-aa5d34a7b0e1?auto=format&fit=crop&w=1200&q=80',
+      image: 'https://images.unsplash.com/photo-1611591437281-460bfbe1220a?auto=format&fit=crop&w=1600&q=85',
     },
   ],
   whatsappNumber: '919876543210',

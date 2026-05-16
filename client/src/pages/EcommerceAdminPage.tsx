@@ -1,11 +1,12 @@
-import { useMemo, useState } from 'react';
-import { Plus, X, Pencil, Trash2, ChevronRight, List, Kanban as KanbanIcon } from 'lucide-react';
+import { useMemo, useRef, useState } from 'react';
+import { Plus, X, Pencil, Trash2, ChevronRight, List, Kanban as KanbanIcon, Upload, Link2 } from 'lucide-react';
 import * as Dialog from '@radix-ui/react-dialog';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Money } from '@/components/ui/money';
+import { uploadImageToCloudinary, isCloudinaryConfigured, cloudinaryThumb } from '@/lib/cloudinary';
 import {
   useGetOrdersQuery,
   useGetAdminProductsQuery,
@@ -57,17 +58,17 @@ export function EcommerceAdminPage(): JSX.Element {
 
   return (
     <div className="space-y-4">
-      <header className="flex items-end justify-between">
+      <header className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-3">
         <div>
           <p className="text-eyebrow uppercase text-ink-500">E-commerce</p>
-          <h1 className="font-display text-display-sm text-ink-900">Products &amp; orders</h1>
+          <h1 className="font-display text-xl sm:text-display-sm text-ink-900">Products &amp; orders</h1>
         </div>
-        <Button onClick={() => setProductDialog({ open: true })}>
+        <Button onClick={() => setProductDialog({ open: true })} className="self-start sm:self-auto">
           <Plus className="h-4 w-4" /> Add product
         </Button>
       </header>
 
-      <section className="grid grid-cols-1 md:grid-cols-4 gap-4">
+      <section className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
         <KPI label="Published products" value={productsLoading ? '…' : String(products.filter((p) => p.isPublished).length)}
           sub={`${products.length} total in catalog`} />
         <KPI
@@ -89,7 +90,7 @@ export function EcommerceAdminPage(): JSX.Element {
           value={<Money paise={orders.reduce((s, o) => s + o.totalPaise, 0)} />} />
       </section>
 
-      <div className="flex gap-1 border-b border-ink-100">
+      <div className="flex gap-1 border-b border-ink-100 overflow-x-auto -mx-3 sm:-mx-4 lg:-mx-6 px-3 sm:px-4 lg:px-6">
         {([
           { id: 'products', label: 'Products', badge: null },
           {
@@ -113,7 +114,7 @@ export function EcommerceAdminPage(): JSX.Element {
             key={t.id}
             type="button"
             onClick={() => setTab(t.id)}
-            className={`px-4 h-10 text-sm border-b-2 -mb-px inline-flex items-center gap-2 ${tab === t.id ? 'border-brand-500 text-ink-900' : 'border-transparent text-ink-500 hover:text-ink-700'}`}
+            className={`px-4 h-10 text-sm border-b-2 -mb-px inline-flex items-center gap-2 whitespace-nowrap shrink-0 ${tab === t.id ? 'border-brand-500 text-ink-900' : 'border-transparent text-ink-500 hover:text-ink-700'}`}
           >
             <span>{t.label}</span>
             {t.badge && (
@@ -242,7 +243,8 @@ function ProductsTable({
 
   return (
     <section className="rounded-md border border-ink-100 bg-ink-0 overflow-hidden">
-      <table className="w-full text-sm">
+      <div className="overflow-x-auto">
+      <table className="w-full text-sm min-w-[800px]">
         <thead>
           <tr className="text-left text-eyebrow uppercase text-ink-500 border-b border-ink-100">
             <th className="px-4 py-3">Product</th>
@@ -300,6 +302,7 @@ function ProductsTable({
           ))}
         </tbody>
       </table>
+      </div>
     </section>
   );
 }
@@ -563,7 +566,7 @@ interface ProductForm {
   slug: string;
   categoryId: string;
   descriptionMd: string;
-  imageUrls: string;
+  images: string[];
   weightG: string;
   purityCaratX100: number;
   makingChargeBps: number;
@@ -578,7 +581,7 @@ function emptyForm(): ProductForm {
     slug: '',
     categoryId: '',
     descriptionMd: '',
-    imageUrls: '',
+    images: [],
     weightG: '',
     purityCaratX100: 2200,
     makingChargeBps: 1200,
@@ -606,7 +609,7 @@ function ProductDialog({
           slug: editing.slug,
           categoryId: editing.categoryId,
           descriptionMd: editing.descriptionMd,
-          imageUrls: editing.images.join('\n'),
+          images: editing.images,
           weightG: (editing.weightMg / 1000).toString(),
           purityCaratX100: editing.purityCaratX100,
           makingChargeBps: editing.makingChargeBps,
@@ -629,7 +632,7 @@ function ProductDialog({
             slug: editing.slug,
             categoryId: editing.categoryId,
             descriptionMd: editing.descriptionMd,
-            imageUrls: editing.images.join('\n'),
+            images: editing.images,
             weightG: (editing.weightMg / 1000).toString(),
             purityCaratX100: editing.purityCaratX100,
             makingChargeBps: editing.makingChargeBps,
@@ -647,12 +650,9 @@ function ProductDialog({
 
   async function handleSubmit(e: React.FormEvent): Promise<void> {
     e.preventDefault();
-    const images = form.imageUrls
-      .split('\n')
-      .map((s) => s.trim())
-      .filter(Boolean);
+    const images = form.images.map((s) => s.trim()).filter(Boolean);
     if (images.length === 0) {
-      toast.error('Add at least one image URL (one per line)');
+      toast.error('Add at least one product image');
       return;
     }
     if (!form.categoryId) {
@@ -781,13 +781,10 @@ function ProductDialog({
               />
             </Field>
 
-            <Field label="Image URLs (one per line)">
-              <textarea
-                value={form.imageUrls}
-                onChange={(e) => setForm({ ...form, imageUrls: e.target.value })}
-                rows={3}
-                placeholder="https://…&#10;https://…"
-                className="w-full px-3 py-2 rounded-md border border-ink-200 text-sm font-mono"
+            <Field label="Images">
+              <ImageUploader
+                images={form.images}
+                onChange={(images) => setForm({ ...form, images })}
               />
             </Field>
 
@@ -819,6 +816,226 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
     </label>
   );
 }
+
+// Uploader uses Cloudinary's unsigned-preset flow (see client/src/lib/cloudinary.ts):
+// the browser POSTs straight to Cloudinary so the API never proxies image bytes.
+// Editors paste-by-URL is still supported for cases like Unsplash links the
+// catalog might already use.
+function ImageUploader({
+  images,
+  onChange,
+}: {
+  images: string[];
+  onChange: (next: string[]) => void;
+}): JSX.Element {
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const [uploading, setUploading] = useState<{ name: string; progress: number }[]>([]);
+  const [dragOver, setDragOver] = useState(false);
+  const [showUrlInput, setShowUrlInput] = useState(false);
+  const [pendingUrl, setPendingUrl] = useState('');
+  const cloudinaryReady = isCloudinaryConfigured();
+
+  async function uploadFiles(files: File[]): Promise<void> {
+    if (!cloudinaryReady) {
+      toast.error('Cloudinary is not configured — set VITE_CLOUDINARY_CLOUD_NAME and VITE_CLOUDINARY_UPLOAD_PRESET in client/.env');
+      return;
+    }
+    const imageFiles = files.filter((f) => f.type.startsWith('image/'));
+    if (imageFiles.length === 0) {
+      toast.error('Only image files are supported');
+      return;
+    }
+    const skipped = files.length - imageFiles.length;
+    if (skipped > 0) toast.message(`Skipped ${skipped} non-image file${skipped === 1 ? '' : 's'}`);
+
+    // Seed progress slots so the UI shows them all immediately.
+    setUploading((prev) => [...prev, ...imageFiles.map((f) => ({ name: f.name, progress: 0 }))]);
+
+    const results = await Promise.allSettled(
+      imageFiles.map((file) =>
+        uploadImageToCloudinary(file, {
+          folder: 'zelora/products',
+          onProgress: (pct) => {
+            setUploading((prev) =>
+              prev.map((u) => (u.name === file.name ? { ...u, progress: pct } : u)),
+            );
+          },
+        }),
+      ),
+    );
+
+    const newUrls: string[] = [];
+    let failures = 0;
+    for (const r of results) {
+      if (r.status === 'fulfilled') newUrls.push(r.value.secureUrl);
+      else failures += 1;
+    }
+    if (newUrls.length > 0) onChange([...images, ...newUrls]);
+    if (failures > 0) toast.error(`${failures} upload${failures === 1 ? '' : 's'} failed`);
+
+    // Drop progress rows for the files we just processed.
+    setUploading((prev) => prev.filter((u) => !imageFiles.some((f) => f.name === u.name)));
+  }
+
+  function onDrop(e: React.DragEvent<HTMLDivElement>): void {
+    e.preventDefault();
+    setDragOver(false);
+    const files = Array.from(e.dataTransfer.files);
+    if (files.length > 0) void uploadFiles(files);
+  }
+
+  function removeAt(idx: number): void {
+    onChange(images.filter((_, i) => i !== idx));
+  }
+
+  function addUrl(): void {
+    const url = pendingUrl.trim();
+    if (!url) return;
+    try {
+      new URL(url);
+    } catch {
+      toast.error('Enter a valid URL');
+      return;
+    }
+    if (images.includes(url)) {
+      toast.message('That image is already in the list');
+      return;
+    }
+    onChange([...images, url]);
+    setPendingUrl('');
+  }
+
+  return (
+    <div className="space-y-3">
+      <div
+        onDragOver={(e) => {
+          e.preventDefault();
+          setDragOver(true);
+        }}
+        onDragLeave={() => setDragOver(false)}
+        onDrop={onDrop}
+        onClick={() => fileInputRef.current?.click()}
+        role="button"
+        tabIndex={0}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            fileInputRef.current?.click();
+          }
+        }}
+        className={`flex flex-col items-center justify-center gap-2 px-4 py-6 rounded-md border-2 border-dashed cursor-pointer transition-colors ${
+          dragOver ? 'border-brand-500 bg-brand-50' : 'border-ink-200 hover:border-ink-300 hover:bg-ink-25'
+        }`}
+      >
+        <Upload className="h-6 w-6 text-ink-500" aria-hidden />
+        <p className="text-sm text-ink-700">
+          <span className="font-medium text-ink-900">Click to upload</span> or drag &amp; drop
+        </p>
+        <p className="text-xs text-ink-500">PNG, JPG or WebP · up to 8 MB each · multiple allowed</p>
+        {!cloudinaryReady && (
+          <p className="mt-1 text-xs text-warning-700">
+            Cloudinary not configured — direct upload disabled. Paste image URLs below instead.
+          </p>
+        )}
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept="image/*"
+          multiple
+          className="hidden"
+          onChange={(e) => {
+            const files = e.target.files ? Array.from(e.target.files) : [];
+            if (files.length > 0) void uploadFiles(files);
+            // Reset so picking the same file twice still fires onChange.
+            e.target.value = '';
+          }}
+        />
+      </div>
+
+      {uploading.length > 0 && (
+        <ul className="space-y-1.5">
+          {uploading.map((u) => (
+            <li key={u.name} className="rounded-md border border-ink-100 bg-ink-25 px-3 py-2">
+              <div className="flex items-center justify-between gap-2 text-xs">
+                <span className="text-ink-700 truncate">{u.name}</span>
+                <span className="font-mono tabular-nums text-ink-500">{u.progress}%</span>
+              </div>
+              <div className="mt-1 h-1 rounded-full bg-ink-100 overflow-hidden">
+                <div
+                  className="h-full bg-brand-500 transition-all"
+                  style={{ width: `${u.progress}%` }}
+                />
+              </div>
+            </li>
+          ))}
+        </ul>
+      )}
+
+      {images.length > 0 && (
+        <ul className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 gap-2">
+          {images.map((url, idx) => (
+            <li key={url + idx} className="relative group rounded-md border border-ink-100 bg-ink-25 overflow-hidden aspect-square">
+              <img
+                src={cloudinaryThumb(url, 240) ?? url}
+                alt={`Image ${idx + 1}`}
+                className="h-full w-full object-cover"
+                onError={(e) => {
+                  // Fall back to the placeholder icon if the URL is broken.
+                  (e.currentTarget as HTMLImageElement).style.display = 'none';
+                }}
+              />
+              <button
+                type="button"
+                onClick={() => removeAt(idx)}
+                className="absolute top-1 right-1 h-6 w-6 inline-flex items-center justify-center rounded-full bg-ink-900/70 text-ink-0 opacity-0 group-hover:opacity-100 focus:opacity-100 transition-opacity"
+                aria-label="Remove image"
+              >
+                <X className="h-3.5 w-3.5" />
+              </button>
+              {idx === 0 && (
+                <span className="absolute bottom-1 left-1 text-[10px] px-1.5 py-0.5 rounded-full bg-ink-900/70 text-ink-0">
+                  Primary
+                </span>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
+
+      <div>
+        {showUrlInput ? (
+          <div className="flex gap-2">
+            <Input
+              value={pendingUrl}
+              onChange={(e) => setPendingUrl(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.preventDefault();
+                  addUrl();
+                }
+              }}
+              placeholder="https://… (paste an external image URL)"
+              className="font-mono text-xs"
+            />
+            <Button type="button" variant="secondary" onClick={addUrl}>Add</Button>
+            <Button type="button" variant="outline" onClick={() => { setShowUrlInput(false); setPendingUrl(''); }} aria-label="Cancel URL input">
+              <X className="h-4 w-4" />
+            </Button>
+          </div>
+        ) : (
+          <button
+            type="button"
+            onClick={() => setShowUrlInput(true)}
+            className="text-xs text-ink-500 hover:text-ink-900 inline-flex items-center gap-1.5"
+          >
+            <Link2 className="h-3 w-3" /> Or paste an image URL
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
 
 function OrderDrawer({ order, onClose }: { order: AdminOrder | null; onClose: () => void }): JSX.Element | null {
   const [updateOrder, { isLoading: updating }] = useUpdateOrderMutation();
@@ -974,7 +1191,8 @@ function ReservationsTable({
         </p>
       )}
       {reservations.length > 0 && (
-        <table className="w-full text-sm">
+        <div className="overflow-x-auto">
+        <table className="w-full text-sm min-w-[860px]">
           <thead className="text-eyebrow uppercase text-ink-500">
             <tr>
               <th className="text-left px-4 py-2">When</th>
@@ -1054,6 +1272,7 @@ function ReservationsTable({
             })}
           </tbody>
         </table>
+        </div>
       )}
     </section>
   );

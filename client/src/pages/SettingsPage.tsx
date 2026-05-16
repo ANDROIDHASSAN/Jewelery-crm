@@ -62,10 +62,10 @@ export function SettingsPage(): JSX.Element {
   }
 
   return (
-    <div className="space-y-6 max-w-[920px]">
+    <div className="space-y-4 sm:space-y-6 max-w-3xl">
       <header>
         <p className="text-eyebrow uppercase text-ink-500">Workspace</p>
-        <h1 className="font-display text-display-sm text-ink-900">Settings</h1>
+        <h1 className="font-display text-xl sm:text-display-sm text-ink-900">Settings</h1>
         <p className="text-sm text-ink-500 mt-1">
           Business info, stores, integrations, and your admin session.
         </p>
@@ -152,12 +152,12 @@ export function SettingsPage(): JSX.Element {
       >
         <ul className="divide-y divide-ink-100">
           {INTEGRATIONS.map((int) => (
-            <li key={int.name} className="flex items-start justify-between gap-4 py-3 first:pt-0 last:pb-0">
+            <li key={int.name} className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-2 sm:gap-4 py-3 first:pt-0 last:pb-0">
               <div className="min-w-0">
                 <p className="font-medium text-ink-900 text-sm">{int.name}</p>
                 <p className="text-xs text-ink-500 mt-0.5 leading-relaxed">{int.description}</p>
               </div>
-              <div className="flex items-center gap-2 shrink-0">
+              <div className="flex items-center gap-2 shrink-0 self-start sm:self-auto">
                 <Badge tone={int.connected ? 'success' : 'neutral'}>
                   {int.connected ? 'Connected' : 'Not connected'}
                 </Badge>
@@ -210,10 +210,10 @@ interface SettingsCardProps {
 
 function SettingsCard({ title, eyebrow, description, children }: SettingsCardProps): JSX.Element {
   return (
-    <section className="rounded-md border border-ink-100 bg-ink-0 p-6">
+    <section className="rounded-md border border-ink-100 bg-ink-0 p-4 sm:p-6">
       <header className="mb-4">
         <p className="text-[11px] uppercase tracking-wider text-ink-500">{eyebrow}</p>
-        <h2 className="font-display text-[22px] leading-tight text-ink-900 mt-1">{title}</h2>
+        <h2 className="font-display text-lg sm:text-[22px] leading-tight text-ink-900 mt-1">{title}</h2>
         {description && <p className="text-sm text-ink-500 mt-1.5 leading-relaxed">{description}</p>}
       </header>
       {children}
@@ -223,9 +223,9 @@ function SettingsCard({ title, eyebrow, description, children }: SettingsCardPro
 
 function Row({ label, value }: { label: string; value: React.ReactNode }): JSX.Element {
   return (
-    <div className="grid grid-cols-[180px_1fr] gap-4 py-2.5 text-sm">
+    <div className="grid grid-cols-[110px_1fr] sm:grid-cols-[180px_1fr] gap-3 sm:gap-4 py-2.5 text-sm">
       <dt className="text-ink-500">{label}</dt>
-      <dd className="text-ink-900">{value}</dd>
+      <dd className="text-ink-900 break-words">{value}</dd>
     </div>
   );
 }

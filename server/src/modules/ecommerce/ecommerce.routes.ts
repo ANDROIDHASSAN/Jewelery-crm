@@ -3,8 +3,49 @@ import { z } from 'zod';
 import { ProductInputSchema } from '@goldos/shared/schemas';
 import { prisma } from '../../lib/prisma.js';
 import { ORDER_STATUSES } from '@goldos/shared/constants';
+import { readGoldRatePaise } from '../../lib/redis.js';
+import { applyBps, computeGoldValuePaise } from '../../lib/money.js';
 
 export const ecommerceRouter: Router = Router();
+
+/**
+ * Live price = metal value at today's spot rate + making charge on metal + stone charge.
+ * Re-uses the same arithmetic as POS so a product's listed price matches the
+ * billed amount when a customer buys it. Routing by category metal type:
+ *   GOLD     → 24K spot scaled by purityCaratX100/2400
+ *   SILVER   → silver spot × weight (purityCaratX100 is the millesimal fineness,
+ *              e.g. 925 sterling; the silver rate is per gram of 99.9% silver
+ *              so we apply the fineness as a fraction of 1000)
+ *   DIAMOND/PLATINUM/OTHER → no live metal recompute, fall back to basePricePaise
+ *                            so we don't quote nonsense for non-rate-tracked metals.
+ */
+function computeLivePricePaise(
+  product: {
+    weightMg: number;
+    purityCaratX100: number;
+    makingChargeBps: number;
+    stoneChargePaise: number;
+    basePricePaise: number;
+    category: { metalType: string };
+  },
+  rate24KPaise: number,
+  rateSilverPaise: number,
+): number {
+  let metalValue: number;
+  if (product.category.metalType === 'GOLD') {
+    metalValue = computeGoldValuePaise(product.weightMg, product.purityCaratX100, rate24KPaise);
+  } else if (product.category.metalType === 'SILVER') {
+    // weightMg/1000 → grams. purityCaratX100/1000 → fineness fraction (925 → 0.925).
+    metalValue = Math.round((product.weightMg * rateSilverPaise * product.purityCaratX100) / (1000 * 1000));
+  } else {
+    // DIAMOND / PLATINUM / OTHER — no live rate to apply. Keep the stored base
+    // price as the metal-equivalent value so the live total still reflects
+    // making + stone deltas if those ever change.
+    metalValue = product.basePricePaise;
+  }
+  const making = applyBps(metalValue, product.makingChargeBps);
+  return metalValue + making + product.stoneChargePaise;
+}
 
 ecommerceRouter.get('/products', async (req, res, next) => {
   try {
@@ -12,14 +53,27 @@ ecommerceRouter.get('/products', async (req, res, next) => {
       .object({ cursor: z.string().optional(), search: z.string().optional() })
       .parse(req.query);
     const take = 50;
-    const products = await prisma.product.findMany({
-      where: q.search ? { name: { contains: q.search, mode: 'insensitive' } } : undefined,
-      orderBy: { createdAt: 'desc' },
-      take: take + 1,
-      ...(q.cursor ? { cursor: { id: q.cursor }, skip: 1 } : {}),
-    });
+    const [products, rate24, rateSilver] = await Promise.all([
+      prisma.product.findMany({
+        where: q.search ? { name: { contains: q.search, mode: 'insensitive' } } : undefined,
+        orderBy: { createdAt: 'desc' },
+        take: take + 1,
+        ...(q.cursor ? { cursor: { id: q.cursor }, skip: 1 } : {}),
+        include: { category: { select: { metalType: true } } },
+      }),
+      readGoldRatePaise(2400),
+      readGoldRatePaise(0),
+    ]);
     const hasMore = products.length > take;
-    res.json({ data: products.slice(0, take), page: { nextCursor: hasMore ? products.at(-2)?.id : undefined, hasMore } });
+    const rate24KPaise = rate24?.paise ?? 0;
+    const rateSilverPaise = rateSilver?.paise ?? 0;
+    const stale = (rate24?.stale ?? true) || (rateSilver?.stale ?? true);
+    const enriched = products.slice(0, take).map((p) => ({
+      ...p,
+      livePricePaise: computeLivePricePaise(p, rate24KPaise, rateSilverPaise),
+      livePriceStale: stale,
+    }));
+    res.json({ data: enriched, page: { nextCursor: hasMore ? products.at(-2)?.id : undefined, hasMore } });
   } catch (err) {
     next(err);
   }

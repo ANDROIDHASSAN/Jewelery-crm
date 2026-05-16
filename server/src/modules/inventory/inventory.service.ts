@@ -44,7 +44,7 @@ export async function createItem(input: ItemInput, performedByUserId?: string) {
       performedByUserId: performedByUserId ?? null,
     },
   });
-  await writeAudit('Item', item.id, 'CREATE', null, item, performedByUserId);
+  void writeAudit('Item', item.id, 'CREATE', null, item, performedByUserId);
   return item;
 }
 
@@ -52,7 +52,7 @@ export async function updateItem(id: string, patch: Partial<ItemInput>, performe
   const before = await prisma.item.findUnique({ where: { id } });
   if (!before) throw new NotFoundError();
   const item = await prisma.item.update({ where: { id }, data: patch });
-  await writeAudit('Item', id, 'UPDATE', before, item, performedByUserId);
+  void writeAudit('Item', id, 'UPDATE', before, item, performedByUserId);
   return item;
 }
 
@@ -74,7 +74,7 @@ export async function deleteItem(id: string, performedByUserId?: string) {
       performedByUserId: performedByUserId ?? null,
     },
   });
-  await writeAudit('Item', id, 'DELETE', before, after, performedByUserId);
+  void writeAudit('Item', id, 'DELETE', before, after, performedByUserId);
 }
 
 export async function transferItem(id: string, toShopId: string, reason: string, performedByUserId?: string) {
@@ -94,7 +94,7 @@ export async function transferItem(id: string, toShopId: string, reason: string,
       },
     }),
   ]);
-  await writeAudit('Item', id, 'TRANSFER', item, updated, performedByUserId);
+  void writeAudit('Item', id, 'TRANSFER', item, updated, performedByUserId);
   return updated;
 }
 
@@ -114,7 +114,7 @@ export async function recordWastage(id: string, reason: string, performedByUserI
       },
     }),
   ]);
-  await writeAudit('Item', id, 'WASTAGE', item, updated, performedByUserId);
+  void writeAudit('Item', id, 'WASTAGE', item, updated, performedByUserId);
   return movement;
 }
 
@@ -150,12 +150,20 @@ export async function computeValuation(opts: { shopId?: string }) {
     },
     select: { weightMg: true, purityCaratX100: true, shopId: true, categoryId: true },
   });
+  // Resolve each distinct purity's rate once, in parallel. Previously this
+  // hit Redis inside the per-item loop — for a tenant with thousands of
+  // items, that was thousands of sequential round-trips per request.
+  const purities = Array.from(new Set(items.map((i) => i.purityCaratX100)));
+  const rateEntries = await Promise.all(
+    purities.map(async (p) => [p, (await readGoldRatePaise(p))?.paise ?? 642_000] as const),
+  );
+  const rateByPurity = new Map<number, number>(rateEntries);
+
   let totalPaise = 0;
   const byShop = new Map<string, { totalPaise: number; itemCount: number }>();
   const byCategory = new Map<string, { totalPaise: number; itemCount: number }>();
   for (const it of items) {
-    const cached = await readGoldRatePaise(it.purityCaratX100);
-    const ratePerGramPaise = cached?.paise ?? 642_000;
+    const ratePerGramPaise = rateByPurity.get(it.purityCaratX100) ?? 642_000;
     const value = computeGoldValuePaise(it.weightMg, it.purityCaratX100, ratePerGramPaise);
     totalPaise += value;
     const shopAgg = byShop.get(it.shopId) ?? { totalPaise: 0, itemCount: 0 };
@@ -201,7 +209,7 @@ export async function listVendors() {
 
 export async function createVendor(input: VendorInput) {
   const vendor = await prisma.vendor.create({ data: input });
-  await writeAudit('Vendor', vendor.id, 'CREATE', null, vendor);
+  void writeAudit('Vendor', vendor.id, 'CREATE', null, vendor);
   return vendor;
 }
 
@@ -209,7 +217,7 @@ export async function updateVendor(id: string, patch: Partial<VendorInput>) {
   const before = await prisma.vendor.findUnique({ where: { id } });
   if (!before) throw new NotFoundError();
   const vendor = await prisma.vendor.update({ where: { id }, data: patch });
-  await writeAudit('Vendor', id, 'UPDATE', before, vendor);
+  void writeAudit('Vendor', id, 'UPDATE', before, vendor);
   return vendor;
 }
 
@@ -225,7 +233,7 @@ export async function deleteVendor(id: string) {
     );
   }
   await prisma.vendor.delete({ where: { id } });
-  await writeAudit('Vendor', id, 'DELETE', before, null);
+  void writeAudit('Vendor', id, 'DELETE', before, null);
 }
 
 // --- Purchase Orders ---
@@ -252,7 +260,7 @@ export async function createPurchaseOrder(input: PurchaseOrderCreate) {
     },
     include: { items: true, vendor: { select: { id: true, name: true } } },
   });
-  await writeAudit('PurchaseOrder', po.id, 'CREATE', null, po);
+  void writeAudit('PurchaseOrder', po.id, 'CREATE', null, po);
   return po;
 }
 
@@ -314,7 +322,7 @@ export async function receivePurchaseOrder(
       include: { items: true, vendor: { select: { id: true, name: true } } },
     });
   });
-  await writeAudit('PurchaseOrder', poId, 'RECEIVE', po, updated, userId);
+  void writeAudit('PurchaseOrder', poId, 'RECEIVE', po, updated, userId);
   return updated;
 }
 

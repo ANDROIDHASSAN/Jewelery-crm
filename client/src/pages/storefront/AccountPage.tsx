@@ -16,16 +16,16 @@ export function AccountPage(): JSX.Element {
 
   if (!account.signedIn) {
     return (
-      <div className="max-w-[480px] mx-auto px-6 py-16">
+      <div className="max-w-md w-full mx-auto px-4 sm:px-6 py-12 sm:py-16">
         <div className="mx-auto h-14 w-14 rounded-full bg-brand-50 flex items-center justify-center">
           <User className="h-6 w-6 text-brand-700" />
         </div>
-        <h1 className="font-display text-[32px] text-ink-900 text-center mt-6">Welcome back</h1>
+        <h1 className="font-display text-2xl sm:text-[32px] text-ink-900 text-center mt-6">Welcome back</h1>
         <p className="text-center text-sm text-ink-600 mt-2">
           Sign in to track orders, save favourites, and reserve appointments at the showroom.
         </p>
         <form
-          className="mt-10 space-y-4"
+          className="mt-8 sm:mt-10 space-y-4"
           onSubmit={(e) => {
             e.preventDefault();
             if (!name.trim() || !phone.trim()) return;
@@ -50,30 +50,30 @@ export function AccountPage(): JSX.Element {
   }
 
   return (
-    <div className="max-w-[960px] mx-auto px-6 py-10 md:py-14">
-      <header className="flex items-start justify-between gap-6 flex-wrap">
-        <div>
+    <div className="max-w-5xl w-full mx-auto px-4 sm:px-6 py-8 sm:py-10 md:py-14">
+      <header className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4 sm:gap-6">
+        <div className="min-w-0">
           <p className="text-eyebrow uppercase text-ink-500">Your account</p>
-          <h1 className="font-display text-[34px] md:text-[40px] text-ink-900 mt-2">Hi, {account.name.split(' ')[0]}</h1>
-          <p className="text-sm text-ink-600 mt-2">Signed in as {account.phone}{account.email ? ` · ${account.email}` : ''}</p>
+          <h1 className="font-display text-2xl sm:text-[34px] md:text-[40px] text-ink-900 mt-2">Hi, {account.name.split(' ')[0]}</h1>
+          <p className="text-sm text-ink-600 mt-2 break-words">Signed in as {account.phone}{account.email ? ` · ${account.email}` : ''}</p>
         </div>
         <button
           type="button"
           onClick={() => dispatch(signOut())}
-          className="inline-flex items-center gap-2 h-10 px-5 rounded-full border border-ink-200 text-sm text-ink-700 hover:bg-ink-50 transition-colors"
+          className="self-start sm:self-auto inline-flex items-center gap-2 h-10 px-5 rounded-full border border-ink-200 text-sm text-ink-700 hover:bg-ink-50 transition-colors shrink-0"
         >
           <LogOut className="h-4 w-4" />
           Sign out
         </button>
       </header>
 
-      <div className="mt-10 grid grid-cols-1 md:grid-cols-3 gap-4">
+      <div className="mt-8 sm:mt-10 grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4">
         <Tile to="/store/wishlist" icon={<Heart className="h-4 w-4 text-brand-700" />} label="Wishlist" value={`${wishlistCount} ${wishlistCount === 1 ? 'piece' : 'pieces'}`} />
         <Tile to="/store/cart" icon={<ShoppingBag className="h-4 w-4 text-brand-700" />} label="Bag" value={`${cartCount} ${cartCount === 1 ? 'piece' : 'pieces'}`} />
         <Tile to="/store/track" icon={<MapPin className="h-4 w-4 text-brand-700" />} label="Orders" value="None yet" />
       </div>
 
-      <section className="mt-10 rounded-md border border-ink-100 bg-ink-25 p-6">
+      <section className="mt-8 sm:mt-10 rounded-md border border-ink-100 bg-ink-25 p-5 sm:p-6">
         <p className="text-eyebrow uppercase text-ink-500">Contact details</p>
         <ul className="mt-4 space-y-3 text-sm text-ink-800">
           <li className="flex items-center gap-3"><User className="h-4 w-4 text-ink-500" />{account.name}</li>

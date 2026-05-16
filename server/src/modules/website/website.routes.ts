@@ -7,6 +7,7 @@ import { LeadInputSchema, IndianPhoneSchema } from '@goldos/shared/schemas';
 import { rawPrisma } from '../../lib/prisma.js';
 import { runWithTenant } from '../../lib/async-context.js';
 import { resolveCanonicalTenantId } from '../../lib/canonical-tenant.js';
+import { readGoldRatePaise } from '../../lib/redis.js';
 
 export const websiteRouter: Router = Router();
 
@@ -39,6 +40,29 @@ async function tenantFromQueryOrFirst(req: { query: Record<string, unknown> }): 
   if (typeof t === 'string' && t.length > 0) return t;
   return resolveCanonicalTenantId();
 }
+
+// Public live gold/silver rate. Hydrated by the worker from GoldAPI.io once a
+// day; we just expose what's in Redis so the storefront ticker, PDP rate pill,
+// and homepage rate strip can show today's actual number instead of a stale
+// CMS string. No tenant scope — the metal rate is national.
+websiteRouter.get('/gold-rate', async (_req, res, next) => {
+  try {
+    const purities = [2400, 2200, 1800, 1400, 0] as const;
+    const rows = await Promise.all(purities.map((p) => readGoldRatePaise(p)));
+    res.json({
+      data: {
+        rates: purities.map((p, i) => ({
+          purity: p,
+          ratePerGramPaise: rows[i]?.paise ?? 0,
+          stale: rows[i]?.stale ?? true,
+        })),
+        asOf: new Date().toISOString(),
+      },
+    });
+  } catch (err) {
+    next(err);
+  }
+});
 
 // Public read of the storefront content blob. Drives the entire homepage.
 websiteRouter.get('/storefront', async (req, res, next) => {

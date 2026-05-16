@@ -76,14 +76,14 @@ export function InventoryPage(): JSX.Element {
       <header className="flex items-end justify-between flex-wrap gap-y-3">
         <div>
           <p className="text-eyebrow uppercase text-ink-500">Stock & inventory</p>
-          <h1 className="font-display text-display-sm text-ink-900">Module 01 · Stock & inventory</h1>
+          <h1 className="font-display text-xl sm:text-display-sm text-ink-900">Module 01 · Stock & inventory</h1>
           <p className="mt-1 text-sm text-ink-500 max-w-xl">
             Live valuation, multi-store sync, vendors, POs, transfers and wastage — all auditable.
           </p>
         </div>
       </header>
 
-      <nav className="flex flex-wrap gap-1 border-b border-ink-100 -mb-px">
+      <nav className="flex gap-1 border-b border-ink-100 -mb-px overflow-x-auto -mx-3 sm:-mx-4 lg:-mx-6 px-3 sm:px-4 lg:px-6">
         {TABS.map((t) => {
           const Icon = t.icon;
           const active = tab === t.id;
@@ -92,7 +92,7 @@ export function InventoryPage(): JSX.Element {
               key={t.id}
               onClick={() => setTab(t.id)}
               className={cn(
-                'inline-flex items-center gap-1.5 px-3 h-9 text-sm border-b-2 transition-colors',
+                'inline-flex items-center gap-1.5 px-3 h-9 text-sm border-b-2 transition-colors whitespace-nowrap shrink-0',
                 active
                   ? 'border-brand-500 text-ink-900 font-medium'
                   : 'border-transparent text-ink-500 hover:text-ink-700',
@@ -210,11 +210,11 @@ function ItemsTab(): JSX.Element {
 
   return (
     <>
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
         <p className="text-sm text-ink-500">
           {data ? `${data.data.length} item${data.data.length === 1 ? '' : 's'} in view` : '…'}
         </p>
-        <Button onClick={() => setAddOpen(true)}>
+        <Button onClick={() => setAddOpen(true)} className="self-start sm:self-auto">
           <Plus className="h-4 w-4" /> Add item
         </Button>
       </div>
@@ -348,7 +348,8 @@ function MovementsTab({
       {isLoading && <p className="p-5 text-sm text-ink-500">Loading…</p>}
       {!isLoading && rows.length === 0 && <p className="p-5 text-sm text-ink-500">{emptyLabel}</p>}
       {rows.length > 0 && (
-        <table className="w-full text-sm">
+        <div className="overflow-x-auto">
+        <table className="w-full text-sm min-w-[680px]">
           <thead className="text-eyebrow uppercase text-ink-500">
             <tr>
               <th className="text-left px-5 py-3">When</th>
@@ -372,6 +373,7 @@ function MovementsTab({
             ))}
           </tbody>
         </table>
+        </div>
       )}
     </div>
   );
@@ -395,14 +397,14 @@ function ValuationTab(): JSX.Element {
 
   return (
     <div className="space-y-4">
-      <div className="rounded-md border border-ink-100 bg-ink-0 p-5 flex items-center justify-between">
+      <div className="rounded-md border border-ink-100 bg-ink-0 p-4 sm:p-5 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
         <div>
           <p className="text-eyebrow uppercase text-ink-500">Total stock value</p>
-          <p className="font-mono text-3xl text-ink-900 mt-1">
+          <p className="font-mono text-2xl sm:text-3xl text-ink-900 mt-1">
             <Money paise={v.totalPaise} />
           </p>
         </div>
-        <div className="text-right">
+        <div className="sm:text-right">
           <p className="text-sm text-ink-700">{v.itemCount} items in stock</p>
           <p className="text-xs text-ink-400 mt-1">
             As of {new Date(v.asOf).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })} · MCX
@@ -471,7 +473,8 @@ function LowStockTab(): JSX.Element {
           <p className="p-5 text-sm text-ink-500">No category × shop is at or below {threshold} items. Healthy stock.</p>
         )}
         {rows.length > 0 && (
-          <table className="w-full text-sm">
+          <div className="overflow-x-auto">
+          <table className="w-full text-sm min-w-[480px]">
             <thead className="text-eyebrow uppercase text-ink-500">
               <tr>
                 <th className="text-left px-5 py-3">Shop</th>
@@ -495,6 +498,7 @@ function LowStockTab(): JSX.Element {
               ))}
             </tbody>
           </table>
+          </div>
         )}
       </div>
     </div>
@@ -525,9 +529,9 @@ function VendorsTab(): JSX.Element {
 
   return (
     <>
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
         <p className="text-sm text-ink-500">{rows.length} vendor{rows.length === 1 ? '' : 's'}</p>
-        <Button onClick={() => setAddOpen(true)}>
+        <Button onClick={() => setAddOpen(true)} className="self-start sm:self-auto">
           <Plus className="h-4 w-4" /> Add vendor
         </Button>
       </div>
@@ -537,7 +541,8 @@ function VendorsTab(): JSX.Element {
           <p className="p-5 text-sm text-ink-500">No vendors yet. Add your first supplier.</p>
         )}
         {rows.length > 0 && (
-          <table className="w-full text-sm">
+          <div className="overflow-x-auto">
+          <table className="w-full text-sm min-w-[760px]">
             <thead className="text-eyebrow uppercase text-ink-500">
               <tr>
                 <th className="text-left px-5 py-3">Name</th>
@@ -570,6 +575,7 @@ function VendorsTab(): JSX.Element {
               ))}
             </tbody>
           </table>
+          </div>
         )}
       </div>
       <AddVendorDialog open={addOpen} onClose={() => setAddOpen(false)} />
@@ -619,9 +625,9 @@ function PurchaseOrdersTab(): JSX.Element {
 
   return (
     <>
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
         <p className="text-sm text-ink-500">{rows.length} PO{rows.length === 1 ? '' : 's'}</p>
-        <Button onClick={() => setCreateOpen(true)}>
+        <Button onClick={() => setCreateOpen(true)} className="self-start sm:self-auto">
           <Plus className="h-4 w-4" /> Create PO
         </Button>
       </div>
@@ -631,7 +637,8 @@ function PurchaseOrdersTab(): JSX.Element {
           <p className="p-5 text-sm text-ink-500">No purchase orders yet.</p>
         )}
         {rows.length > 0 && (
-          <table className="w-full text-sm">
+          <div className="overflow-x-auto">
+          <table className="w-full text-sm min-w-[800px]">
             <thead className="text-eyebrow uppercase text-ink-500">
               <tr>
                 <th className="text-left px-5 py-3">PO #</th>
@@ -676,6 +683,7 @@ function PurchaseOrdersTab(): JSX.Element {
               ))}
             </tbody>
           </table>
+          </div>
         )}
       </div>
       <CreatePODialog open={createOpen} onClose={() => setCreateOpen(false)} />
@@ -702,7 +710,8 @@ function MakingChargesTab(): JSX.Element {
       {cats.length === 0 ? (
         <p className="p-5 text-sm text-ink-500">No categories yet. Seed runs the demo set.</p>
       ) : (
-        <table className="w-full text-sm mt-3">
+        <div className="overflow-x-auto">
+        <table className="w-full text-sm mt-3 min-w-[640px]">
           <thead className="text-eyebrow uppercase text-ink-500">
             <tr>
               <th className="text-left px-5 py-3">Category</th>
@@ -765,6 +774,7 @@ function MakingChargesTab(): JSX.Element {
             })}
           </tbody>
         </table>
+        </div>
       )}
     </div>
   );
@@ -781,7 +791,8 @@ function AuditTab(): JSX.Element {
       {isLoading && <p className="p-5 text-sm text-ink-500">Loading…</p>}
       {!isLoading && rows.length === 0 && <p className="p-5 text-sm text-ink-500">No audit events yet.</p>}
       {rows.length > 0 && (
-        <table className="w-full text-sm">
+        <div className="overflow-x-auto">
+        <table className="w-full text-sm min-w-[720px]">
           <thead className="text-eyebrow uppercase text-ink-500">
             <tr>
               <th className="text-left px-5 py-3">When</th>
@@ -807,6 +818,7 @@ function AuditTab(): JSX.Element {
             ))}
           </tbody>
         </table>
+        </div>
       )}
     </div>
   );
@@ -853,6 +865,7 @@ function AddItemDialog({ open, onClose }: { open: boolean; onClose: () => void }
         barcodeData: form.sku.trim(),
         shopId: form.shopId,
         categoryId: form.categoryId,
+        images: [],
         weightMg,
         purityCaratX100,
         stoneWeightMg: form.stoneWeightG ? Math.round(parseFloat(form.stoneWeightG) * 1000) : null,
@@ -887,7 +900,7 @@ function AddItemDialog({ open, onClose }: { open: boolean; onClose: () => void }
                 required
               />
             </Field>
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <Field label="Shop">
                 <select
                   value={form.shopId}
@@ -917,7 +930,7 @@ function AddItemDialog({ open, onClose }: { open: boolean; onClose: () => void }
                 </select>
               </Field>
             </div>
-            <div className="grid grid-cols-3 gap-3">
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
               <Field label="Weight (g)">
                 <input
                   type="number"
@@ -950,7 +963,7 @@ function AddItemDialog({ open, onClose }: { open: boolean; onClose: () => void }
                 />
               </Field>
             </div>
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <Field label="Hallmark">
                 <select
                   value={form.hallmarkStatus}
@@ -977,7 +990,7 @@ function AddItemDialog({ open, onClose }: { open: boolean; onClose: () => void }
                 />
               </Field>
             </div>
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <Field label="Cost price (₹)">
                 <input
                   type="number"

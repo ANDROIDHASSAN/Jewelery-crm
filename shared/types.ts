@@ -28,7 +28,16 @@ import type {
   BillCreateSchema,
   BillSchema,
   ExpenseInputSchema,
+  ExpenseUpdateSchema,
+  ExpenseClassificationSchema,
   GoldLoanSchema,
+  GoldLoanInputSchema,
+  GoldLoanRepaymentInputSchema,
+  PayrollInputSchema,
+  VendorPaymentInputSchema,
+  BankAccountInputSchema,
+  BankTransactionInputSchema,
+  ReconciliationInputSchema,
   LeadInputSchema,
   LeadSchema,
   ProductInputSchema,
@@ -67,7 +76,16 @@ export type BillCreate = z.infer<typeof BillCreateSchema>;
 export type Bill = z.infer<typeof BillSchema>;
 
 export type ExpenseInput = z.infer<typeof ExpenseInputSchema>;
+export type ExpenseUpdate = z.infer<typeof ExpenseUpdateSchema>;
+export type ExpenseClassification = z.infer<typeof ExpenseClassificationSchema>;
 export type GoldLoan = z.infer<typeof GoldLoanSchema>;
+export type GoldLoanInput = z.infer<typeof GoldLoanInputSchema>;
+export type GoldLoanRepaymentInput = z.infer<typeof GoldLoanRepaymentInputSchema>;
+export type PayrollInput = z.infer<typeof PayrollInputSchema>;
+export type VendorPaymentInput = z.infer<typeof VendorPaymentInputSchema>;
+export type BankAccountInput = z.infer<typeof BankAccountInputSchema>;
+export type BankTransactionInput = z.infer<typeof BankTransactionInputSchema>;
+export type ReconciliationInput = z.infer<typeof ReconciliationInputSchema>;
 
 export type LeadInput = z.infer<typeof LeadInputSchema>;
 export type Lead = z.infer<typeof LeadSchema>;

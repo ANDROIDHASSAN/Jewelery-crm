@@ -1,7 +1,13 @@
-// server/src/app.ts — Express app factory. Exported so tests can mount it via supertest
-// without binding to a port.
+// server/src/app.ts — Express app factory. Exported so tests can mount it
+// via supertest without binding to a port.
+//
+// Route protection model (post RBAC v2):
+//   * Every protected endpoint goes through authMiddleware → tenantScope.
+//   * Module-level access is gated here in the mount with requirePermission().
+//   * Action-level gates (write/delete/refund) live inside each route file.
 
 import express from 'express';
+import compression from 'compression';
 import cookieParser from 'cookie-parser';
 import cors from 'cors';
 import pinoHttp from 'pino-http';
@@ -12,11 +18,16 @@ import { authMiddleware } from './middleware/auth.js';
 import { tenantScope } from './middleware/tenant-scope.js';
 import { apiRateLimit } from './middleware/rate-limit.js';
 import { errorHandler } from './middleware/error-handler.js';
+import { requirePermission, requireAnyPermission } from './middleware/require-permission.js';
 
 import { authRouter } from './modules/auth/auth.routes.js';
+import { usersRouter } from './modules/users/users.routes.js';
+import { rolesRouter } from './modules/roles/roles.routes.js';
 import { shopsRouter } from './modules/shops/shops.routes.js';
 import { inventoryRouter } from './modules/inventory/inventory.routes.js';
 import { posRouter } from './modules/pos/pos.routes.js';
+import { posFeaturesRouter } from './modules/pos/pos-features.routes.js';
+import { counterRouter } from './modules/counter/counter.routes.js';
 import { financeRouter } from './modules/finance/finance.routes.js';
 import { crmRouter } from './modules/crm/crm.routes.js';
 import { ecommerceRouter } from './modules/ecommerce/ecommerce.routes.js';
@@ -30,6 +41,7 @@ export function createApp(): express.Express {
   // Trust 1 proxy hop in prod (Nginx).
   app.set('trust proxy', env.NODE_ENV === 'production' ? 1 : false);
 
+  app.use(compression());
   app.use(express.json({ limit: '1mb' }));
   app.use(cookieParser());
   const origins = env.CORS_ORIGIN.split(',').map((s) => s.trim()).filter(Boolean);
@@ -41,10 +53,12 @@ export function createApp(): express.Express {
     res.json({ data: { ok: true, env: env.NODE_ENV } });
   });
 
-  // Public auth endpoints.
+  // Public auth endpoints (login, refresh, OTP). Authenticated endpoints
+  // inside authRouter (me, change-password, 2FA) use authMiddleware inline.
   app.use('/api/v1/auth', authRouter);
 
-  // Public website endpoints (no auth, no tenant scope — tenant derived from subdomain or ?tenant=).
+  // Public website endpoints (no auth, no tenant scope — tenant derived from
+  // subdomain or ?tenant=).
   app.use('/api/v1/website', websiteRouter);
 
   // Protected: auth → tenant-scope → routes.
@@ -52,14 +66,74 @@ export function createApp(): express.Express {
   protectedRouter.use(authMiddleware);
   protectedRouter.use(tenantScope);
   protectedRouter.use(apiRateLimit);
-  protectedRouter.use('/shops', shopsRouter);
-  protectedRouter.use('/inventory', inventoryRouter);
-  protectedRouter.use('/pos', posRouter);
-  protectedRouter.use('/finance', financeRouter);
-  protectedRouter.use('/crm', crmRouter);
-  protectedRouter.use('/ecommerce', ecommerceRouter);
-  protectedRouter.use('/analytics', analyticsRouter);
-  protectedRouter.use('/storefront', storefrontRouter);
+
+  // User + role admin (super admin or anyone with explicit grants).
+  protectedRouter.use('/users', usersRouter);
+  protectedRouter.use('/roles', rolesRouter);
+
+  // Shop list — both read and write live in here; gate by either read.
+  protectedRouter.use('/shops', requireAnyPermission('shops.read', 'shops.write'), shopsRouter);
+
+  // Inventory: anyone with at least read access can hit the mount; the
+  // routes handle further write/delete checks.
+  protectedRouter.use(
+    '/inventory',
+    requireAnyPermission(
+      'inventory.read',
+      'inventory.write',
+      'inventory.delete',
+      'inventory.transfer',
+      'inventory.wastage',
+      'inventory.purchase_order',
+    ),
+    inventoryRouter,
+  );
+
+  // POS — two routers, two audiences:
+  //   * pos.access:  cashier on the POS subdomain. Can ring up, park bills,
+  //                  open/close their till.
+  //   * pos.monitor: owner / accountant from the admin panel. READ-ONLY
+  //                  window into every shop's POS activity. Cannot write.
+  // Action-level gates inside each route file ensure pos.monitor never
+  // unlocks bill_create / bill_void / refund / day_open / day_close /
+  // cash_drawer / parked_bill / estimate / advance / repair writes.
+  protectedRouter.use('/pos', requireAnyPermission('pos.access', 'pos.monitor'), posRouter);
+  protectedRouter.use('/pos-x', requireAnyPermission('pos.access', 'pos.monitor'), posFeaturesRouter);
+  protectedRouter.use('/counter', requirePermission('pos.monitor'), counterRouter);
+
+  // Finance — gate by either read or any write perm.
+  protectedRouter.use(
+    '/finance',
+    requireAnyPermission(
+      'finance.read',
+      'finance.expense_write',
+      'finance.goldloan_write',
+      'finance.payroll_write',
+      'finance.ledger_export',
+    ),
+    financeRouter,
+  );
+
+  // CRM
+  protectedRouter.use(
+    '/crm',
+    requireAnyPermission('crm.read', 'crm.write', 'crm.assign', 'crm.whatsapp_send'),
+    crmRouter,
+  );
+
+  // E-commerce
+  protectedRouter.use(
+    '/ecommerce',
+    requireAnyPermission('ecommerce.read', 'ecommerce.product_write', 'ecommerce.order_fulfil'),
+    ecommerceRouter,
+  );
+
+  // Analytics
+  protectedRouter.use('/analytics', requirePermission('reports.view'), analyticsRouter);
+
+  // Storefront content (CMS)
+  protectedRouter.use('/storefront', requireAnyPermission('website.read', 'website.write'), storefrontRouter);
+
   app.use('/api/v1', protectedRouter);
 
   app.use(errorHandler);

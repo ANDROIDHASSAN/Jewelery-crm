@@ -33,8 +33,26 @@ export interface PublicCategory {
   slug: string;
 }
 
+export interface PublicGoldRate {
+  purity: number;
+  ratePerGramPaise: number;
+  stale: boolean;
+}
+
+export interface PublicGoldRateResponse {
+  rates: PublicGoldRate[];
+  asOf: string;
+}
+
 export const storefrontApi = baseApi.injectEndpoints({
   endpoints: (build) => ({
+    // Live gold/silver rate for the storefront ticker. Polls every 5 min so a
+    // worker refresh shows up within the customer's session without thrashing
+    // the network. No auth — the rate is public.
+    getPublicGoldRate: build.query<PublicGoldRateResponse, void>({
+      query: () => ({ url: '/website/gold-rate' }),
+      transformResponse: (raw: { data: PublicGoldRateResponse }) => raw.data,
+    }),
     getPublicStorefront: build.query<StorefrontResponse, void>({
       query: () => ({ url: '/website/storefront' }),
       transformResponse: (raw: { data: StorefrontResponse }) => raw.data,
@@ -138,6 +156,7 @@ export const storefrontApi = baseApi.injectEndpoints({
 });
 
 export const {
+  useGetPublicGoldRateQuery,
   useGetPublicStorefrontQuery,
   useGetAdminStorefrontQuery,
   useUpdateStorefrontMutation,

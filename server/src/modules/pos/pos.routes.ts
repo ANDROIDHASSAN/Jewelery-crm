@@ -5,6 +5,7 @@ import * as svc from './pos.service.js';
 import { readGoldRatePaise } from '../../lib/redis.js';
 import { prisma } from '../../lib/prisma.js';
 import { NotFoundError } from '../../lib/errors.js';
+import { requirePermission } from '../../middleware/require-permission.js';
 
 export const posRouter: Router = Router();
 
@@ -28,7 +29,10 @@ posRouter.get('/items/by-barcode', async (req, res, next) => {
   }
 });
 
-posRouter.post('/bills', async (req, res, next) => {
+// Per-route bill_create gate so a `pos.monitor` reader CANNOT post a sale —
+// the mount-level gate accepts either pos.access or pos.monitor, but only
+// the cashier perm (which carries pos.bill_create) clears this one.
+posRouter.post('/bills', requirePermission('pos.bill_create'), async (req, res, next) => {
   try {
     const body = BillCreateSchema.parse(req.body);
     const idempotencyHeader = req.headers['idempotency-key'];

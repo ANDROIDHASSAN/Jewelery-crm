@@ -195,7 +195,7 @@ analyticsRouter.get('/staff', async (req, res, next) => {
     const users = userIds.length
       ? await prisma.user.findMany({
           where: { id: { in: userIds } },
-          select: { id: true, name: true, role: true },
+          select: { id: true, name: true, role: { select: { slug: true } } },
         })
       : [];
     const byId = new Map(users.map((u) => [u.id, u]));
@@ -205,7 +205,7 @@ analyticsRouter.get('/staff', async (req, res, next) => {
         return {
           userId: g.createdByUserId,
           userName: u?.name ?? null,
-          userRole: u?.role ?? null,
+          userRole: u?.role?.slug ?? null,
           billCount: g._count._all,
           revenuePaise: g._sum.totalPaise ?? 0,
         };

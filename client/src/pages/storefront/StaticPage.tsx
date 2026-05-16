@@ -120,8 +120,8 @@ export function StaticPage(): JSX.Element {
 
   if (!spec) {
     return (
-      <div className="max-w-[760px] mx-auto px-6 py-20 text-center">
-        <h1 className="font-display text-[32px] text-ink-900">Page not found</h1>
+      <div className="max-w-2xl w-full mx-auto px-4 sm:px-6 py-14 sm:py-20 text-center">
+        <h1 className="font-display text-2xl sm:text-[32px] text-ink-900">Page not found</h1>
         <p className="mt-2 text-sm text-ink-600">
           We couldn&apos;t find a page at this URL.
         </p>
@@ -133,27 +133,27 @@ export function StaticPage(): JSX.Element {
   }
 
   return (
-    <div className="max-w-[760px] mx-auto px-6 py-14 md:py-20">
-      <header className="mb-10">
+    <div className="max-w-2xl w-full mx-auto px-4 sm:px-6 py-10 sm:py-14 md:py-20">
+      <header className="mb-8 sm:mb-10">
         <p className="text-eyebrow uppercase text-ink-500">{spec.eyebrow}</p>
-        <h1 className="font-display text-[36px] md:text-[48px] leading-[1.05] text-ink-900 mt-3">{spec.title}</h1>
-        <p className="mt-5 text-base text-ink-600 leading-relaxed">{spec.intro}</p>
+        <h1 className="font-display text-2xl sm:text-[36px] md:text-[48px] leading-[1.05] text-ink-900 mt-3">{spec.title}</h1>
+        <p className="mt-4 sm:mt-5 text-sm sm:text-base text-ink-600 leading-relaxed">{spec.intro}</p>
       </header>
 
-      <div className="space-y-8">
+      <div className="space-y-6 sm:space-y-8">
         {spec.sections.map((s) => (
           <section key={s.heading}>
-            <h2 className="font-display text-[22px] text-ink-900">{s.heading}</h2>
+            <h2 className="font-display text-xl sm:text-[22px] text-ink-900">{s.heading}</h2>
             <p className="mt-2 text-sm text-ink-600 leading-relaxed">{s.body}</p>
           </section>
         ))}
       </div>
 
       {spec.ctaLabel && spec.ctaHref && (
-        <div className="mt-12 pt-8 border-t border-ink-100">
+        <div className="mt-10 sm:mt-12 pt-6 sm:pt-8 border-t border-ink-100">
           <Link
             to={spec.ctaHref}
-            className="inline-flex items-center gap-2 h-12 px-7 rounded-full bg-ink-900 text-ink-0 text-sm font-medium hover:bg-ink-800 transition-colors"
+            className="inline-flex items-center gap-2 h-11 sm:h-12 px-5 sm:px-7 rounded-full bg-ink-900 text-ink-0 text-sm font-medium hover:bg-ink-800 transition-colors"
           >
             {spec.ctaLabel}
             <ArrowRight className="h-4 w-4" />

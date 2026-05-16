@@ -10,11 +10,11 @@ export function WishlistPage(): JSX.Element {
 
   if (wishlist.length === 0) {
     return (
-      <div className="max-w-[760px] mx-auto px-6 py-20 text-center">
+      <div className="max-w-2xl w-full mx-auto px-4 sm:px-6 py-14 sm:py-20 text-center">
         <div className="mx-auto h-16 w-16 rounded-full bg-ink-50 flex items-center justify-center">
           <Heart className="h-6 w-6 text-ink-500" />
         </div>
-        <h1 className="font-display text-[32px] mt-6 text-ink-900">Your wishlist is empty</h1>
+        <h1 className="font-display text-2xl sm:text-[32px] mt-6 text-ink-900">Your wishlist is empty</h1>
         <p className="mt-2 text-ink-600 text-sm">
           Tap the heart on any piece to save it for later. Wishlists sync to your phone when you sign in.
         </p>
@@ -29,15 +29,15 @@ export function WishlistPage(): JSX.Element {
   }
 
   return (
-    <div className="max-w-[1280px] mx-auto px-6 py-10 md:py-14">
-      <header className="mb-10">
+    <div className="max-w-[1280px] mx-auto px-4 sm:px-6 py-8 sm:py-10 md:py-14">
+      <header className="mb-8 sm:mb-10">
         <p className="text-eyebrow uppercase text-ink-500">Saved for you</p>
-        <h1 className="font-display text-[34px] md:text-[40px] text-ink-900 mt-2">
+        <h1 className="font-display text-2xl sm:text-[34px] md:text-[40px] text-ink-900 mt-2">
           {wishlist.length} {wishlist.length === 1 ? 'piece' : 'pieces'} on your wishlist
         </h1>
       </header>
 
-      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-x-5 gap-y-12 md:gap-x-6">
+      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-x-3 gap-y-8 sm:gap-x-5 sm:gap-y-12 md:gap-x-6">
         {wishlist.map((item) => (
           <article key={item.slug} className="group relative">
             <button
@@ -46,7 +46,7 @@ export function WishlistPage(): JSX.Element {
                 dispatch(removeFromWishlist(item.slug));
                 toast.success('Removed from wishlist');
               }}
-              className="absolute top-3 right-3 z-10 h-9 w-9 rounded-full bg-ink-0/95 backdrop-blur text-ink-700 hover:text-ink-900 inline-flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity shadow-sm"
+              className="absolute top-2 right-2 sm:top-3 sm:right-3 z-10 h-8 w-8 sm:h-9 sm:w-9 rounded-full bg-ink-0/95 backdrop-blur text-ink-700 hover:text-ink-900 inline-flex items-center justify-center opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity shadow-sm"
               aria-label={`Remove ${item.name} from wishlist`}
             >
               <X className="h-4 w-4" />
@@ -60,10 +60,10 @@ export function WishlistPage(): JSX.Element {
                   loading="lazy"
                 />
               </div>
-              <div className="mt-4">
-                <h3 className="font-display text-[18px] leading-tight text-ink-900">{item.name}</h3>
-                <p className="text-xs text-ink-500 mt-1">{item.weight}</p>
-                <p className="text-sm text-ink-900 font-mono tabular-nums mt-1.5">{item.priceLabel}</p>
+              <div className="mt-3 sm:mt-4">
+                <h3 className="font-display text-base sm:text-[18px] leading-tight text-ink-900">{item.name}</h3>
+                <p className="text-[11px] sm:text-xs text-ink-500 mt-1">{item.weight}</p>
+                <p className="text-sm text-ink-900 font-mono tabular-nums mt-1 sm:mt-1.5">{item.priceLabel}</p>
               </div>
             </Link>
             <button

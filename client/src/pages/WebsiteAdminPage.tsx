@@ -85,17 +85,17 @@ export function WebsiteAdminPage(): JSX.Element {
   }
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4 sm:space-y-6">
       <header className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-3">
         <div>
           <p className="text-eyebrow uppercase text-ink-500">Business website</p>
-          <h1 className="font-display text-display-sm text-ink-900">Pages & content</h1>
+          <h1 className="font-display text-xl sm:text-display-sm text-ink-900">Pages & content</h1>
           <p className="text-sm text-ink-500 mt-1">
             Edits stay local until you click <span className="font-medium text-ink-800">Publish</span>.
             {isLoading && ' Loading saved content…'}
           </p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <Button
             variant="ghost"
             onClick={() => {
@@ -128,7 +128,7 @@ export function WebsiteAdminPage(): JSX.Element {
       </header>
 
       {/* Tabs */}
-      <nav className="border-b border-ink-100 -mx-6 px-6 overflow-x-auto" aria-label="Sections">
+      <nav className="border-b border-ink-100 -mx-3 sm:-mx-4 lg:-mx-6 px-3 sm:px-4 lg:px-6 overflow-x-auto" aria-label="Sections">
         <ul className="flex items-center gap-1 min-w-max">
           {TABS.map((t) => (
             <li key={t.key}>
@@ -150,8 +150,8 @@ export function WebsiteAdminPage(): JSX.Element {
         </ul>
       </nav>
 
-      <div className="grid grid-cols-1 lg:grid-cols-[1fr_360px] gap-8">
-        <div className="space-y-6 max-w-2xl">
+      <div className="grid grid-cols-1 lg:grid-cols-[1fr_360px] gap-4 lg:gap-8">
+        <div className="space-y-4 sm:space-y-6 lg:max-w-2xl">
           {tab === 'brand' && (
             <Card title="Brand identity" desc="Logo, shop name and tagline used in the header and footer.">
               <Field
@@ -270,7 +270,7 @@ export function WebsiteAdminPage(): JSX.Element {
                   onBlur={notify}
                 />
               </Field>
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <Field label="Primary CTA label">
                   <Input
                     value={content.hero.ctaLabel}
@@ -286,7 +286,7 @@ export function WebsiteAdminPage(): JSX.Element {
                   />
                 </Field>
               </div>
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <Field label="Secondary CTA label">
                   <Input
                     value={content.hero.secondaryCtaLabel}
@@ -307,7 +307,7 @@ export function WebsiteAdminPage(): JSX.Element {
 
           {tab === 'rates' && (
             <Card title="Today's gold rates" desc="Shown in the announcement bar, hero strip, and PDP.">
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <Field label="22K">
                   <Input
                     value={content.rates.g22}
@@ -323,7 +323,7 @@ export function WebsiteAdminPage(): JSX.Element {
                   />
                 </Field>
               </div>
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <Field label="Silver">
                   <Input
                     value={content.rates.silver}
@@ -372,9 +372,9 @@ export function WebsiteAdminPage(): JSX.Element {
               <div className="space-y-4">
                 {content.collections.map((c, i) => (
                   <div key={c.slug + i} className="rounded-md border border-ink-100 p-4 space-y-3 bg-ink-25">
-                    <div className="flex items-start gap-3">
-                      <img src={c.img} alt="" className="h-16 w-16 object-cover rounded-sm bg-ink-100" />
-                      <div className="flex-1 grid grid-cols-2 gap-3">
+                    <div className="flex flex-col sm:flex-row items-start gap-3">
+                      <img src={c.img} alt="" className="h-16 w-16 object-cover rounded-sm bg-ink-100 shrink-0" />
+                      <div className="flex-1 grid grid-cols-1 sm:grid-cols-2 gap-3 w-full">
                         <Field label="Name" compact>
                           <Input
                             value={c.name}
@@ -501,7 +501,7 @@ export function WebsiteAdminPage(): JSX.Element {
                         phone: '+91 ',
                         hours: 'Mon–Sat · 10:30 AM – 8:30 PM',
                         image:
-                          'https://images.unsplash.com/photo-1606293459339-aa5d34a7b0e1?auto=format&fit=crop&w=1200&q=80',
+                          'https://images.unsplash.com/photo-1602173574767-37ac01994b2a?auto=format&fit=crop&w=1600&q=85',
                       }),
                     );
                     notify();
@@ -527,7 +527,7 @@ export function WebsiteAdminPage(): JSX.Element {
                         <Trash2 className="h-4 w-4 text-danger-500" />
                       </Button>
                     </div>
-                    <div className="grid grid-cols-2 gap-3">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                       <Field label="Name" compact>
                         <Input
                           value={l.name}
@@ -556,26 +556,81 @@ export function WebsiteAdminPage(): JSX.Element {
                         onBlur={notify}
                       />
                     </Field>
-                    <div className="grid grid-cols-2 gap-3">
-                      <Field label="Hours" compact>
-                        <Input
-                          value={l.hours}
-                          onChange={(e) =>
-                            dispatch(updateLocation({ index: i, patch: { hours: e.target.value } }))
-                          }
-                          onBlur={notify}
-                        />
-                      </Field>
-                      <Field label="Image URL" compact>
-                        <Input
-                          value={l.image}
-                          onChange={(e) =>
-                            dispatch(updateLocation({ index: i, patch: { image: e.target.value } }))
-                          }
-                          onBlur={notify}
-                        />
-                      </Field>
-                    </div>
+                    <Field label="Hours" compact>
+                      <Input
+                        value={l.hours}
+                        onChange={(e) =>
+                          dispatch(updateLocation({ index: i, patch: { hours: e.target.value } }))
+                        }
+                        onBlur={notify}
+                      />
+                    </Field>
+                    <Field
+                      label="Photo"
+                      compact
+                      hint="Paste an image URL or upload a file (≤ 1.5 MB). Shown on the Stores page card."
+                    >
+                      <div className="flex items-start gap-3">
+                        <div
+                          className="h-20 w-28 rounded-md bg-ink-50 border border-ink-100 overflow-hidden shrink-0"
+                          aria-hidden="true"
+                        >
+                          {l.image ? (
+                            <img src={l.image} alt="" className="h-full w-full object-cover" />
+                          ) : (
+                            <div className="h-full w-full flex items-center justify-center text-xs text-ink-400">
+                              No image
+                            </div>
+                          )}
+                        </div>
+                        <div className="flex-1 space-y-2">
+                          <Input
+                            placeholder="https://…"
+                            value={l.image}
+                            onChange={(e) =>
+                              dispatch(updateLocation({ index: i, patch: { image: e.target.value } }))
+                            }
+                            onBlur={notify}
+                          />
+                          <div className="flex items-center gap-2">
+                            <label
+                              htmlFor={`store-image-${i}`}
+                              className="inline-flex items-center gap-1.5 h-8 px-3 rounded-md border border-ink-200 bg-ink-0 text-xs text-ink-700 hover:bg-ink-50 cursor-pointer"
+                            >
+                              Upload image
+                            </label>
+                            <input
+                              id={`store-image-${i}`}
+                              type="file"
+                              accept="image/png,image/jpeg,image/webp"
+                              className="sr-only"
+                              onChange={(e) => {
+                                const file = e.target.files?.[0];
+                                if (!file) return;
+                                if (file.size > 1_500 * 1024) {
+                                  toast.error('Store photo must be under 1.5 MB');
+                                  e.target.value = '';
+                                  return;
+                                }
+                                const reader = new FileReader();
+                                reader.onload = () => {
+                                  dispatch(
+                                    updateLocation({
+                                      index: i,
+                                      patch: { image: String(reader.result ?? '') },
+                                    }),
+                                  );
+                                  notify();
+                                };
+                                reader.onerror = () => toast.error('Could not read file');
+                                reader.readAsDataURL(file);
+                                e.target.value = '';
+                              }}
+                            />
+                          </div>
+                        </div>
+                      </div>
+                    </Field>
                   </div>
                 ))}
               </div>

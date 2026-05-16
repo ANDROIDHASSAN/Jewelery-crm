@@ -128,7 +128,7 @@ export function CollectionPage(): JSX.Element {
   }, [filtered, sort]);
 
   return (
-    <div className="max-w-[1280px] mx-auto px-6 py-12 md:py-16">
+    <div className="max-w-[1280px] mx-auto px-4 sm:px-6 py-8 sm:py-12 md:py-16">
       <nav className="text-xs text-ink-500 mb-5" aria-label="Breadcrumb">
         <Link to="/store" className="hover:text-ink-700">Home</Link>
         <span className="mx-2 text-ink-300">/</span>
@@ -141,13 +141,13 @@ export function CollectionPage(): JSX.Element {
         )}
       </nav>
 
-      <header className="mb-10 max-w-3xl">
+      <header className="mb-8 sm:mb-10 max-w-3xl">
         <p className="text-eyebrow uppercase text-ink-500">Collection</p>
-        <h1 className="font-display text-[40px] md:text-[56px] leading-[1.05] text-ink-900 mt-2">{meta.title}</h1>
-        {meta.subtitle && <p className="mt-4 text-base text-ink-600 leading-relaxed max-w-2xl">{meta.subtitle}</p>}
+        <h1 className="font-display text-3xl sm:text-[40px] md:text-[56px] leading-[1.05] text-ink-900 mt-2">{meta.title}</h1>
+        {meta.subtitle && <p className="mt-3 sm:mt-4 text-sm sm:text-base text-ink-600 leading-relaxed max-w-2xl">{meta.subtitle}</p>}
       </header>
 
-      <div className="sticky top-[88px] z-20 bg-ink-0/85 backdrop-blur-md -mx-6 px-6 border-y border-ink-100 mb-8">
+      <div className="sticky top-[64px] sm:top-[88px] z-20 bg-ink-0/85 backdrop-blur-md -mx-4 sm:-mx-6 px-4 sm:px-6 border-y border-ink-100 mb-6 sm:mb-8">
         <div className="h-14 flex items-center justify-between gap-4">
           <button
             type="button"
@@ -202,7 +202,7 @@ export function CollectionPage(): JSX.Element {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-[220px_1fr] gap-10">
+      <div className="grid grid-cols-1 lg:grid-cols-[220px_1fr] gap-8 lg:gap-10">
         <aside className={cn('space-y-7 text-sm', filtersOpen ? 'block' : 'hidden lg:block')}>
           <FilterGroup
             label="Metal"
@@ -224,7 +224,7 @@ export function CollectionPage(): JSX.Element {
           />
         </aside>
 
-        <section className="grid grid-cols-2 md:grid-cols-3 gap-x-5 gap-y-10 md:gap-x-6">
+        <section className="grid grid-cols-2 md:grid-cols-3 gap-x-3 gap-y-8 sm:gap-x-5 sm:gap-y-10 md:gap-x-6">
           {productsLoading && (
             <p className="col-span-full text-sm text-ink-500">Loading the collection…</p>
           )}
@@ -260,9 +260,9 @@ export function CollectionPage(): JSX.Element {
                     aria-hidden
                   />
                 </div>
-                <div className="mt-4 space-y-1">
-                  <h3 className="font-display text-[18px] leading-tight text-ink-900">{p.name}</h3>
-                  <p className="text-xs text-ink-500">
+                <div className="mt-3 sm:mt-4 space-y-1">
+                  <h3 className="font-display text-base sm:text-[18px] leading-tight text-ink-900">{p.name}</h3>
+                  <p className="text-[11px] sm:text-xs text-ink-500">
                     {weightG.toFixed(2)} g · {purityLabel(p)} hallmarked
                   </p>
                   <p className="text-sm text-ink-900 font-mono tabular-nums pt-0.5">

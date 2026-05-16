@@ -3,7 +3,6 @@
 
 import { z } from 'zod';
 import {
-  ROLES,
   ITEM_MOVEMENT_TYPES,
   HALLMARK_STATUSES,
   PAYMENT_MODES,
@@ -73,22 +72,117 @@ export const ShopSchema = z.object({
 
 export const ShopInputSchema = ShopSchema.omit({ id: true, tenantId: true });
 
+// Password rules — what we enforce both client-side and server-side for any
+// new password (including admin-set initial passwords). Keep these together
+// so client validation matches the server's argon2 hashing pre-check exactly.
+export const PasswordSchema = z
+  .string()
+  .min(10, 'Password must be at least 10 characters')
+  .max(128, 'Password must be at most 128 characters')
+  .regex(/[a-z]/, 'Password must contain a lowercase letter')
+  .regex(/[A-Z]/, 'Password must contain an uppercase letter')
+  .regex(/\d/, 'Password must contain a digit');
+
 export const UserSchema = z.object({
   id: CuidSchema,
   tenantId: CuidSchema,
   shopId: CuidSchema.optional().nullable(),
+  roleId: CuidSchema,
   name: z.string().min(2).max(80),
-  phone: IndianPhoneSchema,
-  role: z.enum(ROLES),
+  email: z.string().email().max(160),
+  phone: IndianPhoneSchema.optional().nullable(),
   isActive: z.boolean().default(true),
+  mustChangePassword: z.boolean().default(false),
+  totpEnabled: z.boolean().default(false),
+  lastLoginAt: z.coerce.date().optional().nullable(),
+  createdAt: z.coerce.date(),
+});
+
+// Super-admin creates a new staff user. Password is generated server-side
+// or supplied here as a temp password; user is forced to change on first login.
+export const UserCreateSchema = z.object({
+  name: z.string().min(2).max(80),
+  email: z.string().email().max(160),
+  phone: IndianPhoneSchema.optional().nullable(),
+  shopId: CuidSchema.optional().nullable(),
+  roleId: CuidSchema,
+  initialPassword: PasswordSchema.optional(), // if omitted, server generates one and returns it
+});
+
+export const UserUpdateSchema = z.object({
+  name: z.string().min(2).max(80).optional(),
+  phone: IndianPhoneSchema.optional().nullable(),
+  shopId: CuidSchema.optional().nullable(),
+  roleId: CuidSchema.optional(),
+  isActive: z.boolean().optional(),
 });
 
 // --- Auth ---
 
+export const LoginSchema = z.object({
+  email: z.string().email().max(160),
+  password: z.string().min(1).max(256),
+  // Optional TOTP — required server-side when the user has 2FA enabled.
+  totpCode: z.string().regex(/^\d{6}$/).optional(),
+  // Optional backup code (8-character alphanumeric) if a user has lost
+  // their authenticator.
+  backupCode: z.string().regex(/^[A-Z0-9]{8}$/).optional(),
+});
+
+export const ChangePasswordSchema = z
+  .object({
+    currentPassword: z.string().min(1).max(256),
+    newPassword: PasswordSchema,
+    confirmPassword: z.string(),
+  })
+  .refine((d) => d.newPassword === d.confirmPassword, {
+    path: ['confirmPassword'],
+    message: 'Passwords do not match',
+  });
+
+export const ResetPasswordSchema = z.object({
+  userId: CuidSchema,
+  newPassword: PasswordSchema.optional(), // server can generate
+  forceChangeOnNextLogin: z.boolean().default(true),
+});
+
+export const Totp2faSetupVerifySchema = z.object({
+  code: z.string().regex(/^\d{6}$/, 'TOTP must be 6 digits'),
+});
+
+// Legacy phone-OTP schemas (kept for backward compat with existing tests).
 export const OtpRequestSchema = z.object({ phone: IndianPhoneSchema });
 export const OtpVerifySchema = z.object({
   phone: IndianPhoneSchema,
   code: z.string().regex(/^\d{6}$/, 'OTP must be 6 digits'),
+});
+
+// --- RBAC: roles & permissions ---
+
+export const PermissionKeySchema = z.string().regex(/^[a-z_]+\.[a-z_]+$/, 'Permission key must look like module.action');
+
+export const RoleCreateSchema = z.object({
+  name: z.string().min(2).max(60),
+  slug: z
+    .string()
+    .min(2)
+    .max(60)
+    .regex(/^[A-Z][A-Z0-9_]*$/, 'Role slug must be UPPER_SNAKE_CASE'),
+  description: z.string().max(400).optional().nullable(),
+  permissionKeys: z.array(PermissionKeySchema).max(200),
+});
+
+export const RoleUpdateSchema = z.object({
+  name: z.string().min(2).max(60).optional(),
+  description: z.string().max(400).optional().nullable(),
+  permissionKeys: z.array(PermissionKeySchema).max(200).optional(),
+});
+
+export const UserPermissionOverrideSchema = z.object({
+  userId: CuidSchema,
+  grants: z.array(PermissionKeySchema).max(200).default([]),
+  denies: z.array(PermissionKeySchema).max(200).default([]),
+  reason: z.string().max(400).optional().nullable(),
 });
 
 // --- Inventory ---
@@ -111,6 +205,9 @@ export const ItemSchema = z.object({
   categoryId: CuidSchema,
   sku: z.string().min(2).max(60),
   barcodeData: z.string().min(2).max(80),
+  name: z.string().min(1).max(160).optional().nullable(),
+  // Cloudinary URLs only. First image is the catalog hero.
+  images: z.array(z.string().url().max(2048)).max(8).default([]),
   weightMg: MgSchema,
   purityCaratX100: PuritySchema,
   stoneWeightMg: MgSchema.optional().nullable(),
@@ -265,13 +362,24 @@ export const BillSchema = z.object({
 
 // --- Finance ---
 
+export const ExpenseClassificationSchema = z.enum(['REVENUE', 'CAPITAL']);
+
 export const ExpenseInputSchema = z.object({
   shopId: CuidSchema,
   category: z.string().min(1).max(60),
   amountPaise: PaiseSchema,
   paidAt: z.coerce.date(),
   notes: z.string().max(400).optional().nullable(),
+  receiptUrl: z.string().url().max(2048).optional().nullable(),
+  classification: ExpenseClassificationSchema.default('REVENUE'),
+  isRecurring: z.boolean().default(false),
+  recurringIntervalDays: z.number().int().min(1).max(366).optional().nullable(),
+  paymentMode: z.enum(PAYMENT_MODES).optional().nullable(),
+  vendorId: CuidSchema.optional().nullable(),
+  bankAccountId: CuidSchema.optional().nullable(),
 });
+
+export const ExpenseUpdateSchema = ExpenseInputSchema.partial();
 
 export const GoldLoanSchema = z.object({
   id: CuidSchema,
@@ -282,6 +390,68 @@ export const GoldLoanSchema = z.object({
   pledgedWeightMg: MgSchema,
   status: z.enum(GOLD_LOAN_STATUSES),
   dueAt: z.coerce.date(),
+});
+
+export const GoldLoanInputSchema = z.object({
+  customerId: CuidSchema,
+  principalPaise: PaiseSchema,
+  interestRateBps: BpsSchema,
+  pledgedWeightMg: MgSchema,
+  dueAt: z.coerce.date(),
+});
+
+export const GoldLoanRepaymentInputSchema = z.object({
+  loanId: CuidSchema,
+  amountPaise: PaiseSchema,
+  paidAt: z.coerce.date(),
+});
+
+export const PayrollInputSchema = z.object({
+  userId: CuidSchema,
+  month: z.string().regex(/^\d{4}-\d{2}$/, 'Month must be YYYY-MM'),
+  basePaise: PaiseSchema,
+  commissionPaise: PaiseSchema.default(0),
+  advancePaise: PaiseSchema.default(0),
+  paidAt: z.coerce.date().optional().nullable(),
+});
+
+export const VendorPaymentInputSchema = z.object({
+  vendorId: CuidSchema,
+  shopId: CuidSchema.optional().nullable(),
+  amountPaise: PaiseSchema,
+  paymentMode: z.enum(PAYMENT_MODES),
+  referenceId: z.string().max(120).optional().nullable(),
+  paidAt: z.coerce.date(),
+  notes: z.string().max(400).optional().nullable(),
+  bankAccountId: CuidSchema.optional().nullable(),
+});
+
+export const BankAccountInputSchema = z.object({
+  nickname: z.string().min(2).max(80),
+  bankName: z.string().min(2).max(80),
+  accountLast4: z.string().regex(/^\d{4}$/, 'Last 4 digits only'),
+  ifsc: z.string().regex(/^[A-Z]{4}0[A-Z0-9]{6}$/, 'Invalid IFSC').optional().nullable(),
+  type: z.enum(['CURRENT', 'SAVINGS', 'OD', 'CC', 'OTHER']).default('CURRENT'),
+  openingBalancePaise: z.number().int().default(0),
+});
+
+export const BankTransactionInputSchema = z.object({
+  accountId: CuidSchema,
+  direction: z.enum(['CREDIT', 'DEBIT']),
+  amountPaise: PaiseSchema,
+  balancePaise: z.number().int().optional().nullable(),
+  description: z.string().min(1).max(240),
+  referenceId: z.string().max(120).optional().nullable(),
+  occurredAt: z.coerce.date(),
+});
+
+export const ReconciliationInputSchema = z.object({
+  shopId: CuidSchema,
+  reconciledDate: z.coerce.date(),
+  countedCashPaise: z.number().int().default(0),
+  settledUpiPaise: z.number().int().default(0),
+  settledCardPaise: z.number().int().default(0),
+  notes: z.string().max(400).optional().nullable(),
 });
 
 // --- CRM ---
@@ -347,7 +517,9 @@ export const StoreLocationSchema = z.object({
   address: z.string().min(1).max(400),
   phone: z.string().min(1).max(60),
   hours: z.string().min(1).max(120),
-  image: z.string().min(1).max(2048),
+  // Accept either a URL or an inline data URL from the CMS uploader (same
+  // precedent as brand.logo). 2.5 MB cap protects the DB from oversized blobs.
+  image: z.string().min(1).max(2_500_000),
 });
 
 export const CollectionTileSchema = z.object({
@@ -395,6 +567,83 @@ export const StorefrontContentSchema = z.object({
 });
 
 export type StorefrontContent = z.infer<typeof StorefrontContentSchema>;
+
+// --- POS: register sessions, parked bills, estimates, repairs, advances ---
+
+export const OpenRegisterSchema = z.object({
+  shopId: CuidSchema,
+  openingFloatPaise: PaiseSchema,
+  notes: z.string().max(400).optional().nullable(),
+});
+
+export const CloseRegisterSchema = z.object({
+  countedCashPaise: PaiseSchema,
+  notes: z.string().max(400).optional().nullable(),
+});
+
+export const CashMovementInputSchema = z.object({
+  shopId: CuidSchema,
+  type: z.enum(['PAY_IN', 'PAY_OUT', 'DEPOSIT']),
+  amountPaise: PaiseSchema.refine((n) => n > 0, 'Amount must be positive'),
+  reason: z.string().min(1).max(200),
+});
+
+export const ParkedBillInputSchema = z.object({
+  shopId: CuidSchema,
+  customerLabel: z.string().min(1).max(120),
+  customerPhone: IndianPhoneSchema.optional().nullable(),
+  draft: z.record(z.unknown()), // BillCreateSchema shape — validated when resumed
+});
+
+export const EstimateInputSchema = z.object({
+  shopId: CuidSchema,
+  customerId: CuidSchema.optional().nullable(),
+  customerLabel: z.string().min(1).max(120),
+  customerPhone: IndianPhoneSchema.optional().nullable(),
+  lines: z.array(BillLineInputSchema).min(1).max(60),
+  validDays: z.number().int().min(1).max(30).default(7),
+});
+
+export const RepairIntakeSchema = z.object({
+  shopId: CuidSchema,
+  customerId: CuidSchema.optional().nullable(),
+  customerName: z.string().min(1).max(120),
+  customerPhone: IndianPhoneSchema,
+  itemDescription: z.string().min(1).max(400),
+  weightInMg: MgSchema.refine((n) => n > 0, 'Weight must be positive'),
+  purityCaratX100: PuritySchema,
+  problem: z.string().min(1).max(800),
+  estimatedCostPaise: PaiseSchema,
+  advancePaise: PaiseSchema.default(0),
+  promisedAt: z.coerce.date().optional().nullable(),
+  notes: z.string().max(800).optional().nullable(),
+});
+
+export const RepairUpdateSchema = z.object({
+  status: z.enum(['INTAKE', 'IN_WORKSHOP', 'READY', 'DELIVERED', 'CANCELLED']).optional(),
+  weightOutMg: MgSchema.optional().nullable(),
+  finalCostPaise: PaiseSchema.optional().nullable(),
+  notes: z.string().max(800).optional().nullable(),
+});
+
+export const AdvanceInputSchema = z.object({
+  shopId: CuidSchema,
+  customerId: CuidSchema,
+  amountPaise: PaiseSchema.refine((n) => n > 0, 'Amount must be positive'),
+  lockRates: z.boolean().default(false),
+  validDays: z.number().int().min(1).max(365).default(90),
+  notes: z.string().max(400).optional().nullable(),
+});
+
+export const RefundInputSchema = z.object({
+  billId: CuidSchema,
+  amountPaise: PaiseSchema.refine((n) => n > 0, 'Amount must be positive'),
+  reason: z.string().min(1).max(400),
+});
+
+export const VoidBillSchema = z.object({
+  reason: z.string().min(3).max(400),
+});
 
 // --- API response envelopes ---
 
