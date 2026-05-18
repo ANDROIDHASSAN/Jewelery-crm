@@ -65,10 +65,15 @@ export function OrderSuccessPage(): JSX.Element {
           Thank you{order?.customer?.name ? `, ${order.customer.name.split(' ')[0]}` : ''}.
         </h1>
         <p className="mt-3 text-sm sm:text-base text-ink-600 max-w-md mx-auto">
-          Your order has been received. We&apos;ll WhatsApp the rate lock and a
-          tracking link to{' '}
-          <span className="font-mono text-ink-800">{phone || 'your phone'}</span>{' '}
-          within the next hour.
+          {phone ? (
+            <>
+              Your order has been received. We&apos;ll WhatsApp the rate lock and a
+              tracking link to{' '}
+              <span className="font-mono text-ink-800">{phone}</span> within the next hour.
+            </>
+          ) : (
+            <>Your order has been received. We&apos;ll WhatsApp the rate lock and a tracking link within the next hour.</>
+          )}
         </p>
       </header>
 

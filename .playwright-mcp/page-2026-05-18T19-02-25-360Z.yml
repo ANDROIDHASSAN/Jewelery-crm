@@ -1,0 +1,175 @@
+- generic [ref=e3]:
+  - banner [ref=e4]:
+    - generic [ref=e7]:
+      - text: Today's rate ·
+      - generic [ref=e8]: 24K ₹7,000/g
+    - generic [ref=e10]:
+      - button "Open menu" [ref=e11] [cursor=pointer]:
+        - img [ref=e12]
+      - link "Zelora — home" [ref=e120] [cursor=pointer]:
+        - /url: /store
+        - img [ref=e14]
+        - generic [ref=e16]: Zelora
+      - generic [ref=e17]:
+        - button "Search" [ref=e18] [cursor=pointer]:
+          - img [ref=e19]
+        - link "Cart (4)" [ref=e22] [cursor=pointer]:
+          - /url: /store/cart
+          - img [ref=e23]
+          - generic [ref=e26]: "4"
+  - main [ref=e27]:
+    - generic [ref=e28]:
+      - generic [ref=e121]:
+        - generic [ref=e122]:
+          - paragraph [ref=e123]:
+            - text: Order
+            - generic [ref=e125]: live · auto-refreshing
+          - paragraph [ref=e126]: ZL-CYWNCN
+          - paragraph [ref=e127]: Placed 18/5/2026, 10:11:58 pm
+        - generic [ref=e128]:
+          - paragraph [ref=e129]: Arrives by
+          - paragraph [ref=e130]: Saturday, 23 May
+          - paragraph [ref=e131]:
+            - img [ref=e132]
+            - text: hand-finished · tracked on WhatsApp
+      - list [ref=e136]:
+        - listitem [ref=e137]:
+          - img [ref=e139]
+          - generic [ref=e142]: Placed
+        - listitem [ref=e143]:
+          - img [ref=e145]
+          - generic [ref=e148]: Confirmed
+        - listitem [ref=e149]:
+          - img [ref=e151]
+          - generic [ref=e155]: Packed
+        - listitem [ref=e156]:
+          - img [ref=e158]
+          - generic [ref=e163]: In transit
+        - listitem [ref=e164]:
+          - img [ref=e166]
+          - generic [ref=e169]: Delivered
+      - generic [ref=e170]:
+        - paragraph [ref=e171]: Activity
+        - list [ref=e172]:
+          - listitem [ref=e173]:
+            - img [ref=e175]
+            - paragraph [ref=e178]: Order placed
+            - paragraph [ref=e179]: Yesterday, 10:11 pm
+            - paragraph [ref=e180]: via System
+      - generic [ref=e181]:
+        - paragraph [ref=e182]: Your pieces
+        - list [ref=e183]:
+          - listitem [ref=e184]:
+            - img "Mira bangle" [ref=e185]
+            - generic [ref=e186]:
+              - paragraph [ref=e187]: Mira bangle
+              - paragraph [ref=e188]: Qty 1
+            - generic [ref=e189]: ₹86,366.00
+        - generic [ref=e190]:
+          - generic [ref=e191]: Total
+          - generic [ref=e192]: ₹88,956.98
+      - generic [ref=e193]:
+        - button "Refresh now" [ref=e194] [cursor=pointer]
+        - link "Ask on WhatsApp" [ref=e195] [cursor=pointer]:
+          - /url: https://wa.me/?text=Hi%2C%20I%20have%20a%20question%20about%20my%20order%20ZL-CYWNCN.
+          - img [ref=e196]
+          - text: Ask on WhatsApp
+  - contentinfo [ref=e32]:
+    - generic [ref=e34]:
+      - generic [ref=e35]:
+        - paragraph [ref=e36]: Stay in the loop
+        - heading "New collections, in your inbox." [level=2] [ref=e37]
+        - paragraph [ref=e38]: Quiet, once a month. Unsubscribe anytime.
+      - generic [ref=e39]:
+        - generic [ref=e40]: Email
+        - textbox "Email" [ref=e41]:
+          - /placeholder: you@email.com
+        - button "Join" [ref=e42] [cursor=pointer]:
+          - generic [ref=e43]: Join
+          - img [ref=e44]
+    - generic [ref=e46]:
+      - generic [ref=e47]:
+        - link "Zelora" [ref=e198] [cursor=pointer]:
+          - /url: /store
+          - img [ref=e49]
+          - text: Zelora
+        - paragraph [ref=e50]: Family jewellers since 1972. Hallmarked gold. Transparent pricing. Hand-crafted in Haryana.
+        - list [ref=e51]:
+          - listitem [ref=e52]:
+            - img [ref=e53]
+            - text: MG Road, Gurugram, Haryana 122001
+          - listitem [ref=e56]:
+            - img [ref=e57]
+            - text: +91 124 444 0011
+          - listitem [ref=e59]:
+            - img [ref=e60]
+            - text: hello@anantjewellers.in
+        - generic [ref=e63]:
+          - link "Instagram" [ref=e64] [cursor=pointer]:
+            - /url: "#"
+            - img [ref=e65]
+          - link "Facebook" [ref=e68] [cursor=pointer]:
+            - /url: "#"
+            - img [ref=e69]
+          - link "YouTube" [ref=e71] [cursor=pointer]:
+            - /url: "#"
+            - img [ref=e72]
+      - generic [ref=e75]:
+        - paragraph [ref=e76]: Shop
+        - list [ref=e77]:
+          - listitem [ref=e78]:
+            - link "Bridal" [ref=e79] [cursor=pointer]:
+              - /url: /store/collections/bridal
+          - listitem [ref=e80]:
+            - link "Daily wear" [ref=e81] [cursor=pointer]:
+              - /url: /store/collections/daily-wear
+          - listitem [ref=e82]:
+            - link "Festive" [ref=e83] [cursor=pointer]:
+              - /url: /store/collections/festive
+          - listitem [ref=e84]:
+            - link "Diamond" [ref=e85] [cursor=pointer]:
+              - /url: /store/collections/diamond
+          - listitem [ref=e86]:
+            - link "Silver" [ref=e87] [cursor=pointer]:
+              - /url: /store/collections/silver
+      - generic [ref=e88]:
+        - paragraph [ref=e89]: Visit
+        - list [ref=e90]:
+          - listitem [ref=e91]:
+            - link "Stores" [ref=e92] [cursor=pointer]:
+              - /url: /store/locations
+          - listitem [ref=e93]:
+            - link "Our story" [ref=e94] [cursor=pointer]:
+              - /url: /store/story
+          - listitem [ref=e95]:
+            - link "Workshop tours" [ref=e96] [cursor=pointer]:
+              - /url: /store/workshop
+          - listitem [ref=e97]:
+            - link "Contact" [ref=e98] [cursor=pointer]:
+              - /url: /store/contact
+      - generic [ref=e99]:
+        - paragraph [ref=e100]: Help
+        - list [ref=e101]:
+          - listitem [ref=e102]:
+            - link "Track order" [ref=e103] [cursor=pointer]:
+              - /url: /store/track
+          - listitem [ref=e104]:
+            - link "Shipping & returns" [ref=e105] [cursor=pointer]:
+              - /url: /store/help
+          - listitem [ref=e106]:
+            - link "Care guide" [ref=e107] [cursor=pointer]:
+              - /url: /store/care
+          - listitem [ref=e108]:
+            - link "Hallmark guide" [ref=e109] [cursor=pointer]:
+              - /url: /store/hallmark
+    - generic [ref=e111]:
+      - paragraph [ref=e112]: "© 2026 Zelora · BIS Hallmark #IND-916 · GSTIN 27ABCDE1234F1Z5"
+      - generic [ref=e113]:
+        - link "Privacy" [ref=e114] [cursor=pointer]:
+          - /url: /store/privacy
+        - link "Terms" [ref=e115] [cursor=pointer]:
+          - /url: /store/terms
+        - generic [ref=e116]: Powered by Zelora
+  - link "Chat on WhatsApp" [ref=e117] [cursor=pointer]:
+    - /url: https://wa.me/9716978692
+    - img [ref=e118]

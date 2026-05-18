@@ -1,0 +1,490 @@
+- generic [ref=e3]:
+  - complementary [ref=e4]:
+    - generic [ref=e5]:
+      - img [ref=e7]
+      - generic [ref=e9]:
+        - generic [ref=e10]: Zelora
+        - generic [ref=e11]: SUPER ADMIN
+    - navigation "Primary" [ref=e12]:
+      - generic [ref=e13]:
+        - paragraph [ref=e14]: Main
+        - link "Dashboard" [ref=e16] [cursor=pointer]:
+          - /url: /admin
+          - img [ref=e18]
+          - generic [ref=e23]: Dashboard
+      - generic [ref=e24]:
+        - paragraph [ref=e25]: Operations
+        - generic [ref=e26]:
+          - link "Inventory" [ref=e27] [cursor=pointer]:
+            - /url: /admin/inventory
+            - img [ref=e29]
+            - generic [ref=e39]: Inventory
+          - link "Offline shops" [ref=e40] [cursor=pointer]:
+            - /url: /admin/counter
+            - img [ref=e42]
+            - generic [ref=e47]: Offline shops
+          - link "Finance" [ref=e48] [cursor=pointer]:
+            - /url: /admin/finance
+            - img [ref=e50]
+            - generic [ref=e53]: Finance
+      - generic [ref=e54]:
+        - paragraph [ref=e55]: Channels
+        - generic [ref=e56]:
+          - link "E-commerce" [ref=e57] [cursor=pointer]:
+            - /url: /admin/ecommerce
+            - img [ref=e59]
+            - generic [ref=e62]: E-commerce
+          - link "Website" [ref=e63] [cursor=pointer]:
+            - /url: /admin/website
+            - img [ref=e65]
+            - generic [ref=e68]: Website
+          - link "CRM & ads" [ref=e69] [cursor=pointer]:
+            - /url: /admin/crm
+            - img [ref=e71]
+            - generic [ref=e76]: CRM & ads
+      - generic [ref=e77]:
+        - paragraph [ref=e78]: Insights
+        - generic [ref=e79]:
+          - link "Analytics" [ref=e80] [cursor=pointer]:
+            - /url: /admin/analytics
+            - img [ref=e82]
+            - generic [ref=e84]: Analytics
+          - link "Team & roles" [ref=e85] [cursor=pointer]:
+            - /url: /admin/team
+            - img [ref=e87]
+            - generic [ref=e99]: Team & roles
+    - link "Settings" [ref=e101] [cursor=pointer]:
+      - /url: /admin/settings
+      - img [ref=e102]
+      - generic [ref=e105]: Settings
+  - generic [ref=e106]:
+    - banner [ref=e107]:
+      - button "Main Showroom — Gurugram" [ref=e108] [cursor=pointer]:
+        - img [ref=e109]
+        - generic [ref=e114]: Main Showroom — Gurugram
+        - img [ref=e115]
+      - button "Open command palette" [ref=e119] [cursor=pointer]:
+        - img [ref=e120]
+        - generic [ref=e123]: Search or jump to…
+        - generic [ref=e124]:
+          - generic [ref=e125]: ⌘
+          - text: K
+      - button "Notifications, 62 new orders pending" [ref=e185] [cursor=pointer]:
+        - img [ref=e129]
+        - generic [ref=e186]: "62"
+      - button "Account menu" [ref=e133] [cursor=pointer]: AK
+    - main [ref=e134]:
+      - generic [ref=e135]:
+        - generic [ref=e137]:
+          - generic [ref=e138]:
+            - paragraph [ref=e139]: Module 04 · E-commerce
+            - heading "Products & orders" [level=1] [ref=e140]
+            - paragraph [ref=e141]: Catalog, online orders, in-store reservations — synced from the storefront and POS on a 10-second cadence.
+          - button "Add product" [ref=e143] [cursor=pointer]:
+            - img [ref=e144]
+            - text: Add product
+        - generic [ref=e145]:
+          - generic [ref=e146]:
+            - generic [ref=e187]:
+              - paragraph [ref=e191]: Live · online orders
+              - paragraph [ref=e192]: updated 12:35:37 am
+            - paragraph [ref=e193]: 58 orders sitting in PENDING for >30 min
+          - list [ref=e195]:
+            - listitem [ref=e196]:
+              - generic [ref=e198]:
+                - paragraph [ref=e199]: New (PENDING)
+                - paragraph [ref=e200]: "62"
+            - listitem [ref=e201]:
+              - generic [ref=e203]:
+                - paragraph [ref=e204]: Confirmed
+                - paragraph [ref=e205]: "3"
+            - listitem [ref=e206]:
+              - generic [ref=e208]:
+                - paragraph [ref=e209]: Packed
+                - paragraph [ref=e210]: "2"
+            - listitem [ref=e211]:
+              - generic [ref=e213]:
+                - paragraph [ref=e214]: In transit
+                - paragraph [ref=e215]: "2"
+            - listitem [ref=e216]:
+              - generic [ref=e218]:
+                - paragraph [ref=e219]: Delivered
+                - paragraph [ref=e220]: "4"
+        - generic [ref=e147]:
+          - generic [ref=e148]:
+            - paragraph [ref=e149]: Published products
+            - paragraph [ref=e150]: "20"
+            - paragraph [ref=e151]: 20 total in catalog
+          - generic [ref=e152]:
+            - paragraph [ref=e153]: Open orders
+            - paragraph [ref=e154]: "69"
+            - paragraph [ref=e221]:
+              - generic [ref=e222]: 58 sitting >30 min · needs action
+          - generic [ref=e155]:
+            - paragraph [ref=e156]: Open reservations
+            - paragraph [ref=e157]: "3"
+            - paragraph [ref=e158]: 3 total · storefront
+          - generic [ref=e159]:
+            - paragraph [ref=e160]: Total revenue
+            - paragraph [ref=e161]: ₹1,00,52,239.68
+            - paragraph [ref=e162]: across 75 orders
+        - tablist "Section tabs" [ref=e163]:
+          - tab "Products" [selected] [ref=e164] [cursor=pointer]:
+            - generic [ref=e165]: Products
+          - tab "Orders 62" [ref=e224] [cursor=pointer]:
+            - generic [ref=e167]: Orders
+            - generic "62 pending" [ref=e225]: "62"
+          - tab "Reservations 3" [ref=e226] [cursor=pointer]:
+            - generic [ref=e169]: Reservations
+            - generic "3 total" [ref=e227]: "3"
+        - table [ref=e172]:
+          - rowgroup [ref=e173]:
+            - row "Product SKU Weight Purity Price Status" [ref=e174]:
+              - columnheader "Product" [ref=e175]
+              - columnheader "SKU" [ref=e176]
+              - columnheader "Weight" [ref=e177]
+              - columnheader "Purity" [ref=e178]
+              - columnheader "Price" [ref=e179]
+              - columnheader "Status" [ref=e180]
+              - columnheader [ref=e181]
+          - rowgroup [ref=e182]:
+            - row "Mira bangle Hand-set 22K bangle from the 2025 Bridal Edit. BIS hallmarke… mira-bangle 12.45 g 22K ₹86,366.00 Published Edit Delete" [ref=e228]:
+              - cell "Mira bangle Hand-set 22K bangle from the 2025 Bridal Edit. BIS hallmarke…" [ref=e229]:
+                - generic [ref=e231]:
+                  - paragraph [ref=e232]: Mira bangle
+                  - paragraph [ref=e233]: Hand-set 22K bangle from the 2025 Bridal Edit. BIS hallmarke…
+              - cell "mira-bangle" [ref=e234]
+              - cell "12.45 g" [ref=e235]
+              - cell "22K" [ref=e236]
+              - cell "₹86,366.00" [ref=e237]
+              - cell "Published" [ref=e238]:
+                - button "Published" [ref=e239] [cursor=pointer]
+              - cell "Edit Delete" [ref=e240]:
+                - generic [ref=e241]:
+                  - button "Edit" [ref=e242] [cursor=pointer]:
+                    - img [ref=e243]
+                  - button "Delete" [ref=e246] [cursor=pointer]:
+                    - img [ref=e247]
+            - row "Niya haar Statement bridal haar with kundan and pearl drops. Made-to-o… niya-haar 65.00 g 22K ₹6,10,000.00 Published Edit Delete" [ref=e250]:
+              - cell "Niya haar Statement bridal haar with kundan and pearl drops. Made-to-o…" [ref=e251]:
+                - generic [ref=e253]:
+                  - paragraph [ref=e254]: Niya haar
+                  - paragraph [ref=e255]: Statement bridal haar with kundan and pearl drops. Made-to-o…
+              - cell "niya-haar" [ref=e256]
+              - cell "65.00 g" [ref=e257]
+              - cell "22K" [ref=e258]
+              - cell "₹6,10,000.00" [ref=e259]
+              - cell "Published" [ref=e260]:
+                - button "Published" [ref=e261] [cursor=pointer]
+              - cell "Edit Delete" [ref=e262]:
+                - generic [ref=e263]:
+                  - button "Edit" [ref=e264] [cursor=pointer]:
+                    - img [ref=e265]
+                  - button "Delete" [ref=e268] [cursor=pointer]:
+                    - img [ref=e269]
+            - row "Isha bridal set Matched necklace + jhumka + maang-tikka. 22K, kundan & uncut… isha-bridal-set 82.00 g 22K ₹8,30,000.00 Published Edit Delete" [ref=e272]:
+              - cell "Isha bridal set Matched necklace + jhumka + maang-tikka. 22K, kundan & uncut…" [ref=e273]:
+                - generic [ref=e275]:
+                  - paragraph [ref=e276]: Isha bridal set
+                  - paragraph [ref=e277]: Matched necklace + jhumka + maang-tikka. 22K, kundan & uncut…
+              - cell "isha-bridal-set" [ref=e278]
+              - cell "82.00 g" [ref=e279]
+              - cell "22K" [ref=e280]
+              - cell "₹8,30,000.00" [ref=e281]
+              - cell "Published" [ref=e282]:
+                - button "Published" [ref=e283] [cursor=pointer]
+              - cell "Edit Delete" [ref=e284]:
+                - generic [ref=e285]:
+                  - button "Edit" [ref=e286] [cursor=pointer]:
+                    - img [ref=e287]
+                  - button "Delete" [ref=e290] [cursor=pointer]:
+                    - img [ref=e291]
+            - row "Kavya choker Polki-set 22K choker. Adjustable dori, paired naturally with… kavya-choker 38.00 g 22K ₹3,10,000.00 Published Edit Delete" [ref=e294]:
+              - cell "Kavya choker Polki-set 22K choker. Adjustable dori, paired naturally with…" [ref=e295]:
+                - generic [ref=e297]:
+                  - paragraph [ref=e298]: Kavya choker
+                  - paragraph [ref=e299]: Polki-set 22K choker. Adjustable dori, paired naturally with…
+              - cell "kavya-choker" [ref=e300]
+              - cell "38.00 g" [ref=e301]
+              - cell "22K" [ref=e302]
+              - cell "₹3,10,000.00" [ref=e303]
+              - cell "Published" [ref=e304]:
+                - button "Published" [ref=e305] [cursor=pointer]
+              - cell "Edit Delete" [ref=e306]:
+                - generic [ref=e307]:
+                  - button "Edit" [ref=e308] [cursor=pointer]:
+                    - img [ref=e309]
+                  - button "Delete" [ref=e312] [cursor=pointer]:
+                    - img [ref=e313]
+            - row "Tara mangalsutra Lightweight 22K mangalsutra with black-bead accents. Everyda… tara-mangalsutra 8.10 g 22K ₹62,200.00 Published Edit Delete" [ref=e316]:
+              - cell "Tara mangalsutra Lightweight 22K mangalsutra with black-bead accents. Everyda…" [ref=e317]:
+                - generic [ref=e319]:
+                  - paragraph [ref=e320]: Tara mangalsutra
+                  - paragraph [ref=e321]: Lightweight 22K mangalsutra with black-bead accents. Everyda…
+              - cell "tara-mangalsutra" [ref=e322]
+              - cell "8.10 g" [ref=e323]
+              - cell "22K" [ref=e324]
+              - cell "₹62,200.00" [ref=e325]
+              - cell "Published" [ref=e326]:
+                - button "Published" [ref=e327] [cursor=pointer]
+              - cell "Edit Delete" [ref=e328]:
+                - generic [ref=e329]:
+                  - button "Edit" [ref=e330] [cursor=pointer]:
+                    - img [ref=e331]
+                  - button "Delete" [ref=e334] [cursor=pointer]:
+                    - img [ref=e335]
+            - row "Diya chain 18-inch 22K chain with a fine rope link. BIS hallmarked.… diya-chain 7.40 g 22K ₹54,800.00 Published Edit Delete" [ref=e338]:
+              - cell "Diya chain 18-inch 22K chain with a fine rope link. BIS hallmarked.…" [ref=e339]:
+                - generic [ref=e341]:
+                  - paragraph [ref=e342]: Diya chain
+                  - paragraph [ref=e343]: 18-inch 22K chain with a fine rope link. BIS hallmarked.…
+              - cell "diya-chain" [ref=e344]
+              - cell "7.40 g" [ref=e345]
+              - cell "22K" [ref=e346]
+              - cell "₹54,800.00" [ref=e347]
+              - cell "Published" [ref=e348]:
+                - button "Published" [ref=e349] [cursor=pointer]
+              - cell "Edit Delete" [ref=e350]:
+                - generic [ref=e351]:
+                  - button "Edit" [ref=e352] [cursor=pointer]:
+                    - img [ref=e353]
+                  - button "Delete" [ref=e356] [cursor=pointer]:
+                    - img [ref=e357]
+            - row "Sara studs Classic 22K studs — the everyday earring. Screw-back, hypoal… sara-studs 2.40 g 22K ₹18,400.00 Published Edit Delete" [ref=e360]:
+              - cell "Sara studs Classic 22K studs — the everyday earring. Screw-back, hypoal…" [ref=e361]:
+                - generic [ref=e363]:
+                  - paragraph [ref=e364]: Sara studs
+                  - paragraph [ref=e365]: Classic 22K studs — the everyday earring. Screw-back, hypoal…
+              - cell "sara-studs" [ref=e366]
+              - cell "2.40 g" [ref=e367]
+              - cell "22K" [ref=e368]
+              - cell "₹18,400.00" [ref=e369]
+              - cell "Published" [ref=e370]:
+                - button "Published" [ref=e371] [cursor=pointer]
+              - cell "Edit Delete" [ref=e372]:
+                - generic [ref=e373]:
+                  - button "Edit" [ref=e374] [cursor=pointer]:
+                    - img [ref=e375]
+                  - button "Delete" [ref=e378] [cursor=pointer]:
+                    - img [ref=e379]
+            - row "Meera nose pin Single-stone 22K nose pin. Screw-fit. Tiny, all-day comfort.… meera-nose-pin 0.90 g 22K ₹7,900.00 Published Edit Delete" [ref=e382]:
+              - cell "Meera nose pin Single-stone 22K nose pin. Screw-fit. Tiny, all-day comfort.…" [ref=e383]:
+                - generic [ref=e385]:
+                  - paragraph [ref=e386]: Meera nose pin
+                  - paragraph [ref=e387]: Single-stone 22K nose pin. Screw-fit. Tiny, all-day comfort.…
+              - cell "meera-nose-pin" [ref=e388]
+              - cell "0.90 g" [ref=e389]
+              - cell "22K" [ref=e390]
+              - cell "₹7,900.00" [ref=e391]
+              - cell "Published" [ref=e392]:
+                - button "Published" [ref=e393] [cursor=pointer]
+              - cell "Edit Delete" [ref=e394]:
+                - generic [ref=e395]:
+                  - button "Edit" [ref=e396] [cursor=pointer]:
+                    - img [ref=e397]
+                  - button "Delete" [ref=e400] [cursor=pointer]:
+                    - img [ref=e401]
+            - row "Riya jhumkas Classic 22K jhumkas with hand-set pearls. A festive everyday… riya-jhumka 5.20 g 22K ₹31,400.00 Published Edit Delete" [ref=e404]:
+              - cell "Riya jhumkas Classic 22K jhumkas with hand-set pearls. A festive everyday…" [ref=e405]:
+                - generic [ref=e407]:
+                  - paragraph [ref=e408]: Riya jhumkas
+                  - paragraph [ref=e409]: Classic 22K jhumkas with hand-set pearls. A festive everyday…
+              - cell "riya-jhumka" [ref=e410]
+              - cell "5.20 g" [ref=e411]
+              - cell "22K" [ref=e412]
+              - cell "₹31,400.00" [ref=e413]
+              - cell "Published" [ref=e414]:
+                - button "Published" [ref=e415] [cursor=pointer]
+              - cell "Edit Delete" [ref=e416]:
+                - generic [ref=e417]:
+                  - button "Edit" [ref=e418] [cursor=pointer]:
+                    - img [ref=e419]
+                  - button "Delete" [ref=e422] [cursor=pointer]:
+                    - img [ref=e423]
+            - row "Aanya temple haar South-Indian temple-style 22K haar. Lakshmi coin pendant.… aanya-temple-haar 28.00 g 22K ₹1,82,000.00 Published Edit Delete" [ref=e426]:
+              - cell "Aanya temple haar South-Indian temple-style 22K haar. Lakshmi coin pendant.…" [ref=e427]:
+                - generic [ref=e429]:
+                  - paragraph [ref=e430]: Aanya temple haar
+                  - paragraph [ref=e431]: South-Indian temple-style 22K haar. Lakshmi coin pendant.…
+              - cell "aanya-temple-haar" [ref=e432]
+              - cell "28.00 g" [ref=e433]
+              - cell "22K" [ref=e434]
+              - cell "₹1,82,000.00" [ref=e435]
+              - cell "Published" [ref=e436]:
+                - button "Published" [ref=e437] [cursor=pointer]
+              - cell "Edit Delete" [ref=e438]:
+                - generic [ref=e439]:
+                  - button "Edit" [ref=e440] [cursor=pointer]:
+                    - img [ref=e441]
+                  - button "Delete" [ref=e444] [cursor=pointer]:
+                    - img [ref=e445]
+            - row "Vanya bangle pair Pair of 22K patterned bangles. Karva Chauth-ready, photograp… vanya-bangle-pair 22.00 g 22K ₹1,42,000.00 Published Edit Delete" [ref=e448]:
+              - cell "Vanya bangle pair Pair of 22K patterned bangles. Karva Chauth-ready, photograp…" [ref=e449]:
+                - generic [ref=e451]:
+                  - paragraph [ref=e452]: Vanya bangle pair
+                  - paragraph [ref=e453]: Pair of 22K patterned bangles. Karva Chauth-ready, photograp…
+              - cell "vanya-bangle-pair" [ref=e454]
+              - cell "22.00 g" [ref=e455]
+              - cell "22K" [ref=e456]
+              - cell "₹1,42,000.00" [ref=e457]
+              - cell "Published" [ref=e458]:
+                - button "Published" [ref=e459] [cursor=pointer]
+              - cell "Edit Delete" [ref=e460]:
+                - generic [ref=e461]:
+                  - button "Edit" [ref=e462] [cursor=pointer]:
+                    - img [ref=e463]
+                  - button "Delete" [ref=e466] [cursor=pointer]:
+                    - img [ref=e467]
+            - row "Priya jhumkas Mid-size 22K jhumkas with ruby drops. For festive evenings.… priya-jhumka-medium 8.60 g 22K ₹70,900.00 Published Edit Delete" [ref=e470]:
+              - cell "Priya jhumkas Mid-size 22K jhumkas with ruby drops. For festive evenings.…" [ref=e471]:
+                - generic [ref=e473]:
+                  - paragraph [ref=e474]: Priya jhumkas
+                  - paragraph [ref=e475]: Mid-size 22K jhumkas with ruby drops. For festive evenings.…
+              - cell "priya-jhumka-medium" [ref=e476]
+              - cell "8.60 g" [ref=e477]
+              - cell "22K" [ref=e478]
+              - cell "₹70,900.00" [ref=e479]
+              - cell "Published" [ref=e480]:
+                - button "Published" [ref=e481] [cursor=pointer]
+              - cell "Edit Delete" [ref=e482]:
+                - generic [ref=e483]:
+                  - button "Edit" [ref=e484] [cursor=pointer]:
+                    - img [ref=e485]
+                  - button "Delete" [ref=e488] [cursor=pointer]:
+                    - img [ref=e489]
+            - row "Aarya solitaire 0.32ct lab-grown solitaire set in 18K white gold. Certified,… aarya-ring 4.20 g 18K ₹66,900.00 Published Edit Delete" [ref=e492]:
+              - cell "Aarya solitaire 0.32ct lab-grown solitaire set in 18K white gold. Certified,…" [ref=e493]:
+                - generic [ref=e495]:
+                  - paragraph [ref=e496]: Aarya solitaire
+                  - paragraph [ref=e497]: 0.32ct lab-grown solitaire set in 18K white gold. Certified,…
+              - cell "aarya-ring" [ref=e498]
+              - cell "4.20 g" [ref=e499]
+              - cell "18K" [ref=e500]
+              - cell "₹66,900.00" [ref=e501]
+              - cell "Published" [ref=e502]:
+                - button "Published" [ref=e503] [cursor=pointer]
+              - cell "Edit Delete" [ref=e504]:
+                - generic [ref=e505]:
+                  - button "Edit" [ref=e506] [cursor=pointer]:
+                    - img [ref=e507]
+                  - button "Delete" [ref=e510] [cursor=pointer]:
+                    - img [ref=e511]
+            - row "Nyra tennis bracelet 18K white-gold tennis bracelet, 2.4ct total. IGI certified.… nyra-tennis 9.80 g 18K ₹2,80,000.00 Published Edit Delete" [ref=e514]:
+              - cell "Nyra tennis bracelet 18K white-gold tennis bracelet, 2.4ct total. IGI certified.…" [ref=e515]:
+                - generic [ref=e517]:
+                  - paragraph [ref=e518]: Nyra tennis bracelet
+                  - paragraph [ref=e519]: 18K white-gold tennis bracelet, 2.4ct total. IGI certified.…
+              - cell "nyra-tennis" [ref=e520]
+              - cell "9.80 g" [ref=e521]
+              - cell "18K" [ref=e522]
+              - cell "₹2,80,000.00" [ref=e523]
+              - cell "Published" [ref=e524]:
+                - button "Published" [ref=e525] [cursor=pointer]
+              - cell "Edit Delete" [ref=e526]:
+                - generic [ref=e527]:
+                  - button "Edit" [ref=e528] [cursor=pointer]:
+                    - img [ref=e529]
+                  - button "Delete" [ref=e532] [cursor=pointer]:
+                    - img [ref=e533]
+            - row "Zara halo ring 0.50ct halo solitaire in 18K rose gold. Sized to order.… zara-halo-ring 3.80 g 18K ₹1,30,000.00 Published Edit Delete" [ref=e536]:
+              - cell "Zara halo ring 0.50ct halo solitaire in 18K rose gold. Sized to order.…" [ref=e537]:
+                - generic [ref=e539]:
+                  - paragraph [ref=e540]: Zara halo ring
+                  - paragraph [ref=e541]: 0.50ct halo solitaire in 18K rose gold. Sized to order.…
+              - cell "zara-halo-ring" [ref=e542]
+              - cell "3.80 g" [ref=e543]
+              - cell "18K" [ref=e544]
+              - cell "₹1,30,000.00" [ref=e545]
+              - cell "Published" [ref=e546]:
+                - button "Published" [ref=e547] [cursor=pointer]
+              - cell "Edit Delete" [ref=e548]:
+                - generic [ref=e549]:
+                  - button "Edit" [ref=e550] [cursor=pointer]:
+                    - img [ref=e551]
+                  - button "Delete" [ref=e554] [cursor=pointer]:
+                    - img [ref=e555]
+            - row "Rhea diamond studs Round-brilliant 0.20ct diamond studs in 18K. Everyday brilli… rhea-studs-diamond 1.90 g 18K ₹56,500.00 Published Edit Delete" [ref=e558]:
+              - cell "Rhea diamond studs Round-brilliant 0.20ct diamond studs in 18K. Everyday brilli…" [ref=e559]:
+                - generic [ref=e561]:
+                  - paragraph [ref=e562]: Rhea diamond studs
+                  - paragraph [ref=e563]: Round-brilliant 0.20ct diamond studs in 18K. Everyday brilli…
+              - cell "rhea-studs-diamond" [ref=e564]
+              - cell "1.90 g" [ref=e565]
+              - cell "18K" [ref=e566]
+              - cell "₹56,500.00" [ref=e567]
+              - cell "Published" [ref=e568]:
+                - button "Published" [ref=e569] [cursor=pointer]
+              - cell "Edit Delete" [ref=e570]:
+                - generic [ref=e571]:
+                  - button "Edit" [ref=e572] [cursor=pointer]:
+                    - img [ref=e573]
+                  - button "Delete" [ref=e576] [cursor=pointer]:
+                    - img [ref=e577]
+            - row "Tia silver anklet 92.5 sterling silver anklet, hallmarked. Light & wearable.… tia-silver-anklet 18.00 g Silver ₹3,400.00 Published Edit Delete" [ref=e580]:
+              - cell "Tia silver anklet 92.5 sterling silver anklet, hallmarked. Light & wearable.…" [ref=e581]:
+                - generic [ref=e583]:
+                  - paragraph [ref=e584]: Tia silver anklet
+                  - paragraph [ref=e585]: 92.5 sterling silver anklet, hallmarked. Light & wearable.…
+              - cell "tia-silver-anklet" [ref=e586]
+              - cell "18.00 g" [ref=e587]
+              - cell "Silver" [ref=e588]
+              - cell "₹3,400.00" [ref=e589]
+              - cell "Published" [ref=e590]:
+                - button "Published" [ref=e591] [cursor=pointer]
+              - cell "Edit Delete" [ref=e592]:
+                - generic [ref=e593]:
+                  - button "Edit" [ref=e594] [cursor=pointer]:
+                    - img [ref=e595]
+                  - button "Delete" [ref=e598] [cursor=pointer]:
+                    - img [ref=e599]
+            - row "Maya silver bangle Oxidised silver bangle with hand-engraved motifs. 92.5 sterl… maya-silver-bangle 24.00 g Silver ₹4,900.00 Published Edit Delete" [ref=e602]:
+              - cell "Maya silver bangle Oxidised silver bangle with hand-engraved motifs. 92.5 sterl…" [ref=e603]:
+                - generic [ref=e605]:
+                  - paragraph [ref=e606]: Maya silver bangle
+                  - paragraph [ref=e607]: Oxidised silver bangle with hand-engraved motifs. 92.5 sterl…
+              - cell "maya-silver-bangle" [ref=e608]
+              - cell "24.00 g" [ref=e609]
+              - cell "Silver" [ref=e610]
+              - cell "₹4,900.00" [ref=e611]
+              - cell "Published" [ref=e612]:
+                - button "Published" [ref=e613] [cursor=pointer]
+              - cell "Edit Delete" [ref=e614]:
+                - generic [ref=e615]:
+                  - button "Edit" [ref=e616] [cursor=pointer]:
+                    - img [ref=e617]
+                  - button "Delete" [ref=e620] [cursor=pointer]:
+                    - img [ref=e621]
+            - row "Leela silver jhumkas Temple-style silver jhumkas. Lightweight, anti-tarnish polis… leela-silver-jhumka 12.00 g Silver ₹2,800.00 Published Edit Delete" [ref=e624]:
+              - cell "Leela silver jhumkas Temple-style silver jhumkas. Lightweight, anti-tarnish polis…" [ref=e625]:
+                - generic [ref=e627]:
+                  - paragraph [ref=e628]: Leela silver jhumkas
+                  - paragraph [ref=e629]: Temple-style silver jhumkas. Lightweight, anti-tarnish polis…
+              - cell "leela-silver-jhumka" [ref=e630]
+              - cell "12.00 g" [ref=e631]
+              - cell "Silver" [ref=e632]
+              - cell "₹2,800.00" [ref=e633]
+              - cell "Published" [ref=e634]:
+                - button "Published" [ref=e635] [cursor=pointer]
+              - cell "Edit Delete" [ref=e636]:
+                - generic [ref=e637]:
+                  - button "Edit" [ref=e638] [cursor=pointer]:
+                    - img [ref=e639]
+                  - button "Delete" [ref=e642] [cursor=pointer]:
+                    - img [ref=e643]
+            - row "Aria silver chain 20-inch sterling silver chain. Gift-boxed.… aria-silver-chain 14.50 g Silver ₹2,200.00 Published Edit Delete" [ref=e646]:
+              - cell "Aria silver chain 20-inch sterling silver chain. Gift-boxed.…" [ref=e647]:
+                - generic [ref=e649]:
+                  - paragraph [ref=e650]: Aria silver chain
+                  - paragraph [ref=e651]: 20-inch sterling silver chain. Gift-boxed.…
+              - cell "aria-silver-chain" [ref=e652]
+              - cell "14.50 g" [ref=e653]
+              - cell "Silver" [ref=e654]
+              - cell "₹2,200.00" [ref=e655]
+              - cell "Published" [ref=e656]:
+                - button "Published" [ref=e657] [cursor=pointer]
+              - cell "Edit Delete" [ref=e658]:
+                - generic [ref=e659]:
+                  - button "Edit" [ref=e660] [cursor=pointer]:
+                    - img [ref=e661]
+                  - button "Delete" [ref=e664] [cursor=pointer]:
+                    - img [ref=e665]

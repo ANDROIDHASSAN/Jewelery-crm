@@ -73,6 +73,14 @@ export interface OrderLiveCount {
   reservationsOpen: number;
   productsTotal: number;
   productsPublished: number;
+  /** ID of the most recently created order — used to deep-link the
+   *  "new order arrived" toast to that exact order's drawer. Null when
+   *  the tenant hasn't placed any order yet. */
+  latestOrderId: string | null;
+  /** Timestamp of the latest order — useful for safer delta detection
+   *  alongside `total` (id alone can theoretically repeat if records
+   *  are deleted and recreated, which we don't do but the type is honest). */
+  latestOrderCreatedAt: string | null;
   asOf: string;
 }
 

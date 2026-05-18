@@ -22,7 +22,9 @@ export function StorefrontLayout(): JSX.Element {
   return (
     <div className="min-h-screen flex flex-col bg-ink-0">
       <StorefrontHeader />
-      <main className="flex-1">
+      {/* pb-* keeps page CTAs (Place order, Move to bag, Refresh now)
+          clear of the fixed WhatsApp orb on mobile/tablet. */}
+      <main className="flex-1 pb-24 sm:pb-28 lg:pb-12">
         <Outlet />
       </main>
       <StorefrontFooter />

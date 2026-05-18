@@ -6,6 +6,7 @@ import { ORDER_STATUSES } from '@goldos/shared/constants';
 import { readGoldRatePaise } from '../../lib/redis.js';
 import { applyBps, computeGoldValuePaise } from '../../lib/money.js';
 import { getTenantId } from '../../lib/async-context.js';
+import { withCache, bustKey } from '../../lib/cache.js';
 
 export const ecommerceRouter: Router = Router();
 
@@ -117,33 +118,53 @@ ecommerceRouter.delete('/products/:id', async (req, res, next) => {
 
 ecommerceRouter.get('/orders', async (req, res, next) => {
   try {
+    const tenantId = getTenantId();
+    if (!tenantId) throw new Error('tenantId missing');
     const q = z
       .object({
         status: z.enum(ORDER_STATUSES).optional(),
         cursor: z.string().optional(),
       })
       .parse(req.query);
-    const take = 50;
-    const orders = await prisma.order.findMany({
-      where: q.status ? { status: q.status } : undefined,
-      orderBy: { createdAt: 'desc' },
-      take: take + 1,
-      ...(q.cursor ? { cursor: { id: q.cursor }, skip: 1 } : {}),
-      include: {
-        customer: { select: { id: true, name: true, phone: true } },
-        items: {
-          select: {
-            id: true,
-            productId: true,
-            qty: true,
-            pricePaise: true,
-            product: { select: { id: true, name: true, slug: true, images: true } },
+
+    // Cache the first page (no cursor) keyed by status filter. Cursor-paginated
+    // pages skip the cache — they're rarer and would balloon the keyspace.
+    // 8s TTL fits the 10s admin polling cadence with comfortable headroom.
+    const cacheable = !q.cursor;
+    const cacheKey = `orders:list:${q.status ?? 'ALL'}`;
+    const compute = async (): Promise<{
+      data: unknown[];
+      page: { nextCursor: string | undefined; hasMore: boolean };
+    }> => {
+      const take = 50;
+      const orders = await prisma.order.findMany({
+        where: q.status ? { status: q.status } : undefined,
+        orderBy: { createdAt: 'desc' },
+        take: take + 1,
+        ...(q.cursor ? { cursor: { id: q.cursor }, skip: 1 } : {}),
+        include: {
+          customer: { select: { id: true, name: true, phone: true } },
+          items: {
+            select: {
+              id: true,
+              productId: true,
+              qty: true,
+              pricePaise: true,
+              product: { select: { id: true, name: true, slug: true, images: true } },
+            },
           },
         },
-      },
-    });
-    const hasMore = orders.length > take;
-    res.json({ data: orders.slice(0, take), page: { nextCursor: hasMore ? orders.at(-2)?.id : undefined, hasMore } });
+      });
+      const hasMore = orders.length > take;
+      return {
+        data: orders.slice(0, take),
+        page: { nextCursor: hasMore ? orders.at(-2)?.id : undefined, hasMore },
+      };
+    };
+    const result = cacheable
+      ? await withCache(tenantId, cacheKey, 8, compute)
+      : await compute();
+    res.json(result);
   } catch (err) {
     next(err);
   }
@@ -157,46 +178,62 @@ ecommerceRouter.get('/orders', async (req, res, next) => {
 // the live banner once a tenant had more than one page of orders.
 ecommerceRouter.get('/orders/live-count', async (_req, res, next) => {
   try {
-    const cutoff = new Date(Date.now() - 30 * 60 * 1000);
-    const [
-      grouped,
-      revenueAgg,
-      reservationsTotal,
-      reservationsOpen,
-      productsTotal,
-      productsPublished,
-      needsAction,
-    ] = await Promise.all([
-      prisma.order.groupBy({ by: ['status'], _count: { _all: true } }),
-      prisma.order.aggregate({ _sum: { totalPaise: true } }),
-      prisma.order.count({ where: { paymentMethod: 'reserve-at-store' } }),
-      prisma.order.count({
-        where: {
-          paymentMethod: 'reserve-at-store',
-          status: { notIn: ['DELIVERED', 'CANCELLED', 'RETURNED'] },
-        },
-      }),
-      prisma.product.count(),
-      prisma.product.count({ where: { isPublished: true } }),
-      // "needs action" = anything sitting in PENDING > 30 min, surfaced as a
-      // separate count so the cashier can see SLA breaches without scanning.
-      prisma.order.count({ where: { status: 'PENDING', createdAt: { lt: cutoff } } }),
-    ]);
+    const tenantId = getTenantId();
+    if (!tenantId) throw new Error('tenantId missing');
 
-    // Seed every status with 0 so the response is never missing a key — keeps
-    // the UI grid stable. Strict noUncheckedIndexedAccess: read via `?? 0`.
-    const byStatus: Record<string, number> = Object.fromEntries(ORDER_STATUSES.map((s) => [s, 0]));
-    for (const row of grouped) byStatus[row.status] = row._count._all;
-    const total = Object.values(byStatus).reduce((a, b) => a + b, 0);
-    const open =
-      (byStatus.PENDING ?? 0) +
-      (byStatus.CONFIRMED ?? 0) +
-      (byStatus.PACKED ?? 0) +
-      (byStatus.SHIPPED ?? 0);
-    const inTransit = byStatus.SHIPPED ?? 0;
+    // Cache for 4 seconds. The bell + admin page poll at 5s, so this
+    // virtually guarantees a cache hit on the second-and-subsequent pollers
+    // while still keeping data fresh enough that a new order shows within
+    // 5-9s. Single cached blob = single Redis round-trip = ~10ms vs ~150ms
+    // for 7 parallel Prisma aggregates against Neon.
+    const data = await withCache(tenantId, 'orders:live-count', 4, async () => {
+      const cutoff = new Date(Date.now() - 30 * 60 * 1000);
+      const [
+        grouped,
+        revenueAgg,
+        reservationsTotal,
+        reservationsOpen,
+        productsTotal,
+        productsPublished,
+        needsAction,
+        latestOrder,
+      ] = await Promise.all([
+        prisma.order.groupBy({ by: ['status'], _count: { _all: true } }),
+        prisma.order.aggregate({ _sum: { totalPaise: true } }),
+        prisma.order.count({ where: { paymentMethod: 'reserve-at-store' } }),
+        prisma.order.count({
+          where: {
+            paymentMethod: 'reserve-at-store',
+            status: { notIn: ['DELIVERED', 'CANCELLED', 'RETURNED'] },
+          },
+        }),
+        prisma.product.count(),
+        prisma.product.count({ where: { isPublished: true } }),
+        // "needs action" = PENDING > 30 min, surfaced separately so the
+        // cashier sees SLA breaches without scanning.
+        prisma.order.count({ where: { status: 'PENDING', createdAt: { lt: cutoff } } }),
+        // Latest order's id + createdAt — exposed so NotificationBell can
+        // deep-link the "Open" toast action straight to the order drawer
+        // instead of dumping the user on the e-commerce list.
+        prisma.order.findFirst({
+          orderBy: { createdAt: 'desc' },
+          select: { id: true, createdAt: true },
+        }),
+      ]);
 
-    res.json({
-      data: {
+      // Seed every status with 0 so the response is never missing a key —
+      // keeps the UI grid stable. Strict noUncheckedIndexedAccess: read via `?? 0`.
+      const byStatus: Record<string, number> = Object.fromEntries(ORDER_STATUSES.map((s) => [s, 0]));
+      for (const row of grouped) byStatus[row.status] = row._count._all;
+      const total = Object.values(byStatus).reduce((a, b) => a + b, 0);
+      const open =
+        (byStatus.PENDING ?? 0) +
+        (byStatus.CONFIRMED ?? 0) +
+        (byStatus.PACKED ?? 0) +
+        (byStatus.SHIPPED ?? 0);
+      const inTransit = byStatus.SHIPPED ?? 0;
+
+      return {
         byStatus,
         total,
         open,
@@ -207,9 +244,13 @@ ecommerceRouter.get('/orders/live-count', async (_req, res, next) => {
         reservationsOpen,
         productsTotal,
         productsPublished,
+        latestOrderId: latestOrder?.id ?? null,
+        latestOrderCreatedAt: latestOrder?.createdAt.toISOString() ?? null,
         asOf: new Date().toISOString(),
-      },
+      };
     });
+
+    res.json({ data });
   } catch (err) {
     next(err);
   }
@@ -308,6 +349,13 @@ ecommerceRouter.patch('/orders/:id', async (req, res, next) => {
       }
       return updated;
     });
+    // Bust the cached aggregates + list page so the next poll sees the new
+    // status immediately instead of waiting 8s for the TTL. Fire-and-forget
+    // so the HTTP response isn't blocked on Redis round-trips.
+    void bustKey(before.tenantId, 'orders:live-count');
+    void bustKey(before.tenantId, 'orders:list:ALL');
+    if (body.status) void bustKey(before.tenantId, `orders:list:${body.status}`);
+    if (before.status !== body.status) void bustKey(before.tenantId, `orders:list:${before.status}`);
     res.json({ data: order });
   } catch (err) {
     next(err);

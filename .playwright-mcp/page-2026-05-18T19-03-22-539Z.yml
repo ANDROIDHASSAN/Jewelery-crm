@@ -1,0 +1,59 @@
+- generic [ref=e106]:
+  - banner [ref=e107]:
+    - button "Open navigation menu" [ref=e186] [cursor=pointer]:
+      - img [ref=e187]
+    - button [ref=e188] [cursor=pointer]:
+      - img [ref=e109]
+      - img [ref=e115]
+    - button "Search" [ref=e189] [cursor=pointer]:
+      - img [ref=e190]
+    - button "Account menu" [ref=e133] [cursor=pointer]: AK
+  - main [ref=e134]:
+    - generic [ref=e135]:
+      - generic [ref=e137]:
+        - generic [ref=e138]:
+          - paragraph [ref=e139]: Module 04 · E-commerce
+          - heading "Products & orders" [level=1] [ref=e140]
+          - paragraph [ref=e141]: Catalog, online orders, in-store reservations — synced from the storefront and POS on a 10-second cadence.
+        - button "Add product" [ref=e143] [cursor=pointer]:
+          - img [ref=e144]
+          - text: Add product
+      - generic [ref=e147]:
+        - generic [ref=e148]:
+          - paragraph [ref=e149]: Published products
+          - paragraph [ref=e150]: …
+          - paragraph [ref=e151]: 0 total in catalog
+        - generic [ref=e152]:
+          - paragraph [ref=e153]: Open orders
+          - paragraph [ref=e154]: …
+        - generic [ref=e155]:
+          - paragraph [ref=e156]: Open reservations
+          - paragraph [ref=e157]: …
+          - paragraph [ref=e158]: 0 total · storefront
+        - generic [ref=e159]:
+          - paragraph [ref=e160]: Total revenue
+          - paragraph [ref=e161]: …
+          - paragraph [ref=e162]: across 0 orders
+      - tablist "Section tabs" [ref=e163]:
+        - tab "Products" [selected] [ref=e164] [cursor=pointer]:
+          - generic [ref=e165]: Products
+        - tab "Orders" [ref=e166] [cursor=pointer]:
+          - generic [ref=e167]: Orders
+        - tab "Reservations" [ref=e168] [cursor=pointer]:
+          - generic [ref=e169]: Reservations
+      - table [ref=e172]:
+        - rowgroup [ref=e173]:
+          - row "Product SKU Weight Purity Price Status" [ref=e174]:
+            - columnheader "Product" [ref=e175]
+            - columnheader "SKU" [ref=e176]
+            - columnheader "Weight" [ref=e177]
+            - columnheader "Purity" [ref=e178]
+            - columnheader "Price" [ref=e179]
+            - columnheader "Status" [ref=e180]
+            - columnheader [ref=e181]
+        - rowgroup [ref=e182]:
+          - row "No products yet. Click Add product." [ref=e183]:
+            - cell "No products yet. Click Add product." [ref=e184]:
+              - text: No products yet. Click
+              - strong [ref=e185]: Add product
+              - text: .

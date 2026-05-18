@@ -1,0 +1,168 @@
+- generic [ref=e3]:
+  - banner [ref=e4]:
+    - generic [ref=e7]:
+      - text: Today's rate ·
+      - generic [ref=e8]: 24K ₹7,000/g
+    - generic [ref=e10]:
+      - button "Open menu" [ref=e11] [cursor=pointer]:
+        - img [ref=e12]
+      - link "Zelora — home" [ref=e13] [cursor=pointer]:
+        - /url: /store
+        - img [ref=e14]
+        - generic [ref=e16]: Zelora
+      - generic [ref=e17]:
+        - button "Search" [ref=e18] [cursor=pointer]:
+          - img [ref=e19]
+        - link "Cart (4)" [ref=e22] [cursor=pointer]:
+          - /url: /store/cart
+          - img [ref=e23]
+          - generic [ref=e26]: "4"
+  - main [ref=e27]:
+    - generic [ref=e28]:
+      - generic [ref=e29]:
+        - paragraph [ref=e30]: Saved for you
+        - heading "4 pieces on your wishlist" [level=1] [ref=e31]
+      - generic [ref=e32]:
+        - article [ref=e33]:
+          - button "Remove Meera Temple Necklace from wishlist" [ref=e34] [cursor=pointer]:
+            - img [ref=e35]
+          - link "Meera Temple Necklace Meera Temple Necklace 58.4g ₹3,42,000" [ref=e38] [cursor=pointer]:
+            - /url: /store/products/wish-1
+            - img "Meera Temple Necklace" [ref=e40]
+            - generic [ref=e41]:
+              - heading "Meera Temple Necklace" [level=3] [ref=e42]
+              - paragraph [ref=e43]: 58.4g
+              - paragraph [ref=e44]: ₹3,42,000
+          - button "Move to bag" [ref=e45] [cursor=pointer]
+        - article [ref=e46]:
+          - button "Remove Kavya Diamond Bangle from wishlist" [ref=e47] [cursor=pointer]:
+            - img [ref=e48]
+          - link "Kavya Diamond Bangle Kavya Diamond Bangle 24.1g ₹1,68,000" [ref=e51] [cursor=pointer]:
+            - /url: /store/products/wish-2
+            - img "Kavya Diamond Bangle" [ref=e53]
+            - generic [ref=e54]:
+              - heading "Kavya Diamond Bangle" [level=3] [ref=e55]
+              - paragraph [ref=e56]: 24.1g
+              - paragraph [ref=e57]: ₹1,68,000
+          - button "Move to bag" [ref=e58] [cursor=pointer]
+        - article [ref=e59]:
+          - button "Remove Ishaani Solitaire Ring from wishlist" [ref=e60] [cursor=pointer]:
+            - img [ref=e61]
+          - link "Ishaani Solitaire Ring Ishaani Solitaire Ring 3.6g ₹84,500" [ref=e64] [cursor=pointer]:
+            - /url: /store/products/wish-3
+            - img "Ishaani Solitaire Ring" [ref=e66]
+            - generic [ref=e67]:
+              - heading "Ishaani Solitaire Ring" [level=3] [ref=e68]
+              - paragraph [ref=e69]: 3.6g
+              - paragraph [ref=e70]: ₹84,500
+          - button "Move to bag" [ref=e71] [cursor=pointer]
+        - article [ref=e72]:
+          - button "Remove Tara Pearl Drop from wishlist" [ref=e73] [cursor=pointer]:
+            - img [ref=e74]
+          - link "Tara Pearl Drop Tara Pearl Drop 8.2g ₹52,300" [ref=e77] [cursor=pointer]:
+            - /url: /store/products/wish-4
+            - img "Tara Pearl Drop" [ref=e79]
+            - generic [ref=e80]:
+              - heading "Tara Pearl Drop" [level=3] [ref=e81]
+              - paragraph [ref=e82]: 8.2g
+              - paragraph [ref=e83]: ₹52,300
+          - button "Move to bag" [ref=e84] [cursor=pointer]
+  - contentinfo [ref=e85]:
+    - generic [ref=e87]:
+      - generic [ref=e88]:
+        - paragraph [ref=e89]: Stay in the loop
+        - heading "New collections, in your inbox." [level=2] [ref=e90]
+        - paragraph [ref=e91]: Quiet, once a month. Unsubscribe anytime.
+      - generic [ref=e92]:
+        - generic [ref=e93]: Email
+        - textbox "Email" [ref=e94]:
+          - /placeholder: you@email.com
+        - button "Join" [ref=e95] [cursor=pointer]:
+          - generic [ref=e96]: Join
+          - img [ref=e97]
+    - generic [ref=e99]:
+      - generic [ref=e100]:
+        - link "Zelora" [ref=e101] [cursor=pointer]:
+          - /url: /store
+          - img [ref=e102]
+          - text: Zelora
+        - paragraph [ref=e103]: Family jewellers since 1972. Hallmarked gold. Transparent pricing. Hand-crafted in Haryana.
+        - list [ref=e104]:
+          - listitem [ref=e105]:
+            - img [ref=e106]
+            - text: MG Road, Gurugram, Haryana 122001
+          - listitem [ref=e109]:
+            - img [ref=e110]
+            - text: +91 124 444 0011
+          - listitem [ref=e112]:
+            - img [ref=e113]
+            - text: hello@anantjewellers.in
+        - generic [ref=e116]:
+          - link "Instagram" [ref=e117] [cursor=pointer]:
+            - /url: "#"
+            - img [ref=e118]
+          - link "Facebook" [ref=e121] [cursor=pointer]:
+            - /url: "#"
+            - img [ref=e122]
+          - link "YouTube" [ref=e124] [cursor=pointer]:
+            - /url: "#"
+            - img [ref=e125]
+      - generic [ref=e128]:
+        - paragraph [ref=e129]: Shop
+        - list [ref=e130]:
+          - listitem [ref=e131]:
+            - link "Bridal" [ref=e132] [cursor=pointer]:
+              - /url: /store/collections/bridal
+          - listitem [ref=e133]:
+            - link "Daily wear" [ref=e134] [cursor=pointer]:
+              - /url: /store/collections/daily-wear
+          - listitem [ref=e135]:
+            - link "Festive" [ref=e136] [cursor=pointer]:
+              - /url: /store/collections/festive
+          - listitem [ref=e137]:
+            - link "Diamond" [ref=e138] [cursor=pointer]:
+              - /url: /store/collections/diamond
+          - listitem [ref=e139]:
+            - link "Silver" [ref=e140] [cursor=pointer]:
+              - /url: /store/collections/silver
+      - generic [ref=e141]:
+        - paragraph [ref=e142]: Visit
+        - list [ref=e143]:
+          - listitem [ref=e144]:
+            - link "Stores" [ref=e145] [cursor=pointer]:
+              - /url: /store/locations
+          - listitem [ref=e146]:
+            - link "Our story" [ref=e147] [cursor=pointer]:
+              - /url: /store/story
+          - listitem [ref=e148]:
+            - link "Workshop tours" [ref=e149] [cursor=pointer]:
+              - /url: /store/workshop
+          - listitem [ref=e150]:
+            - link "Contact" [ref=e151] [cursor=pointer]:
+              - /url: /store/contact
+      - generic [ref=e152]:
+        - paragraph [ref=e153]: Help
+        - list [ref=e154]:
+          - listitem [ref=e155]:
+            - link "Track order" [ref=e156] [cursor=pointer]:
+              - /url: /store/track
+          - listitem [ref=e157]:
+            - link "Shipping & returns" [ref=e158] [cursor=pointer]:
+              - /url: /store/help
+          - listitem [ref=e159]:
+            - link "Care guide" [ref=e160] [cursor=pointer]:
+              - /url: /store/care
+          - listitem [ref=e161]:
+            - link "Hallmark guide" [ref=e162] [cursor=pointer]:
+              - /url: /store/hallmark
+    - generic [ref=e164]:
+      - paragraph [ref=e165]: "© 2026 Zelora · BIS Hallmark #IND-916 · GSTIN 27ABCDE1234F1Z5"
+      - generic [ref=e166]:
+        - link "Privacy" [ref=e167] [cursor=pointer]:
+          - /url: /store/privacy
+        - link "Terms" [ref=e168] [cursor=pointer]:
+          - /url: /store/terms
+        - generic [ref=e169]: Powered by Zelora
+  - link "Chat on WhatsApp" [ref=e170] [cursor=pointer]:
+    - /url: https://wa.me/9716978692
+    - img [ref=e171]

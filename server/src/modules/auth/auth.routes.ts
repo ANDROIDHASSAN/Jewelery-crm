@@ -25,6 +25,9 @@ import { authRateLimit } from '../../middleware/rate-limit.js';
 import { authMiddleware } from '../../middleware/auth.js';
 import { rawPrisma } from '../../lib/prisma.js';
 import { env } from '../../env.js';
+import { previewInvitation, acceptInvitation } from '../users/invitations.service.js';
+import { recordAuthEvent } from '../../lib/auth-events.js';
+import { z } from 'zod';
 
 export const authRouter: Router = Router();
 
@@ -54,7 +57,7 @@ function setRefreshCookie(res: Response, token: string): void {
 authRouter.post('/login', authRateLimit, async (req, res, next) => {
   try {
     const body = LoginSchema.parse(req.body);
-    const result = await login(body);
+    const result = await login({ ...body, req });
 
     if (result.status === 'mfa_required') {
       // 2FA challenge: client should re-POST with totpCode or backupCode.
@@ -186,6 +189,58 @@ authRouter.post('/otp/verify', authRateLimit, async (req, res, next) => {
     const result = await devFinalize(user.id);
     if (result.refreshToken) setRefreshCookie(res, result.refreshToken);
     res.json({ data: { accessToken: result.accessToken, user: result.user } });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// -------------------------------------------------------------------------
+// Invitation acceptance — public. The token IS the auth, so no JWT needed,
+// but we rate-limit aggressively so a leaked token can't be guessed.
+// -------------------------------------------------------------------------
+
+const AcceptInvitationSchema = z.object({
+  token: z.string().min(32).max(80),
+  name: z.string().min(2).max(120),
+  password: z.string().min(10).max(120),
+  phone: z
+    .string()
+    .regex(/^\+91[6-9]\d{9}$/, 'Phone must be +91 followed by 10 digits starting 6-9')
+    .optional(),
+});
+
+authRouter.get('/invitation/:token', authRateLimit, async (req, res, next) => {
+  try {
+    const token = req.params['token'] ?? '';
+    if (token.length < 32 || token.length > 80) {
+      throw new UnauthorizedError('Invalid invitation link');
+    }
+    const preview = await previewInvitation(token);
+    res.json({ data: preview });
+  } catch (err) {
+    next(err);
+  }
+});
+
+authRouter.post('/invitation/accept', authRateLimit, async (req, res, next) => {
+  try {
+    const body = AcceptInvitationSchema.parse(req.body);
+    const result = await acceptInvitation({
+      tokenPlaintext: body.token,
+      name: body.name,
+      password: body.password,
+      phone: body.phone,
+    });
+    recordAuthEvent({
+      type: 'INVITATION_ACCEPTED',
+      tenantId: result.tenantId,
+      userId: result.userId,
+      email: result.email,
+      req,
+    });
+    res.status(201).json({
+      data: { ok: true, email: result.email },
+    });
   } catch (err) {
     next(err);
   }

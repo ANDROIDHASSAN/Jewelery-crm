@@ -13,10 +13,10 @@ interface Action {
 }
 
 const actions: Action[] = [
-  { id: 'pos', label: 'New bill', hint: 'Open POS', icon: Plus, go: '/admin/pos' },
+  { id: 'pos', label: 'New bill', hint: 'Open POS', icon: Plus, go: '/pos' },
   { id: 'item', label: 'Add inventory item', icon: Boxes, go: '/admin/inventory?new=1' },
   { id: 'customer', label: 'Add customer', icon: Users, go: '/admin/crm?new=customer' },
-  { id: 'scan', label: 'Scan barcode', icon: ScanLine, go: '/admin/pos?scan=1' },
+  { id: 'scan', label: 'Scan barcode', icon: ScanLine, go: '/pos?scan=1' },
 ];
 
 export function CommandPalette({ open, onOpenChange }: { open: boolean; onOpenChange: (v: boolean) => void }): JSX.Element {

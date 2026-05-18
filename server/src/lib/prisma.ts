@@ -49,6 +49,10 @@ const TENANT_SCOPED_MODELS = new Set<string>([
   'BankAccount',
   'BankTransaction',
   'Reconciliation',
+  // Invitations are tenant-scoped writes. AuthEvent is intentionally NOT in
+  // this set — we need to log pre-login failures where `tenantId` is unknown
+  // (wrong email, locked account, etc.), so those writes go through rawPrisma.
+  'UserInvitation',
 ]);
 
 /** Raw client without tenant extension — for super-admin and the tenant-scope middleware itself. */

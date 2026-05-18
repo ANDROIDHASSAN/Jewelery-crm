@@ -10,6 +10,7 @@
 import { createBrowserRouter, Navigate, RouterProvider } from 'react-router-dom';
 import { LoginPage } from '@/features/auth/LoginPage';
 import { ChangePasswordPage } from '@/features/auth/ChangePasswordPage';
+import { AcceptInvitationPage } from '@/pages/AcceptInvitationPage';
 import { RequireAuth, RequirePermission } from '@/features/auth/RequireAuth';
 import { AdminShell } from '@/components/layout/AdminShell';
 import { StorefrontLayout } from '@/features/storefront/StorefrontLayout';
@@ -137,6 +138,10 @@ const MAIN_HOST_ROUTES = [
   // Admin login + password change.
   { path: '/admin/login', element: <LoginPage /> },
   { path: '/admin/change-password', element: <RequireAuth><ChangePasswordPage /></RequireAuth> },
+
+  // Public invitation acceptance — token IS the auth. Server rate-limits the
+  // GET/POST so a leaked-link guesser is shut down at the network edge.
+  { path: '/accept-invitation/:token', element: <AcceptInvitationPage /> },
 
   // Admin shell — protected, permission-aware.
   {

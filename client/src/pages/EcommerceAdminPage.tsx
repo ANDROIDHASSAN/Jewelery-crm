@@ -395,7 +395,7 @@ function ProductsTable({
       <table className="w-full text-sm min-w-[800px]">
         <thead>
           <tr className="text-left text-eyebrow uppercase text-ink-500 border-b border-ink-100">
-            <th className="px-4 py-3">Product</th>
+            <th className="sticky left-0 z-10 bg-ink-0 px-4 py-3 lg:static lg:bg-transparent">Product</th>
             <th className="px-4 py-3">SKU</th>
             <th className="px-4 py-3">Weight</th>
             <th className="px-4 py-3">Purity</th>
@@ -410,8 +410,8 @@ function ProductsTable({
             <tr><td colSpan={7} className="px-4 py-6 text-ink-500">No products yet. Click <strong>Add product</strong>.</td></tr>
           )}
           {products.map((p) => (
-            <tr key={p.id} className="hover:bg-ink-25">
-              <td className="px-4 py-3">
+            <tr key={p.id} className="group hover:bg-ink-25">
+              <td className="sticky left-0 z-10 bg-ink-0 px-4 py-3 group-hover:bg-ink-25 lg:static lg:bg-transparent lg:group-hover:bg-transparent">
                 <div className="flex items-center gap-3">
                   {p.images[0] && (
                     <img src={p.images[0]} alt="" className="h-10 w-10 rounded object-cover" />

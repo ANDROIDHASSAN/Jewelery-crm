@@ -11,12 +11,14 @@
 // Account lockout: 5 failed attempts → 15 min lock. Successful login resets.
 
 import { SignJWT, jwtVerify, type JWTPayload } from 'jose';
+import type { Request } from 'express';
 import { env } from '../../env.js';
 import { rawPrisma } from '../../lib/prisma.js';
 import { UnauthorizedError, BadRequestError, NotFoundError } from '../../lib/errors.js';
 import { verifyPassword, hashPassword } from './password.js';
 import { verifyTotp, generateTotpSecret, totpProvisioningUri, generateBackupCodes } from './totp.js';
 import { resolveUser, type ResolvedUser } from './permissions.js';
+import { recordAuthEvent } from '../../lib/auth-events.js';
 import type { PermissionKey } from '@goldos/shared/constants';
 
 const accessSecret = new TextEncoder().encode(env.JWT_ACCESS_SECRET);
@@ -116,9 +118,12 @@ export async function login(input: {
   password: string;
   totpCode?: string;
   backupCode?: string;
+  /** Optional — when provided, IP + user-agent are persisted into AuthEvent. */
+  req?: Request;
 }): Promise<LoginResult> {
+  const emailNormalized = input.email.toLowerCase().trim();
   const user = await rawPrisma.user.findFirst({
-    where: { email: input.email.toLowerCase().trim(), isActive: true },
+    where: { email: emailNormalized, isActive: true },
     select: {
       id: true,
       tenantId: true,
@@ -137,16 +142,19 @@ export async function login(input: {
   if (!user) {
     // Constant-ish time: hash a dummy password to avoid leaking "user exists".
     await verifyPassword('$argon2id$v=19$m=19456,t=2,p=1$AAAAAAAAAAAAAAAA$AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA', input.password);
+    recordAuthEvent({ type: 'LOGIN_FAILED', email: emailNormalized, req: input.req ?? null, meta: { reason: 'unknown_email' } });
     throw new UnauthorizedError('Invalid email or password');
   }
 
   if (user.lockedUntil && user.lockedUntil.getTime() > Date.now()) {
+    recordAuthEvent({ type: 'LOGIN_LOCKED', tenantId: user.tenantId, userId: user.id, email: emailNormalized, req: input.req ?? null, meta: { lockedUntil: user.lockedUntil.toISOString() } });
     throw new UnauthorizedError(`Account locked. Try again after ${user.lockedUntil.toISOString()}`);
   }
 
   const passwordOk = await verifyPassword(user.passwordHash, input.password);
   if (!passwordOk) {
     await recordFailedAttempt(user.id, user.failedLoginAttempts);
+    recordAuthEvent({ type: 'LOGIN_FAILED', tenantId: user.tenantId, userId: user.id, email: emailNormalized, req: input.req ?? null, meta: { reason: 'bad_password', attempts: user.failedLoginAttempts + 1 } });
     throw new UnauthorizedError('Invalid email or password');
   }
 
@@ -155,12 +163,14 @@ export async function login(input: {
     if (input.totpCode) {
       if (!user.totpSecret || !verifyTotp(user.totpSecret, input.totpCode)) {
         await recordFailedAttempt(user.id, user.failedLoginAttempts);
+        recordAuthEvent({ type: 'LOGIN_FAILED', tenantId: user.tenantId, userId: user.id, email: emailNormalized, req: input.req ?? null, meta: { reason: 'bad_totp' } });
         throw new UnauthorizedError('Invalid 2FA code');
       }
     } else if (input.backupCode) {
       const ok = await consumeBackupCode(user.id, user.totpBackupCodes, input.backupCode);
       if (!ok) {
         await recordFailedAttempt(user.id, user.failedLoginAttempts);
+        recordAuthEvent({ type: 'LOGIN_FAILED', tenantId: user.tenantId, userId: user.id, email: emailNormalized, req: input.req ?? null, meta: { reason: 'bad_backup_code' } });
         throw new UnauthorizedError('Invalid backup code');
       }
     } else {
@@ -168,7 +178,9 @@ export async function login(input: {
     }
   }
 
-  return finalizeLogin(user.id);
+  const finalized = await finalizeLogin(user.id);
+  recordAuthEvent({ type: 'LOGIN_SUCCESS', tenantId: user.tenantId, userId: user.id, email: emailNormalized, req: input.req ?? null });
+  return finalized;
 }
 
 async function recordFailedAttempt(userId: string, previousAttempts: number): Promise<void> {

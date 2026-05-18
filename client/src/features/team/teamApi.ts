@@ -90,6 +90,41 @@ export const teamApi = baseApi.injectEndpoints({
       query: (id) => ({ url: `/roles/${id}`, method: 'DELETE' }),
       invalidatesTags: ['Role'],
     }),
+
+    // -------- Invitations --------
+    listInvitations: b.query<
+      {
+        data: Array<{
+          id: string;
+          email: string;
+          name: string;
+          roleId: string;
+          roleName: string;
+          shopId: string | null;
+          shopName: string | null;
+          expiresAt: string;
+          acceptedAt: string | null;
+          revokedAt: string | null;
+          status: 'pending' | 'accepted' | 'expired' | 'revoked';
+          createdAt: string;
+        }>;
+      },
+      void
+    >({
+      query: () => '/users/invitations/list',
+      providesTags: ['Invitation'],
+    }),
+    createInvitation: b.mutation<
+      { data: { invitationId: string; token: string; expiresAt: string } },
+      { name: string; email: string; roleId: string; shopId?: string | null }
+    >({
+      query: (body) => ({ url: '/users/invitations', method: 'POST', body }),
+      invalidatesTags: ['Invitation'],
+    }),
+    revokeInvitation: b.mutation<void, string>({
+      query: (id) => ({ url: `/users/invitations/${id}`, method: 'DELETE' }),
+      invalidatesTags: ['Invitation'],
+    }),
   }),
 });
 
@@ -105,4 +140,7 @@ export const {
   useCreateRoleMutation,
   useUpdateRoleMutation,
   useDeleteRoleMutation,
+  useListInvitationsQuery,
+  useCreateInvitationMutation,
+  useRevokeInvitationMutation,
 } = teamApi;

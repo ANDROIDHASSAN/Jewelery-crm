@@ -434,12 +434,12 @@ websiteRouter.post('/customers/identify', async (req, res, next) => {
 
       const [cart, wishlist] = await Promise.all([
         rawPrisma.cartItem.findMany({
-          where: { customerId: customer.id },
+          where: { tenantId, customerId: customer.id },
           orderBy: { addedAt: 'desc' },
           include: { product: { select: hydratedProductSelect() } },
         }),
         rawPrisma.wishlistItem.findMany({
-          where: { customerId: customer.id },
+          where: { tenantId, customerId: customer.id },
           orderBy: { addedAt: 'desc' },
           include: { product: { select: hydratedProductSelect() } },
         }),
@@ -565,7 +565,9 @@ websiteRouter.get('/cart', async (req, res, next) => {
       return;
     }
     const items = await rawPrisma.cartItem.findMany({
-      where: { customerId: customer.id },
+      // tenantId redundant in theory (customer.id was tenant-filtered above)
+      // but kept as belt-and-braces — see tenant-check audit H1.
+      where: { tenantId, customerId: customer.id },
       orderBy: { addedAt: 'desc' },
       include: { product: { select: hydratedProductSelect() } },
     });
@@ -610,11 +612,13 @@ websiteRouter.post('/cart/items', async (req, res, next) => {
     }
     if (body.qty === 0) {
       await rawPrisma.cartItem.deleteMany({
-        where: { customerId: customer.id, productId: body.productId },
+        where: { tenantId, customerId: customer.id, productId: body.productId },
       });
       res.json({ data: { deleted: true } });
       return;
     }
+    // Composite unique key carries (customerId, productId) — customerId was
+    // tenant-verified above. Explicit tenantId still on create for defense.
     const upserted = await rawPrisma.cartItem.upsert({
       where: { customerId_productId: { customerId: customer.id, productId: body.productId } },
       create: { tenantId, customerId: customer.id, productId: body.productId, qty: body.qty },
@@ -642,7 +646,7 @@ websiteRouter.delete('/cart', async (req, res, next) => {
       res.json({ data: { cleared: true } });
       return;
     }
-    await rawPrisma.cartItem.deleteMany({ where: { customerId: customer.id } });
+    await rawPrisma.cartItem.deleteMany({ where: { tenantId, customerId: customer.id } });
     res.json({ data: { cleared: true } });
   } catch (err) {
     next(err);
@@ -664,7 +668,7 @@ websiteRouter.get('/wishlist', async (req, res, next) => {
       return;
     }
     const items = await rawPrisma.wishlistItem.findMany({
-      where: { customerId: customer.id },
+      where: { tenantId, customerId: customer.id },
       orderBy: { addedAt: 'desc' },
       include: { product: { select: hydratedProductSelect() } },
     });
@@ -694,11 +698,14 @@ websiteRouter.post('/wishlist/items', async (req, res, next) => {
       return;
     }
     // Toggle behavior: if it's there, remove. Otherwise add. Mirrors the
-    // existing localStorage shopSlice.toggleWishlist semantic.
+    // existing localStorage shopSlice.toggleWishlist semantic. We re-verify
+    // tenantId on the existing row before deleting — defence in depth in
+    // case the unique (customerId, productId) key ever falls out of sync
+    // with the tenant scoping.
     const existing = await rawPrisma.wishlistItem.findUnique({
       where: { customerId_productId: { customerId: customer.id, productId: body.productId } },
     });
-    if (existing) {
+    if (existing && existing.tenantId === tenantId) {
       await rawPrisma.wishlistItem.delete({ where: { id: existing.id } });
       res.json({ data: { removed: true } });
       return;

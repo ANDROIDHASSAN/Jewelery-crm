@@ -1,5 +1,5 @@
 import { Link } from 'react-router-dom';
-import { Heart, ShoppingBag, X } from 'lucide-react';
+import { Heart, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { useAppSelector } from '@/app/hooks';
 import { useShopActions } from '@/features/storefront/useShopActions';
@@ -66,6 +66,12 @@ export function WishlistPage(): JSX.Element {
                 <p className="text-sm text-ink-900 font-mono tabular-nums mt-1 sm:mt-1.5">{item.priceLabel}</p>
               </div>
             </Link>
+            {/* Wishlist-only inline action. Documented exception to the
+                "no Add-to-cart on product card" rule (see design-system.md):
+                the wishlist is explicitly a pre-purchase shortlist, not a
+                discovery surface, so a quiet eyebrow-link is appropriate.
+                Kept as a text link (not a pill) so the image stays the
+                hero of the card. */}
             <button
               type="button"
               onClick={() => {
@@ -80,9 +86,8 @@ export function WishlistPage(): JSX.Element {
                 });
                 toast.success(`${item.name} added to bag`);
               }}
-              className="mt-3 w-full h-10 rounded-full border border-ink-200 text-ink-900 text-xs font-medium hover:bg-ink-50 inline-flex items-center justify-center gap-2 transition-colors"
+              className="mt-3 text-[11px] uppercase tracking-[0.12em] text-brand-700 hover:text-brand-800 underline decoration-brand-200 hover:decoration-brand-400 underline-offset-4 transition-colors"
             >
-              <ShoppingBag className="h-3.5 w-3.5" />
               Move to bag
             </button>
           </article>

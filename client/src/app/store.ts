@@ -75,6 +75,7 @@ export const baseApi = createApi({
     'User',
     'Role',
     'Permission',
+    'Invitation',
     'Item',
     'Category',
     'Vendor',

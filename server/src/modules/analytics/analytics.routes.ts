@@ -26,6 +26,7 @@ import { sumPaise } from '../../lib/money.js';
 import { readGoldRatePaise } from '../../lib/redis.js';
 import { computeGoldValuePaise } from '../../lib/money.js';
 import { getTenantId } from '../../lib/async-context.js';
+import { withCache } from '../../lib/cache.js';
 
 export const analyticsRouter: Router = Router();
 
@@ -45,91 +46,125 @@ analyticsRouter.get('/summary', async (req, res, next) => {
   try {
     res.setHeader('Cache-Control', 'private, max-age=30, stale-while-revalidate=120');
     const q = z.object({ shopId: z.string().optional() }).parse(req.query);
-    const shopWhere = q.shopId ? { shopId: q.shopId } : {};
+    const tenantId = getTenantId();
+    if (!tenantId) return noTenant(res);
 
-    const now = new Date();
-    const startOfToday = new Date(now);
-    startOfToday.setUTCHours(0, 0, 0, 0);
-    const startOfYesterday = new Date(startOfToday);
-    startOfYesterday.setUTCDate(startOfToday.getUTCDate() - 1);
-    const sevenDaysAgo = new Date(startOfToday);
-    sevenDaysAgo.setUTCDate(startOfToday.getUTCDate() - 6);
-
-    const [todayBills, yesterdayBills, sevenDayBills, openLeads, leadsToday, items, purities] =
-      await Promise.all([
-        prisma.bill.findMany({
-          where: { ...shopWhere, createdAt: { gte: startOfToday, lte: now } },
-          select: { totalPaise: true },
-        }),
-        prisma.bill.findMany({
-          where: { ...shopWhere, createdAt: { gte: startOfYesterday, lt: startOfToday } },
-          select: { totalPaise: true },
-        }),
-        prisma.bill.findMany({
-          where: { ...shopWhere, createdAt: { gte: sevenDaysAgo, lte: now } },
-          select: { totalPaise: true, createdAt: true },
-        }),
-        prisma.lead.count({ where: { status: { in: ['NEW', 'CONTACTED', 'INTERESTED', 'NEGOTIATION'] } } }),
-        prisma.lead.count({ where: { createdAt: { gte: startOfToday } } }),
-        prisma.item.findMany({
-          where: { status: 'IN_STOCK', ...(q.shopId ? { shopId: q.shopId } : {}) },
-          select: { weightMg: true, purityCaratX100: true },
-        }),
-        Promise.all(
-          [2400, 2200, 1800, 0].map(async (p) => ({
-            purity: p,
-            cached: await readGoldRatePaise(p),
-          })),
-        ),
-      ]);
-
-    const buckets = new Map<string, number>();
-    for (let i = 0; i < 7; i += 1) {
-      const d = new Date(sevenDaysAgo);
-      d.setUTCDate(sevenDaysAgo.getUTCDate() + i);
-      buckets.set(d.toISOString().slice(0, 10), 0);
-    }
-    for (const b of sevenDayBills) {
-      const key = b.createdAt.toISOString().slice(0, 10);
-      buckets.set(key, (buckets.get(key) ?? 0) + b.totalPaise);
-    }
-    const sevenDaySeries = Array.from(buckets.entries()).map(([date, revenuePaise]) => ({
-      date,
-      revenuePaise,
-    }));
-
-    const rateByPurity = new Map<number, number>();
-    for (const p of purities) {
-      rateByPurity.set(p.purity, p.cached?.paise ?? 642_000);
-    }
-    let stockValuationPaise = 0;
-    for (const it of items) {
-      const ratePerGramPaise = rateByPurity.get(it.purityCaratX100) ?? 642_000;
-      stockValuationPaise += computeGoldValuePaise(it.weightMg, it.purityCaratX100, ratePerGramPaise);
-    }
-
-    const todayRevenuePaise = sumPaise(todayBills.map((b) => b.totalPaise));
-    const yesterdayRevenuePaise = sumPaise(yesterdayBills.map((b) => b.totalPaise));
-
-    res.json({
-      data: {
-        today: { revenuePaise: todayRevenuePaise, billCount: todayBills.length },
-        yesterday: { revenuePaise: yesterdayRevenuePaise, billCount: yesterdayBills.length },
-        leads: { open: openLeads, today: leadsToday },
-        stock: { valuationPaise: stockValuationPaise, itemCount: items.length },
-        sevenDay: sevenDaySeries,
-        goldRate: purities.map((p) => ({
-          purity: p.purity,
-          ratePerGramPaise: p.cached?.paise ?? 0,
-          stale: p.cached?.stale ?? true,
-        })),
-        asOf: now.toISOString(),
-      },
-    });
+    // 25s TTL — dashboard polls every 60s, multi-tab users hit the cache,
+    // and the dashboard summary is the most expensive admin query
+    // (7 parallel Prisma calls + 4 Redis reads + an in-memory stock
+    // valuation loop over every IN_STOCK item).
+    const data = await withCache(
+      tenantId,
+      `analytics:summary:${q.shopId ?? 'ALL'}`,
+      25,
+      async () => buildDashboardSummary(q.shopId),
+    );
+    res.json({ data });
   } catch (err) {
     next(err);
   }
 });
+
+async function buildDashboardSummary(shopId: string | undefined): Promise<unknown> {
+  const shopWhere = shopId ? { shopId } : {};
+  const now = new Date();
+  const startOfToday = new Date(now);
+  startOfToday.setUTCHours(0, 0, 0, 0);
+  const startOfYesterday = new Date(startOfToday);
+  startOfYesterday.setUTCDate(startOfToday.getUTCDate() - 1);
+  const sevenDaysAgo = new Date(startOfToday);
+  sevenDaysAgo.setUTCDate(startOfToday.getUTCDate() - 6);
+
+  // Switched the three "find every row, then JS-sum totalPaise" calls to
+  // SQL-side aggregates. Was the slowest part of the dashboard for tenants
+  // with >5k bills; now it's a single COUNT+SUM per slice instead of
+  // hauling thousands of paise integers across the wire.
+  const [
+    todayAgg,
+    yesterdayAgg,
+    sevenDayBills,
+    openLeads,
+    leadsToday,
+    itemAgg,
+    purities,
+  ] = await Promise.all([
+    prisma.bill.aggregate({
+      where: { ...shopWhere, createdAt: { gte: startOfToday, lte: now } },
+      _sum: { totalPaise: true },
+      _count: { _all: true },
+    }),
+    prisma.bill.aggregate({
+      where: { ...shopWhere, createdAt: { gte: startOfYesterday, lt: startOfToday } },
+      _sum: { totalPaise: true },
+      _count: { _all: true },
+    }),
+    // Day buckets still need per-row createdAt to assign — keep findMany
+    // but project only the two fields we use.
+    prisma.bill.findMany({
+      where: { ...shopWhere, createdAt: { gte: sevenDaysAgo, lte: now } },
+      select: { totalPaise: true, createdAt: true },
+    }),
+    prisma.lead.count({ where: { status: { in: ['NEW', 'CONTACTED', 'INTERESTED', 'NEGOTIATION'] } } }),
+    prisma.lead.count({ where: { createdAt: { gte: startOfToday } } }),
+    // Stock valuation: groupBy purity so we compute one metal-value per
+    // purity bucket instead of looping over every individual item in JS.
+    // Was O(n) row-by-row before; now O(k) where k = number of purities.
+    prisma.item.groupBy({
+      by: ['purityCaratX100'],
+      where: { status: 'IN_STOCK', ...(shopId ? { shopId } : {}) },
+      _sum: { weightMg: true },
+      _count: { _all: true },
+    }),
+    Promise.all(
+      [2400, 2200, 1800, 0].map(async (p) => ({
+        purity: p,
+        cached: await readGoldRatePaise(p),
+      })),
+    ),
+  ]);
+
+  const buckets = new Map<string, number>();
+  for (let i = 0; i < 7; i += 1) {
+    const d = new Date(sevenDaysAgo);
+    d.setUTCDate(sevenDaysAgo.getUTCDate() + i);
+    buckets.set(d.toISOString().slice(0, 10), 0);
+  }
+  for (const b of sevenDayBills) {
+    const key = b.createdAt.toISOString().slice(0, 10);
+    buckets.set(key, (buckets.get(key) ?? 0) + b.totalPaise);
+  }
+  const sevenDaySeries = Array.from(buckets.entries()).map(([date, revenuePaise]) => ({
+    date,
+    revenuePaise,
+  }));
+
+  const rateByPurity = new Map<number, number>();
+  for (const p of purities) {
+    rateByPurity.set(p.purity, p.cached?.paise ?? 642_000);
+  }
+  let stockValuationPaise = 0;
+  let itemCount = 0;
+  for (const grp of itemAgg) {
+    const ratePerGramPaise = rateByPurity.get(grp.purityCaratX100) ?? 642_000;
+    const totalWeightMg = grp._sum.weightMg ?? 0;
+    stockValuationPaise += computeGoldValuePaise(totalWeightMg, grp.purityCaratX100, ratePerGramPaise);
+    itemCount += grp._count._all;
+  }
+
+  return {
+    today: { revenuePaise: todayAgg._sum.totalPaise ?? 0, billCount: todayAgg._count._all },
+    yesterday: { revenuePaise: yesterdayAgg._sum.totalPaise ?? 0, billCount: yesterdayAgg._count._all },
+    leads: { open: openLeads, today: leadsToday },
+    stock: { valuationPaise: stockValuationPaise, itemCount },
+    sevenDay: sevenDaySeries,
+    goldRate: purities.map((p) => ({
+      purity: p.purity,
+      ratePerGramPaise: p.cached?.paise ?? 0,
+      stale: p.cached?.stale ?? true,
+    })),
+    asOf: now.toISOString(),
+  };
+}
 
 // =====================================================================
 // /dashboard — KPI for today/week/month (existing)
@@ -428,6 +463,8 @@ analyticsRouter.get('/inventory-valuation', async (req, res, next) => {
 analyticsRouter.get('/customer-acquisition', async (req, res, next) => {
   try {
     const q = z.object({ from: z.coerce.date(), to: z.coerce.date() }).parse(req.query);
+    const tenantId = getTenantId();
+    if (!tenantId) return noTenant(res);
 
     const [leadsByChannel, leadConversion, walkInVsReturning] = await Promise.all([
       prisma.lead.groupBy({
@@ -442,6 +479,10 @@ analyticsRouter.get('/customer-acquisition', async (req, res, next) => {
       }),
       // Walk-in vs returning — count customers who already have an older bill
       // before the window, vs those whose first bill falls in the window.
+      //
+      // CRITICAL: the WHERE clause MUST include tenantId. Without it this
+      // groupBy would aggregate across every tenant's Bill table (raw SQL
+      // bypasses the Prisma tenant extension — see lib/prisma.ts header).
       prisma.$queryRaw<Array<{ kind: string; cnt: bigint; rev: bigint }>>`
         SELECT CASE
           WHEN MIN(b."createdAt") < ${q.from} THEN 'returning'
@@ -450,7 +491,8 @@ analyticsRouter.get('/customer-acquisition', async (req, res, next) => {
         COUNT(DISTINCT b."customerId")::bigint AS cnt,
         SUM(b."totalPaise")::bigint AS rev
         FROM "Bill" b
-        WHERE b."customerId" IS NOT NULL
+        WHERE b."tenantId" = ${tenantId}
+          AND b."customerId" IS NOT NULL
           AND b."voidedAt" IS NULL
         GROUP BY b."customerId"
       `,

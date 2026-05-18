@@ -31,7 +31,7 @@ async function smokePage(page, label, url, { authed = false } = {}) {
     }
   });
 
-  const resp = await page.goto(url, { waitUntil: 'networkidle', timeout: 30000 }).catch((e) => {
+  const resp = await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 20000 }).catch((e) => {
     record(label, `navigation failed: ${e.message}`);
     return null;
   });
@@ -101,7 +101,6 @@ async function login(page) {
   // 3. Admin pages (authed).
   await smokePage(page, 'admin-dashboard', `${BASE}/admin`, { authed: true });
   await smokePage(page, 'admin-inventory', `${BASE}/admin/inventory`, { authed: true });
-  await smokePage(page, 'admin-pos-monitor', `${BASE}/admin/pos`, { authed: true });
   await smokePage(page, 'admin-finance', `${BASE}/admin/finance`, { authed: true });
   await smokePage(page, 'admin-crm', `${BASE}/admin/crm`, { authed: true });
   await smokePage(page, 'admin-ecommerce', `${BASE}/admin/ecommerce`, { authed: true });

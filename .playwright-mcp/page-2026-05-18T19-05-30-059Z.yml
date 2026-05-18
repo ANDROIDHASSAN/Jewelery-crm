@@ -1,0 +1,639 @@
+- generic [active] [ref=e1]:
+  - generic [ref=e45]:
+    - complementary [ref=e46]:
+      - generic [ref=e47]:
+        - img [ref=e49]
+        - generic [ref=e51]:
+          - generic [ref=e52]: Zelora
+          - generic [ref=e53]: SUPER ADMIN
+      - navigation "Primary" [ref=e54]:
+        - generic [ref=e55]:
+          - paragraph [ref=e56]: Main
+          - link "Dashboard" [ref=e58] [cursor=pointer]:
+            - /url: /admin
+            - img [ref=e60]
+            - generic [ref=e65]: Dashboard
+        - generic [ref=e66]:
+          - paragraph [ref=e67]: Operations
+          - generic [ref=e68]:
+            - link "Inventory" [ref=e69] [cursor=pointer]:
+              - /url: /admin/inventory
+              - img [ref=e71]
+              - generic [ref=e81]: Inventory
+            - link "Offline shops" [ref=e82] [cursor=pointer]:
+              - /url: /admin/counter
+              - img [ref=e84]
+              - generic [ref=e89]: Offline shops
+            - link "Finance" [ref=e90] [cursor=pointer]:
+              - /url: /admin/finance
+              - img [ref=e92]
+              - generic [ref=e95]: Finance
+        - generic [ref=e96]:
+          - paragraph [ref=e97]: Channels
+          - generic [ref=e98]:
+            - link "E-commerce" [ref=e99] [cursor=pointer]:
+              - /url: /admin/ecommerce
+              - img [ref=e101]
+              - generic [ref=e104]: E-commerce
+            - link "Website" [ref=e105] [cursor=pointer]:
+              - /url: /admin/website
+              - img [ref=e107]
+              - generic [ref=e110]: Website
+            - link "CRM & ads" [ref=e111] [cursor=pointer]:
+              - /url: /admin/crm
+              - img [ref=e113]
+              - generic [ref=e118]: CRM & ads
+        - generic [ref=e119]:
+          - paragraph [ref=e120]: Insights
+          - generic [ref=e121]:
+            - link "Analytics" [ref=e122] [cursor=pointer]:
+              - /url: /admin/analytics
+              - img [ref=e124]
+              - generic [ref=e126]: Analytics
+            - link "Team & roles" [ref=e127] [cursor=pointer]:
+              - /url: /admin/team
+              - img [ref=e129]
+              - generic [ref=e141]: Team & roles
+      - link "Settings" [ref=e143] [cursor=pointer]:
+        - /url: /admin/settings
+        - img [ref=e144]
+        - generic [ref=e147]: Settings
+    - generic [ref=e148]:
+      - banner [ref=e149]:
+        - button "Main Showroom — Gurugram" [ref=e150] [cursor=pointer]:
+          - img [ref=e151]
+          - generic [ref=e156]: Main Showroom — Gurugram
+          - img [ref=e157]
+        - button "Open command palette" [ref=e161] [cursor=pointer]:
+          - img [ref=e162]
+          - generic [ref=e165]: Search or jump to…
+          - generic [ref=e166]:
+            - generic [ref=e167]: ⌘
+            - text: K
+        - button "Notifications, 62 new orders pending" [ref=e527] [cursor=pointer]:
+          - img [ref=e171]
+          - generic [ref=e528]: "62"
+        - button "Account menu" [ref=e175] [cursor=pointer]: AK
+      - main [ref=e176]:
+        - generic [ref=e177]:
+          - generic [ref=e179]:
+            - generic [ref=e180]:
+              - paragraph [ref=e181]: Today · Tuesday, 19 May
+              - heading "Welcome back, Anant." [level=1] [ref=e182]
+              - paragraph [ref=e183]: Live across every shop — bills, leads, stock value and gold rate updating on a 60-second polling cadence.
+            - generic [ref=e185]:
+              - generic [ref=e189]: Live
+              - generic [ref=e529]: · 12:35 am
+          - generic [ref=e191]:
+            - generic [ref=e192]:
+              - generic [ref=e193]:
+                - img [ref=e194]
+                - generic [ref=e199]: 24K
+              - paragraph [ref=e201]: ₹7,000.00/g
+            - generic [ref=e202]:
+              - generic [ref=e203]:
+                - img [ref=e204]
+                - generic [ref=e209]: 22K
+              - paragraph [ref=e211]: ₹6,420.00/g
+            - generic [ref=e212]:
+              - generic [ref=e213]:
+                - img [ref=e214]
+                - generic [ref=e219]: 18K
+              - paragraph [ref=e221]: ₹5,255.00/g
+            - generic [ref=e222]:
+              - generic [ref=e223]:
+                - img [ref=e224]
+                - generic [ref=e229]: Silver
+              - paragraph [ref=e231]: ₹84.50/g
+          - generic [ref=e232]:
+            - generic [ref=e233]:
+              - paragraph [ref=e234]: Today's sales
+              - generic [ref=e235]: ₹0.00
+              - paragraph [ref=e531]:
+                - img [ref=e532]
+                - text: No data yesterday
+            - generic [ref=e236]:
+              - paragraph [ref=e237]: Bills today
+              - generic [ref=e238]: "0"
+              - paragraph [ref=e533]:
+                - img [ref=e534]
+                - text: Flat vs yesterday
+            - generic [ref=e239]:
+              - paragraph [ref=e240]: Stock valuation
+              - generic [ref=e241]: ₹28,11,313.90
+              - paragraph [ref=e242]:
+                - img [ref=e243]
+                - text: Live · 22K ₹6,420.00/g
+            - generic [ref=e244]:
+              - paragraph [ref=e246]: Open leads
+              - generic [ref=e247]: "75"
+              - paragraph [ref=e535]:
+                - img [ref=e536]
+                - text: ▲ 63 today
+          - generic [ref=e248]:
+            - generic [ref=e249]:
+              - paragraph [ref=e250]: Revenue MTD
+              - generic [ref=e251]: ₹7,14,500.00
+              - paragraph [ref=e540]:
+                - img [ref=e541]
+                - text: Net 98,089
+            - generic [ref=e252]:
+              - paragraph [ref=e253]: Storefront orders
+              - generic [ref=e254]: "49"
+              - paragraph [ref=e255]:
+                - img [ref=e256]
+                - text: 50 total
+            - generic [ref=e257]:
+              - paragraph [ref=e258]: Order revenue MTD
+              - generic [ref=e259]: ₹44,22,958.02
+              - paragraph [ref=e260]:
+                - img [ref=e261]
+                - text: Website + WhatsApp
+            - generic [ref=e262]:
+              - paragraph [ref=e264]: Vendor outstanding
+              - generic [ref=e265]: ₹45,75,000.00
+              - paragraph [ref=e266]:
+                - img [ref=e267]
+                - text: 3 vendors
+          - generic [ref=e268]:
+            - generic [ref=e269]:
+              - generic [ref=e270]:
+                - img [ref=e272]
+                - generic [ref=e275]:
+                  - paragraph [ref=e276]: Reservations
+                  - heading "Recent storefront reservations" [level=3] [ref=e277]
+              - link "All reservations" [ref=e279] [cursor=pointer]:
+                - /url: /admin/ecommerce
+                - text: All reservations
+                - img [ref=e280]
+            - list [ref=e545]:
+              - listitem [ref=e546]:
+                - 'link "Notification Test · #RECYWNCN +919812345678 · 18 May 2026, 10:11 pm pending ₹88,956.98" [ref=e547] [cursor=pointer]':
+                  - /url: /admin/ecommerce
+                  - generic [ref=e548]:
+                    - paragraph [ref=e549]: "Notification Test · #RECYWNCN"
+                    - paragraph [ref=e550]:
+                      - generic [ref=e551]: +919812345678 ·
+                      - text: 18 May 2026, 10:11 pm
+                  - generic [ref=e552]: pending
+                  - generic [ref=e553]: ₹88,956.98
+              - listitem [ref=e554]:
+                - 'link "Debug · #OOKOA2CT +919999999999 · 18 May 2026, 9:25 pm pending ₹88,956.98" [ref=e555] [cursor=pointer]':
+                  - /url: /admin/ecommerce
+                  - generic [ref=e556]:
+                    - paragraph [ref=e557]: "Debug · #OOKOA2CT"
+                    - paragraph [ref=e558]:
+                      - generic [ref=e559]: +919999999999 ·
+                      - text: 18 May 2026, 9:25 pm
+                  - generic [ref=e560]: pending
+                  - generic [ref=e561]: ₹88,956.98
+          - generic [ref=e284]:
+            - generic [ref=e285]:
+              - generic [ref=e286]:
+                - generic [ref=e287]:
+                  - paragraph [ref=e288]: Trend
+                  - heading "Sales — last 7 days" [level=3] [ref=e289]
+                - generic [ref=e562]: Total ₹4,92,600.00
+              - img [ref=e565]:
+                - generic [ref=e567]:
+                  - generic [ref=e569]: 12 May
+                  - generic [ref=e571]: 13 May
+                  - generic [ref=e573]: 14 May
+                  - generic [ref=e575]: 15 May
+                  - generic [ref=e577]: 16 May
+                  - generic [ref=e579]: 17 May
+                  - generic [ref=e581]: 18 May
+                - generic [ref=e583]:
+                  - generic [ref=e585]: ₹0
+                  - generic [ref=e587]: ₹65k
+                  - generic [ref=e589]: ₹1.3L
+                  - generic [ref=e591]: ₹1.9L
+                  - generic [ref=e593]: ₹2.6L
+            - generic [ref=e291]:
+              - generic [ref=e292]:
+                - generic [ref=e293]:
+                  - img [ref=e295]
+                  - generic [ref=e300]:
+                    - paragraph [ref=e301]: Locations
+                    - heading "Shops" [level=3] [ref=e302]
+                - generic [ref=e304]: 2/2 open
+              - generic [ref=e305]:
+                - list [ref=e306]:
+                  - listitem [ref=e600]:
+                    - generic [ref=e603]: Karnal Branch — Haryana
+                    - generic [ref=e604]: open
+                  - listitem [ref=e605]:
+                    - generic [ref=e608]: Main Showroom — Gurugram
+                    - generic [ref=e609]: open
+                - paragraph [ref=e308]:
+                  - img [ref=e309]
+                  - text: Polling · last beat 12:35 am
+          - generic [ref=e311]:
+            - generic [ref=e312]:
+              - generic [ref=e313]:
+                - generic [ref=e314]:
+                  - img [ref=e316]
+                  - generic [ref=e321]:
+                    - paragraph [ref=e322]: Pipeline
+                    - heading "Lead funnel" [level=3] [ref=e323]
+                - link "Open CRM" [ref=e325] [cursor=pointer]:
+                  - /url: /admin/crm
+                  - text: Open CRM
+                  - img [ref=e326]
+              - list [ref=e610]:
+                - listitem [ref=e611]:
+                  - generic [ref=e612]:
+                    - generic [ref=e613]: new
+                    - generic [ref=e614]: 20 · 100%
+                - listitem [ref=e617]:
+                  - generic [ref=e618]:
+                    - generic [ref=e619]: contacted
+                    - generic [ref=e620]: 0 · 0%
+                - listitem [ref=e622]:
+                  - generic [ref=e623]:
+                    - generic [ref=e624]: interested
+                    - generic [ref=e625]: 0 · 0%
+                - listitem [ref=e627]:
+                  - generic [ref=e628]:
+                    - generic [ref=e629]: negotiation
+                    - generic [ref=e630]: 0 · 0%
+                - listitem [ref=e632]:
+                  - generic [ref=e633]:
+                    - generic [ref=e634]: converted
+                    - generic [ref=e635]: 0 · 0%
+                - listitem [ref=e637]:
+                  - generic [ref=e638]:
+                    - generic [ref=e639]: lost
+                    - generic [ref=e640]: 0 · 0%
+            - generic [ref=e330]:
+              - generic [ref=e331]:
+                - generic [ref=e332]:
+                  - paragraph [ref=e333]: This month
+                  - heading "Top-selling products" [level=3] [ref=e334]
+                - link "All products" [ref=e335] [cursor=pointer]:
+                  - /url: /admin/ecommerce
+                  - text: All products
+                  - img [ref=e336]
+              - img [ref=e644]:
+                - generic [ref=e646]:
+                  - generic [ref=e648]: ₹0
+                  - generic [ref=e650]: ₹15.0L
+                  - generic [ref=e652]: ₹30.0L
+                  - generic [ref=e654]: ₹45.0L
+                  - generic [ref=e656]: ₹60.0L
+                - generic [ref=e658]:
+                  - generic [ref=e660]: Mira bangle
+                  - generic [ref=e662]: Tara mangalsutra
+                  - generic [ref=e664]: Kavya choker
+                  - generic [ref=e666]: Isha bridal set
+                  - generic [ref=e668]: Niya haar
+                  - generic [ref=e670]: Meera nose pin
+                  - generic [ref=e672]: Diya chain
+          - generic [ref=e339]:
+            - generic [ref=e340]:
+              - generic [ref=e341]:
+                - generic [ref=e342]:
+                  - img [ref=e344]
+                  - generic [ref=e347]:
+                    - paragraph [ref=e348]: Online
+                    - heading "Recent storefront orders" [level=3] [ref=e349]
+                - link "All orders" [ref=e351] [cursor=pointer]:
+                  - /url: /admin/ecommerce
+                  - text: All orders
+                  - img [ref=e352]
+              - list [ref=e690]:
+                - listitem [ref=e691]:
+                  - link "#86EEZ3MB 19 May 2026, 12:35 am · cod pending ₹88,956.98" [ref=e692] [cursor=pointer]:
+                    - /url: /admin/ecommerce
+                    - generic [ref=e693]:
+                      - paragraph [ref=e694]: "#86EEZ3MB"
+                      - paragraph [ref=e695]: 19 May 2026, 12:35 am · cod
+                    - generic [ref=e696]: pending
+                    - generic [ref=e697]: ₹88,956.98
+                - listitem [ref=e698]:
+                  - link "#IDZEVGRY 19 May 2026, 12:30 am · cod pending ₹88,956.98" [ref=e699] [cursor=pointer]:
+                    - /url: /admin/ecommerce
+                    - generic [ref=e700]:
+                      - paragraph [ref=e701]: "#IDZEVGRY"
+                      - paragraph [ref=e702]: 19 May 2026, 12:30 am · cod
+                    - generic [ref=e703]: pending
+                    - generic [ref=e704]: ₹88,956.98
+                - listitem [ref=e705]:
+                  - link "#BAD99G7M 19 May 2026, 12:27 am · cod pending ₹88,956.98" [ref=e706] [cursor=pointer]:
+                    - /url: /admin/ecommerce
+                    - generic [ref=e707]:
+                      - paragraph [ref=e708]: "#BAD99G7M"
+                      - paragraph [ref=e709]: 19 May 2026, 12:27 am · cod
+                    - generic [ref=e710]: pending
+                    - generic [ref=e711]: ₹88,956.98
+                - listitem [ref=e712]:
+                  - link "#S8FJJUV3 19 May 2026, 12:23 am · cod pending ₹88,956.98" [ref=e713] [cursor=pointer]:
+                    - /url: /admin/ecommerce
+                    - generic [ref=e714]:
+                      - paragraph [ref=e715]: "#S8FJJUV3"
+                      - paragraph [ref=e716]: 19 May 2026, 12:23 am · cod
+                    - generic [ref=e717]: pending
+                    - generic [ref=e718]: ₹88,956.98
+                - listitem [ref=e719]:
+                  - link "#RECYWNCN 18 May 2026, 10:11 pm · reserve at store pending ₹88,956.98" [ref=e720] [cursor=pointer]:
+                    - /url: /admin/ecommerce
+                    - generic [ref=e721]:
+                      - paragraph [ref=e722]: "#RECYWNCN"
+                      - paragraph [ref=e723]: 18 May 2026, 10:11 pm · reserve at store
+                    - generic [ref=e724]: pending
+                    - generic [ref=e725]: ₹88,956.98
+                - listitem [ref=e726]:
+                  - link "#RKKR5RO2 18 May 2026, 10:03 pm · cod confirmed ₹64,066.00" [ref=e727] [cursor=pointer]:
+                    - /url: /admin/ecommerce
+                    - generic [ref=e728]:
+                      - paragraph [ref=e729]: "#RKKR5RO2"
+                      - paragraph [ref=e730]: 18 May 2026, 10:03 pm · cod
+                    - generic [ref=e731]: confirmed
+                    - generic [ref=e732]: ₹64,066.00
+            - generic [ref=e356]:
+              - generic [ref=e357]:
+                - generic [ref=e358]:
+                  - img [ref=e360]
+                  - generic [ref=e363]:
+                    - paragraph [ref=e364]: Counter
+                    - heading "Recent POS bills" [level=3] [ref=e365]
+                - link "Open POS" [ref=e367] [cursor=pointer]:
+                  - /url: /pos
+                  - text: Open POS
+                  - img [ref=e368]
+              - list [ref=e733]:
+                - listitem [ref=e734]:
+                  - generic [ref=e735]:
+                    - paragraph [ref=e736]: INV-01001
+                    - paragraph [ref=e737]: 16 May 2026, 6:53 pm
+                  - generic [ref=e738]: paid
+                  - generic [ref=e739]: ₹1,82,400.00
+                - listitem [ref=e740]:
+                  - generic [ref=e741]:
+                    - paragraph [ref=e742]: INV-01002
+                    - paragraph [ref=e743]: 15 May 2026, 6:53 pm
+                  - generic [ref=e744]: paid
+                  - generic [ref=e745]: ₹64,300.00
+                - listitem [ref=e746]:
+                  - generic [ref=e747]:
+                    - paragraph [ref=e748]: INV-01003
+                    - paragraph [ref=e749]: 13 May 2026, 6:53 pm
+                  - generic [ref=e750]: paid
+                  - generic [ref=e751]: ₹2,45,900.00
+                - listitem [ref=e752]:
+                  - generic [ref=e753]:
+                    - paragraph [ref=e754]: INV-01004
+                    - paragraph [ref=e755]: 10 May 2026, 6:53 pm
+                  - generic [ref=e756]: paid
+                  - generic [ref=e757]: ₹31,400.00
+                - listitem [ref=e758]:
+                  - generic [ref=e759]:
+                    - paragraph [ref=e760]: INV-01005
+                    - paragraph [ref=e761]: 7 May 2026, 6:53 pm
+                  - generic [ref=e762]: partial
+                  - generic [ref=e763]: ₹1,12,000.00
+                - listitem [ref=e764]:
+                  - generic [ref=e765]:
+                    - paragraph [ref=e766]: INV-01006
+                    - paragraph [ref=e767]: 4 May 2026, 6:53 pm
+                  - generic [ref=e768]: paid
+                  - generic [ref=e769]: ₹78,500.00
+          - generic [ref=e372]:
+            - generic [ref=e373]:
+              - generic [ref=e375]:
+                - paragraph [ref=e376]: Finance
+                - heading "Revenue vs expenses (MTD)" [level=3] [ref=e377]
+              - generic [ref=e771]:
+                - img [ref=e772]:
+                  - generic [ref=e776]: May
+                  - generic [ref=e778]:
+                    - generic [ref=e780]: ₹0
+                    - generic [ref=e782]: ₹2.0L
+                    - generic [ref=e784]: ₹4.0L
+                    - generic [ref=e786]: ₹6.0L
+                    - generic [ref=e788]: ₹8.0L
+                - list [ref=e800]:
+                  - listitem [ref=e801]:
+                    - img [ref=e802]
+                    - text: Revenue
+                  - listitem [ref=e804]:
+                    - img [ref=e805]
+                    - text: Expenses
+              - generic [ref=e807]:
+                - generic [ref=e808]:
+                  - paragraph [ref=e809]: Revenue
+                  - paragraph [ref=e810]: ₹7,14,500.00
+                - generic [ref=e811]:
+                  - paragraph [ref=e812]: Expenses
+                  - paragraph [ref=e813]: ₹7,80,600.00
+                - generic [ref=e814]:
+                  - paragraph [ref=e815]: Net
+                  - paragraph [ref=e816]: ₹98,089.31
+            - generic [ref=e379]:
+              - generic [ref=e381]:
+                - paragraph [ref=e382]: MTD
+                - heading "Expenses by category" [level=3] [ref=e383]
+              - generic [ref=e817]:
+                - generic [ref=e819]:
+                  - img [ref=e820]:
+                    - generic [ref=e821]:
+                      - img [ref=e823]
+                      - img [ref=e825]
+                      - img [ref=e827]
+                      - img [ref=e829]
+                      - img [ref=e831]
+                      - img [ref=e833]
+                      - img [ref=e835]
+                  - list [ref=e837]:
+                    - listitem [ref=e838]:
+                      - img [ref=e839]
+                      - text: Salaries
+                    - listitem [ref=e841]:
+                      - img [ref=e842]
+                      - text: Furniture
+                    - listitem [ref=e844]:
+                      - img [ref=e845]
+                      - text: Rent
+                    - listitem [ref=e847]:
+                      - img [ref=e848]
+                      - text: Insurance
+                    - listitem [ref=e850]:
+                      - img [ref=e851]
+                      - text: Marketing
+                    - listitem [ref=e853]:
+                      - img [ref=e854]
+                      - text: Electricity
+                    - listitem [ref=e856]:
+                      - img [ref=e857]
+                      - text: Repairs
+                - generic:
+                  - paragraph: Total
+                  - paragraph: ₹7,80,600
+          - generic [ref=e385]:
+            - generic [ref=e386]:
+              - generic [ref=e387]:
+                - generic [ref=e388]:
+                  - img [ref=e390]
+                  - generic [ref=e393]:
+                    - paragraph [ref=e394]: Alerts
+                    - heading "Low stock" [level=3] [ref=e395]
+                - link "Inventory" [ref=e397] [cursor=pointer]:
+                  - /url: /admin/inventory
+                  - text: Inventory
+                  - img [ref=e398]
+              - generic [ref=e400]:
+                - paragraph [ref=e401]: 4 alerts across 2 shops.
+                - list [ref=e859]:
+                  - listitem [ref=e860]:
+                    - generic [ref=e861]: Bridal · Karnal Branch — Haryana
+                    - generic [ref=e862]: 1 items
+                  - listitem [ref=e863]:
+                    - generic [ref=e864]: Silver · Karnal Branch — Haryana
+                    - generic [ref=e865]: 3 items
+                  - listitem [ref=e866]:
+                    - generic [ref=e867]: Silver · Main Showroom — Gurugram
+                    - generic [ref=e868]: 2 items
+                  - listitem [ref=e869]:
+                    - generic [ref=e870]: Diamond · Karnal Branch — Haryana
+                    - generic [ref=e871]: 2 items
+            - generic [ref=e403]:
+              - generic [ref=e404]:
+                - generic [ref=e405]:
+                  - img [ref=e407]
+                  - generic [ref=e412]:
+                    - paragraph [ref=e413]: Payables
+                    - heading "Vendor outstanding" [level=3] [ref=e414]
+                - link "Vendors" [ref=e416] [cursor=pointer]:
+                  - /url: /admin/inventory
+                  - text: Vendors
+                  - img [ref=e417]
+              - list [ref=e872]:
+                - listitem [ref=e873]:
+                  - generic [ref=e874]:
+                    - paragraph [ref=e875]: Surat Bullion Co.
+                    - paragraph [ref=e876]: "+912614435560"
+                  - generic [ref=e877]: ₹25,00,000.00
+                - listitem [ref=e878]:
+                  - generic [ref=e879]:
+                    - paragraph [ref=e880]: Zaveri Bazaar Imports
+                    - paragraph [ref=e881]: "+912266443322"
+                  - generic [ref=e882]: ₹14,50,000.00
+                - listitem [ref=e883]:
+                  - generic [ref=e884]:
+                    - paragraph [ref=e885]: Jaipur Kundan Karigars
+                    - paragraph [ref=e886]: "+911414235566"
+                  - generic [ref=e887]: ₹6,25,000.00
+          - generic [ref=e421]:
+            - generic [ref=e422]:
+              - generic [ref=e424]:
+                - img [ref=e426]
+                - generic [ref=e436]:
+                  - paragraph [ref=e437]: Stock
+                  - heading "Inventory snapshot" [level=3] [ref=e438]
+              - generic [ref=e440]:
+                - generic [ref=e441]:
+                  - term [ref=e442]: Items in stock
+                  - definition [ref=e443]: "40"
+                - generic [ref=e444]:
+                  - term [ref=e445]: Stock value
+                  - definition [ref=e446]: ₹28,11,313.90
+                - generic [ref=e447]:
+                  - term [ref=e448]: Vendors
+                  - definition [ref=e449]: "3"
+                - generic [ref=e450]:
+                  - term [ref=e451]: Top product
+                  - definition [ref=e452]: Mira bangle
+                - generic [ref=e453]:
+                  - term [ref=e454]: Low-stock alerts
+                  - definition [ref=e455]:
+                    - generic [ref=e456]: "4"
+            - generic [ref=e457]:
+              - generic [ref=e458]:
+                - generic [ref=e459]:
+                  - img [ref=e461]
+                  - generic [ref=e464]:
+                    - paragraph [ref=e465]: Audit
+                    - heading "Recent activity" [level=3] [ref=e466]
+                - link "Full audit log" [ref=e468] [cursor=pointer]:
+                  - /url: /admin/inventory
+                  - text: Full audit log
+                  - img [ref=e469]
+              - list [ref=e888]:
+                - listitem [ref=e889]:
+                  - img [ref=e891]
+                  - generic [ref=e894]:
+                    - paragraph [ref=e895]: create on Item
+                    - paragraph [ref=e896]: uqy2dba9w9qy
+                  - generic [ref=e897]: 16 May 2026, 6:52 pm
+                - listitem [ref=e898]:
+                  - img [ref=e900]
+                  - generic [ref=e903]:
+                    - paragraph [ref=e904]: create on Item
+                    - paragraph [ref=e905]: uqy2gxe45zbx
+                  - generic [ref=e906]: 16 May 2026, 6:52 pm
+                - listitem [ref=e907]:
+                  - img [ref=e909]
+                  - generic [ref=e912]:
+                    - paragraph [ref=e913]: create on Item
+                    - paragraph [ref=e914]: uqy211k7ci66
+                  - generic [ref=e915]: 16 May 2026, 6:52 pm
+                - listitem [ref=e916]:
+                  - img [ref=e918]
+                  - generic [ref=e921]:
+                    - paragraph [ref=e922]: create on Item
+                    - paragraph [ref=e923]: uqy2ht5x55h6
+                  - generic [ref=e924]: 16 May 2026, 6:52 pm
+                - listitem [ref=e925]:
+                  - img [ref=e927]
+                  - generic [ref=e930]:
+                    - paragraph [ref=e931]: create on Item
+                    - paragraph [ref=e932]: uqy2kgdj7td1
+                  - generic [ref=e933]: 16 May 2026, 6:52 pm
+                - listitem [ref=e934]:
+                  - img [ref=e936]
+                  - generic [ref=e939]:
+                    - paragraph [ref=e940]: create on Item
+                    - paragraph [ref=e941]: uqy2g4sv06de
+                  - generic [ref=e942]: 16 May 2026, 6:52 pm
+                - listitem [ref=e943]:
+                  - img [ref=e945]
+                  - generic [ref=e948]:
+                    - paragraph [ref=e949]: create on Item
+                    - paragraph [ref=e950]: uqy2yo4mk6jh
+                  - generic [ref=e951]: 16 May 2026, 6:52 pm
+                - listitem [ref=e952]:
+                  - img [ref=e954]
+                  - generic [ref=e957]:
+                    - paragraph [ref=e958]: create on Item
+                    - paragraph [ref=e959]: uqy2twt1hdsp
+                  - generic [ref=e960]: 16 May 2026, 6:52 pm
+          - generic [ref=e473]:
+            - link "Open inventory Stock & SKUs" [ref=e474] [cursor=pointer]:
+              - /url: /admin/inventory
+              - img [ref=e476]
+              - generic [ref=e480]:
+                - paragraph [ref=e481]: Open inventory
+                - paragraph [ref=e482]: Stock & SKUs
+              - img [ref=e483]
+            - link "Open POS Billing counter" [ref=e485] [cursor=pointer]:
+              - /url: /pos
+              - img [ref=e487]
+              - generic [ref=e490]:
+                - paragraph [ref=e491]: Open POS
+                - paragraph [ref=e492]: Billing counter
+              - img [ref=e493]
+            - link "Open CRM Leads & broadcasts" [ref=e495] [cursor=pointer]:
+              - /url: /admin/crm
+              - img [ref=e497]
+              - generic [ref=e502]:
+                - paragraph [ref=e503]: Open CRM
+                - paragraph [ref=e504]: Leads & broadcasts
+              - img [ref=e505]
+            - link "Edit storefront Website CMS" [ref=e507] [cursor=pointer]:
+              - /url: /admin/website
+              - img [ref=e509]
+              - generic [ref=e512]:
+                - paragraph [ref=e513]: Edit storefront
+                - paragraph [ref=e514]: Website CMS
+              - img [ref=e515]
+  - generic [ref=e961]: Mira bangle

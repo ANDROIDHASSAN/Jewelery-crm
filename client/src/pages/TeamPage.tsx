@@ -30,6 +30,9 @@ import {
   useUpdateRoleMutation,
   useDeleteRoleMutation,
   useGetUserQuery,
+  useListInvitationsQuery,
+  useCreateInvitationMutation,
+  useRevokeInvitationMutation,
   type RoleSummary,
 } from '@/features/team/teamApi';
 import { useGetShopsQuery } from '@/features/shops/shopsApi';
@@ -83,12 +86,13 @@ function groupByModule<T extends { module: string }>(rows: readonly T[]): Array<
   return ordered;
 }
 
-type Tab = 'members' | 'roles' | 'permissions';
+type Tab = 'members' | 'invitations' | 'roles' | 'permissions';
 
 export function TeamPage(): JSX.Element {
   const [tab, setTab] = useState<Tab>('members');
   const teamTabs: TabStripItem<Tab>[] = [
     { id: 'members', label: 'Members' },
+    { id: 'invitations', label: 'Invitations' },
     { id: 'roles', label: 'Roles' },
     { id: 'permissions', label: 'Permissions reference' },
   ];
@@ -110,6 +114,7 @@ export function TeamPage(): JSX.Element {
       <TabStrip<Tab> items={teamTabs} value={tab} onChange={setTab} />
 
       {tab === 'members' && <MembersTab />}
+      {tab === 'invitations' && <InvitationsTab />}
       {tab === 'roles' && <RolesTab />}
       {tab === 'permissions' && <PermissionsReferenceTab />}
     </div>
@@ -1107,5 +1112,225 @@ function Field({
       {children}
       {hint && <p className="text-[11px] text-ink-500">{hint}</p>}
     </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Invitations tab — modern link-based onboarding. Admin types name+email+role,
+// server returns a one-time token (shown ONCE). Admin copies the link, shares
+// it with the new teammate via whatever channel. The recipient clicks → picks
+// their own password → real User row is created. Better than the legacy
+// "I'll share your temp password manually" flow:
+//   - Password never travels through admin's chat history.
+//   - Token is single-use + auto-expires (7 days).
+//   - Recipient knows the password from the moment they pick it.
+//   - Full audit trail (INVITATION_SENT / INVITATION_ACCEPTED / INVITATION_REVOKED).
+// ─────────────────────────────────────────────────────────────────────────────
+
+function InvitationsTab(): JSX.Element {
+  const { data: invitationsRes, isLoading } = useListInvitationsQuery();
+  const { data: rolesRes } = useListRolesQuery();
+  const { data: shopsRes } = useGetShopsQuery();
+  const [createInvitation, { isLoading: creating }] = useCreateInvitationMutation();
+  const [revokeInvitation] = useRevokeInvitationMutation();
+
+  const invitations = invitationsRes?.data ?? [];
+  // Skip SUPER_ADMIN — server refuses to invite straight into it.
+  const roles = (rolesRes?.data ?? []).filter((r) => r.slug !== 'SUPER_ADMIN');
+  const shops = shopsRes?.data ?? [];
+
+  const [name, setName] = useState('');
+  const [email, setEmail] = useState('');
+  const [roleId, setRoleId] = useState('');
+  const [shopId, setShopId] = useState('');
+  const [generatedLink, setGeneratedLink] = useState<string | null>(null);
+
+  async function handleCreate(e: React.FormEvent): Promise<void> {
+    e.preventDefault();
+    if (!name.trim() || !email.trim() || !roleId) {
+      toast.error('Name, email and role are all required');
+      return;
+    }
+    try {
+      const res = await createInvitation({
+        name: name.trim(),
+        email: email.trim().toLowerCase(),
+        roleId,
+        shopId: shopId || null,
+      }).unwrap();
+      const link = `${window.location.origin}/accept-invitation/${res.data.token}`;
+      setGeneratedLink(link);
+      setName('');
+      setEmail('');
+      setShopId('');
+      toast.success('Invitation created — copy the link below');
+    } catch (err) {
+      const msg = (err as { data?: { error?: { message?: string } } })?.data?.error?.message
+        ?? 'Could not create invitation';
+      toast.error(msg);
+    }
+  }
+
+  async function handleRevoke(id: string): Promise<void> {
+    if (!confirm('Revoke this invitation? The link will stop working immediately.')) return;
+    try {
+      await revokeInvitation(id).unwrap();
+      toast.success('Invitation revoked');
+    } catch {
+      toast.error('Could not revoke invitation');
+    }
+  }
+
+  return (
+    <div className="grid grid-cols-1 lg:grid-cols-[1fr_360px] gap-6">
+      <section>
+        <h2 className="text-eyebrow uppercase text-ink-500 mb-3">All invitations</h2>
+        {isLoading ? (
+          <p className="text-sm text-ink-500">Loading…</p>
+        ) : invitations.length === 0 ? (
+          <div className="rounded-md border border-dashed border-ink-200 bg-ink-25 p-8 text-center">
+            <p className="text-sm text-ink-700 font-medium">No invitations yet</p>
+            <p className="text-xs text-ink-500 mt-1">Send your first one using the form on the right.</p>
+          </div>
+        ) : (
+          <div className="rounded-md border border-ink-100 bg-ink-0 overflow-hidden">
+            <table className="w-full text-sm">
+              <thead className="bg-ink-25 text-ink-600 text-xs">
+                <tr>
+                  <th className="text-left px-4 py-2.5 font-medium">Email</th>
+                  <th className="text-left px-4 py-2.5 font-medium">Role</th>
+                  <th className="text-left px-4 py-2.5 font-medium">Status</th>
+                  <th className="text-left px-4 py-2.5 font-medium">Expires</th>
+                  <th className="px-4 py-2.5" />
+                </tr>
+              </thead>
+              <tbody>
+                {invitations.map((inv) => (
+                  <tr key={inv.id} className="border-t border-ink-100">
+                    <td className="px-4 py-2.5">
+                      <div className="font-medium text-ink-900">{inv.name}</div>
+                      <div className="text-xs text-ink-500">{inv.email}</div>
+                    </td>
+                    <td className="px-4 py-2.5 text-ink-700">
+                      {inv.roleName}
+                      {inv.shopName && <span className="text-ink-500"> · {inv.shopName}</span>}
+                    </td>
+                    <td className="px-4 py-2.5">
+                      <InvitationStatusBadge status={inv.status} />
+                    </td>
+                    <td className="px-4 py-2.5 text-xs text-ink-600">
+                      {new Date(inv.expiresAt).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}
+                    </td>
+                    <td className="px-4 py-2.5 text-right">
+                      {inv.status === 'pending' && (
+                        <button
+                          type="button"
+                          onClick={() => void handleRevoke(inv.id)}
+                          className="text-xs text-rose-700 hover:text-rose-900"
+                        >
+                          Revoke
+                        </button>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
+
+      <aside className="space-y-4">
+        <div className="rounded-md border border-ink-100 bg-ink-0 p-5">
+          <h3 className="font-display text-lg text-ink-900">Invite a teammate</h3>
+          <p className="text-xs text-ink-500 mt-1">
+            They&apos;ll get a one-time link. They pick their own password.
+          </p>
+          <form onSubmit={handleCreate} className="mt-4 space-y-3">
+            <div>
+              <Label htmlFor="inv-name">Name</Label>
+              <Input id="inv-name" type="text" required value={name} onChange={(e) => setName(e.target.value)} placeholder="Priya Mehta" />
+            </div>
+            <div>
+              <Label htmlFor="inv-email">Email</Label>
+              <Input id="inv-email" type="email" required value={email} onChange={(e) => setEmail(e.target.value)} placeholder="priya@example.com" />
+            </div>
+            <div>
+              <Label htmlFor="inv-role">Role</Label>
+              <select
+                id="inv-role"
+                required
+                value={roleId}
+                onChange={(e) => setRoleId(e.target.value)}
+                className="w-full h-10 px-3 rounded-md border border-ink-200 bg-ink-0 text-sm focus:border-brand-400 outline-none"
+              >
+                <option value="">Pick a role…</option>
+                {roles.map((r) => (
+                  <option key={r.id} value={r.id}>{r.name}</option>
+                ))}
+              </select>
+              <p className="text-[11px] text-ink-500 mt-1">SUPER_ADMIN isn&apos;t invitable. Promote an existing user instead.</p>
+            </div>
+            {shops.length > 0 && (
+              <div>
+                <Label htmlFor="inv-shop">Shop (optional)</Label>
+                <select
+                  id="inv-shop"
+                  value={shopId}
+                  onChange={(e) => setShopId(e.target.value)}
+                  className="w-full h-10 px-3 rounded-md border border-ink-200 bg-ink-0 text-sm focus:border-brand-400 outline-none"
+                >
+                  <option value="">All shops</option>
+                  {shops.map((s) => (
+                    <option key={s.id} value={s.id}>{s.name}</option>
+                  ))}
+                </select>
+              </div>
+            )}
+            <Button type="submit" disabled={creating} className="w-full">
+              {creating ? 'Creating link…' : 'Create invitation link'}
+            </Button>
+          </form>
+        </div>
+
+        {generatedLink && (
+          <div className="rounded-md border border-success-500/40 bg-success-50 p-4">
+            <p className="text-xs uppercase tracking-wider text-success-700 font-medium">Share this link</p>
+            <p className="text-[11px] text-ink-600 mt-1 mb-2">
+              Valid for 7 days, single-use. We won&apos;t show this again.
+            </p>
+            <div className="flex gap-2">
+              <code className="flex-1 min-w-0 text-[11px] font-mono bg-ink-0 border border-ink-200 rounded px-2 py-2 break-all">
+                {generatedLink}
+              </code>
+              <Button
+                type="button"
+                variant="secondary"
+                onClick={() => {
+                  void navigator.clipboard.writeText(generatedLink);
+                  toast.success('Link copied');
+                }}
+              >
+                Copy
+              </Button>
+            </div>
+          </div>
+        )}
+      </aside>
+    </div>
+  );
+}
+
+function InvitationStatusBadge({ status }: { status: 'pending' | 'accepted' | 'expired' | 'revoked' }): JSX.Element {
+  const map = {
+    pending: 'bg-warning-50 text-warning-800',
+    accepted: 'bg-success-50 text-success-700',
+    expired: 'bg-ink-100 text-ink-600',
+    revoked: 'bg-rose-50 text-rose-700',
+  } as const;
+  return (
+    <span className={`inline-flex items-center text-[10px] font-medium uppercase tracking-wide rounded px-1.5 py-0.5 ${map[status]}`}>
+      {status}
+    </span>
   );
 }

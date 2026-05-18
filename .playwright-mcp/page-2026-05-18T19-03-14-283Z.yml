@@ -1,0 +1,123 @@
+- generic [ref=e3]:
+  - complementary [ref=e4]:
+    - generic [ref=e5]:
+      - img [ref=e7]
+      - generic [ref=e9]:
+        - generic [ref=e10]: Zelora
+        - generic [ref=e11]: SUPER ADMIN
+    - navigation "Primary" [ref=e12]:
+      - generic [ref=e13]:
+        - paragraph [ref=e14]: Main
+        - link "Dashboard" [ref=e16] [cursor=pointer]:
+          - /url: /admin
+          - img [ref=e18]
+          - generic [ref=e23]: Dashboard
+      - generic [ref=e24]:
+        - paragraph [ref=e25]: Operations
+        - generic [ref=e26]:
+          - link "Inventory" [ref=e27] [cursor=pointer]:
+            - /url: /admin/inventory
+            - img [ref=e29]
+            - generic [ref=e39]: Inventory
+          - link "Offline shops" [ref=e40] [cursor=pointer]:
+            - /url: /admin/counter
+            - img [ref=e42]
+            - generic [ref=e47]: Offline shops
+          - link "Finance" [ref=e48] [cursor=pointer]:
+            - /url: /admin/finance
+            - img [ref=e50]
+            - generic [ref=e53]: Finance
+      - generic [ref=e54]:
+        - paragraph [ref=e55]: Channels
+        - generic [ref=e56]:
+          - link "E-commerce" [ref=e57] [cursor=pointer]:
+            - /url: /admin/ecommerce
+            - img [ref=e59]
+            - generic [ref=e62]: E-commerce
+          - link "Website" [ref=e63] [cursor=pointer]:
+            - /url: /admin/website
+            - img [ref=e65]
+            - generic [ref=e68]: Website
+          - link "CRM & ads" [ref=e69] [cursor=pointer]:
+            - /url: /admin/crm
+            - img [ref=e71]
+            - generic [ref=e76]: CRM & ads
+      - generic [ref=e77]:
+        - paragraph [ref=e78]: Insights
+        - generic [ref=e79]:
+          - link "Analytics" [ref=e80] [cursor=pointer]:
+            - /url: /admin/analytics
+            - img [ref=e82]
+            - generic [ref=e84]: Analytics
+          - link "Team & roles" [ref=e85] [cursor=pointer]:
+            - /url: /admin/team
+            - img [ref=e87]
+            - generic [ref=e99]: Team & roles
+    - link "Settings" [ref=e101] [cursor=pointer]:
+      - /url: /admin/settings
+      - img [ref=e102]
+      - generic [ref=e105]: Settings
+  - generic [ref=e106]:
+    - banner [ref=e107]:
+      - button "Main Showroom — Gurugram" [ref=e108] [cursor=pointer]:
+        - img [ref=e109]
+        - generic [ref=e114]: Main Showroom — Gurugram
+        - img [ref=e115]
+      - button "Open command palette" [ref=e119] [cursor=pointer]:
+        - img [ref=e120]
+        - generic [ref=e123]: Search or jump to…
+        - generic [ref=e124]:
+          - generic [ref=e125]: ⌘
+          - text: K
+      - button "Notifications" [ref=e128] [cursor=pointer]:
+        - img [ref=e129]
+      - button "Account menu" [ref=e133] [cursor=pointer]: AK
+    - main [ref=e134]:
+      - generic [ref=e135]:
+        - generic [ref=e137]:
+          - generic [ref=e138]:
+            - paragraph [ref=e139]: Module 04 · E-commerce
+            - heading "Products & orders" [level=1] [ref=e140]
+            - paragraph [ref=e141]: Catalog, online orders, in-store reservations — synced from the storefront and POS on a 10-second cadence.
+          - button "Add product" [ref=e143] [cursor=pointer]:
+            - img [ref=e144]
+            - text: Add product
+        - generic [ref=e147]:
+          - generic [ref=e148]:
+            - paragraph [ref=e149]: Published products
+            - paragraph [ref=e150]: …
+            - paragraph [ref=e151]: 0 total in catalog
+          - generic [ref=e152]:
+            - paragraph [ref=e153]: Open orders
+            - paragraph [ref=e154]: …
+          - generic [ref=e155]:
+            - paragraph [ref=e156]: Open reservations
+            - paragraph [ref=e157]: …
+            - paragraph [ref=e158]: 0 total · storefront
+          - generic [ref=e159]:
+            - paragraph [ref=e160]: Total revenue
+            - paragraph [ref=e161]: …
+            - paragraph [ref=e162]: across 0 orders
+        - tablist "Section tabs" [ref=e163]:
+          - tab "Products" [selected] [ref=e164] [cursor=pointer]:
+            - generic [ref=e165]: Products
+          - tab "Orders" [ref=e166] [cursor=pointer]:
+            - generic [ref=e167]: Orders
+          - tab "Reservations" [ref=e168] [cursor=pointer]:
+            - generic [ref=e169]: Reservations
+        - table [ref=e172]:
+          - rowgroup [ref=e173]:
+            - row "Product SKU Weight Purity Price Status" [ref=e174]:
+              - columnheader "Product" [ref=e175]
+              - columnheader "SKU" [ref=e176]
+              - columnheader "Weight" [ref=e177]
+              - columnheader "Purity" [ref=e178]
+              - columnheader "Price" [ref=e179]
+              - columnheader "Status" [ref=e180]
+              - columnheader [ref=e181]
+          - rowgroup [ref=e182]:
+            - row "No products yet. Click Add product." [ref=e183]:
+              - cell "No products yet. Click Add product." [ref=e184]:
+                - text: No products yet. Click
+                - strong [ref=e185]: Add product
+                - text: .

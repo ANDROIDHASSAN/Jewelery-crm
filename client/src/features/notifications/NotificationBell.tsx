@@ -95,14 +95,23 @@ export function NotificationBell(): JSX.Element {
   // Detect a "new order arrived" event: `total` went up since the previous
   // poll. We compare against the previous render's value (kept in a ref so
   // the comparison survives across renders but doesn't re-render itself).
+  // When we detect the jump, the live-count payload also carries the
+  // `latestOrderId` for *the* most recent order, so we deep-link the toast's
+  // "Open" action straight to that order's drawer instead of dumping the
+  // user on the e-commerce list.
   const prevTotalRef = useRef<number | null>(null);
   useEffect(() => {
     if (!liveCount) return;
     if (prevTotalRef.current !== null && totalOrders > prevTotalRef.current) {
       const delta = totalOrders - prevTotalRef.current;
+      const latestId = liveCount.latestOrderId;
+      const targetUrl = latestId ? `/admin/ecommerce?orderId=${latestId}` : '/admin/ecommerce';
       toast.message(`${delta} new order${delta === 1 ? '' : 's'} just arrived`, {
-        description: 'Click the bell to view, or jump to E-commerce.',
-        action: { label: 'Open', onClick: () => navigate('/admin/ecommerce') },
+        description:
+          delta === 1 && latestId
+            ? 'Click Open to view this order, or the bell for the full feed.'
+            : 'Click the bell to view, or jump to E-commerce.',
+        action: { label: 'Open', onClick: () => navigate(targetUrl) },
         duration: 8000,
       });
     }

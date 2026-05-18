@@ -226,6 +226,7 @@ Custom additions (in `client/src/components/ui/`):
 - Image on hover: subtle zoom (1.03 scale, 400ms ease).
 - Below: product name `display-sm`, price `body-sm font-mono`, optional discount tag.
 - No "Add to cart" button on the card — pushes them to PDP. Tanishq does this.
+- **Wishlist exception:** wishlist cards may surface a quiet inline "Move to bag" action because the page is a pre-purchase shortlist, not a discovery surface. Keep it as a text-link in eyebrow style (11px uppercase, `brand-700`, underline-on-hover) — never as a pill or filled button, so the image remains the hero of the card.
 
 ### Storefront PDP
 
