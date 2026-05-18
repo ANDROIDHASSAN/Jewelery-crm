@@ -72,7 +72,10 @@ describe('computeGoldValuePaise', () => {
     // Integer property: no float drift.
     expect(Number.isInteger(v)).toBe(true);
   });
-  it('returns 0 for silver (purity = 0)', () => {
-    expect(computeGoldValuePaise(50_000, 0, 80_000)).toBe(0);
+  it('computes silver value as weight × rate (no carat scaling) when purity = 0', () => {
+    // 50g (50_000 mg) of silver at ₹80/g (8_000 paise/g) = ₹4,000 = 400_000 paise.
+    // The old implementation early-returned 0 here, which made every silver
+    // POS line show ₹0. The fix: when purity===0, rate is already silver/g.
+    expect(computeGoldValuePaise(50_000, 0, 8_000)).toBe(400_000);
   });
 });
