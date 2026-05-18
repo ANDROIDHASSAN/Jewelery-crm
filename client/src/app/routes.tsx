@@ -44,6 +44,7 @@ import { WishlistPage } from '@/pages/storefront/WishlistPage';
 import { AccountPage } from '@/pages/storefront/AccountPage';
 import { SearchResultsPage } from '@/pages/storefront/SearchResultsPage';
 import { TrackOrderPage } from '@/pages/storefront/TrackOrderPage';
+import { OrderSuccessPage } from '@/pages/storefront/OrderSuccessPage';
 import { StaticPage } from '@/pages/storefront/StaticPage';
 
 const STATIC_PATHS = ['story', 'workshop', 'contact', 'help', 'care', 'hallmark', 'privacy', 'terms'];
@@ -107,6 +108,8 @@ const MAIN_HOST_ROUTES = [
       { path: 'account', element: <AccountPage /> },
       { path: 'search', element: <SearchResultsPage /> },
       { path: 'track', element: <TrackOrderPage /> },
+      { path: 'track/:id', element: <TrackOrderPage /> },
+      { path: 'order/success/:id', element: <OrderSuccessPage /> },
       ...STATIC_PATHS.map((p) => ({ path: p, element: <StaticPage /> })),
     ],
   },
@@ -125,6 +128,8 @@ const MAIN_HOST_ROUTES = [
       { path: 'account', element: <AccountPage /> },
       { path: 'search', element: <SearchResultsPage /> },
       { path: 'track', element: <TrackOrderPage /> },
+      { path: 'track/:id', element: <TrackOrderPage /> },
+      { path: 'order/success/:id', element: <OrderSuccessPage /> },
       ...STATIC_PATHS.map((p) => ({ path: p, element: <StaticPage /> })),
     ],
   },

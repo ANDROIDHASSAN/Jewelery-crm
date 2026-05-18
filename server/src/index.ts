@@ -16,6 +16,17 @@ async function boot(): Promise<void> {
     logger.error({ err }, '[boot] RBAC sync failed (continuing)');
   }
 
+  // Loud warning if the admin-sentinel bypass is configured in production.
+  // It's defence-disabled inside authMiddleware regardless, but its presence
+  // means someone may attempt to rely on it — surface that in the boot logs
+  // so the operator removes the env var.
+  if (env.NODE_ENV === 'production' && env.ADMIN_API_TOKEN) {
+    logger.warn(
+      { configured: true },
+      '[boot] SECURITY: ADMIN_API_TOKEN is set in production. The bypass is hard-disabled in NODE_ENV=production, so it cannot grant access — but the env var should be removed to avoid confusion and lateral-movement risk if NODE_ENV is ever misconfigured.',
+    );
+  }
+
   const app = createApp();
   app.listen(env.PORT, () => {
     logger.info(`[boot] Gold OS server listening on :${env.PORT} (${env.NODE_ENV})`);

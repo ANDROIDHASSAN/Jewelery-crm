@@ -4,6 +4,7 @@ import { LeadInputSchema } from '@goldos/shared/schemas';
 import { prisma } from '../../lib/prisma.js';
 import { LEAD_STATUSES } from '@goldos/shared/constants';
 import { NotFoundError } from '../../lib/errors.js';
+import { getTenantId } from '../../lib/async-context.js';
 
 export const crmRouter: Router = Router();
 
@@ -41,7 +42,9 @@ crmRouter.get('/leads', async (req, res, next) => {
 crmRouter.post('/leads', async (req, res, next) => {
   try {
     const body = LeadInputSchema.parse(req.body);
-    const lead = await prisma.lead.create({ data: { ...body, status: 'NEW' } });
+    const tenantId = getTenantId();
+    if (!tenantId) throw new Error('tenantId missing');
+    const lead = await prisma.lead.create({ data: { ...body, status: 'NEW', tenantId } });
     res.status(201).json({ data: lead });
   } catch (err) {
     next(err);

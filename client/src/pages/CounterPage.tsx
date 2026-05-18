@@ -37,6 +37,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Money } from '@/components/ui/money';
 import { EmptyState } from '@/components/ui/EmptyState';
+import { PageHeader } from '@/components/ui/PageHeader';
 import { cn } from '@/lib/cn';
 
 export function CounterPage(): JSX.Element {
@@ -86,19 +87,21 @@ export function CounterPage(): JSX.Element {
 
   return (
     <div className="max-w-7xl mx-auto space-y-5 sm:space-y-6">
-      <header className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
-        <div>
-          <p className="text-eyebrow uppercase text-ink-500">Read-only monitor</p>
-          <h1 className="font-display text-xl sm:text-display-sm text-ink-900 mt-1">Offline Shops</h1>
-          <p className="text-sm text-ink-500 mt-2 max-w-2xl">
-            Every shop's POS activity at a glance. Live till state, today's sales, parked carts and end-of-day variances.
-            Counter billing happens on the <code className="text-ink-700">pos.</code> subdomain — this view is monitoring only.
-          </p>
-        </div>
-        <Button variant="secondary" size="sm" onClick={refreshAll} className="self-start">
-          <RefreshCw className="h-4 w-4 mr-1.5" />Refresh
-        </Button>
-      </header>
+      <PageHeader
+        eyebrow="Module 02 · Read-only monitor"
+        title="Offline shops"
+        description={
+          <>
+            Every shop&apos;s POS activity at a glance. Live till state, today&apos;s sales, parked carts and end-of-day variances.
+            Counter billing happens on the <code className="text-ink-700 bg-ink-50 px-1 rounded">pos.</code> subdomain — this view is monitoring only.
+          </>
+        }
+        actions={
+          <Button variant="outline" size="sm" onClick={refreshAll}>
+            <RefreshCw className="h-4 w-4" /> Refresh
+          </Button>
+        }
+      />
 
       {/* Today rollup ---------------------------------------------------- */}
       <section className="grid grid-cols-2 lg:grid-cols-4 gap-3">

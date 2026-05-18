@@ -115,9 +115,14 @@ export const storefrontApi = baseApi.injectEndpoints({
         id: string;
         status: string;
         totalPaise: number;
+        subtotalPaise: number;
+        shippingPaise: number;
+        taxPaise: number;
         paymentMethod: string;
         createdAt: string;
         shiprocketAwb: string | null;
+        expectedDeliveryAt: string | null;
+        cancelReason: string | null;
         items: Array<{
           id: string;
           qty: number;
@@ -125,10 +130,33 @@ export const storefrontApi = baseApi.injectEndpoints({
           product?: { name: string; slug: string; images: string[] };
         }>;
         customer?: { name: string; phone: string };
+        events: Array<{
+          id: string;
+          status: string;
+          note: string | null;
+          location: string | null;
+          actorName: string | null;
+          createdAt: string;
+        }>;
       },
       { id: string; phone: string }
     >({
       query: ({ id, phone }) => ({ url: '/website/orders/lookup', params: { id, phone } }),
+      transformResponse: (raw: { data: never }) => raw.data,
+    }),
+    // List of every order on a phone — drives My Orders on AccountPage.
+    listOrdersByPhone: build.query<
+      Array<{
+        id: string;
+        status: string;
+        totalPaise: number;
+        createdAt: string;
+        expectedDeliveryAt: string | null;
+        items: Array<{ id: string; qty: number; product?: { name: string; images: string[] } }>;
+      }>,
+      { phone: string }
+    >({
+      query: ({ phone }) => ({ url: '/website/orders/by-phone', params: { phone } }),
       transformResponse: (raw: { data: never }) => raw.data,
     }),
     createPublicOrder: build.mutation<
@@ -165,4 +193,6 @@ export const {
   useCreateEnquiryMutation,
   useCreatePublicOrderMutation,
   useLazyLookupOrderQuery,
+  useLookupOrderQuery,
+  useListOrdersByPhoneQuery,
 } = storefrontApi;

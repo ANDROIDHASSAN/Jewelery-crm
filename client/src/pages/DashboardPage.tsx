@@ -15,6 +15,7 @@ import {
   Receipt,
   ScrollText,
   ShoppingBag,
+  Store,
   TrendingDown,
   TrendingUp,
   Users,
@@ -22,6 +23,8 @@ import {
 import { MetricCard } from '@/components/ui/MetricCard';
 import { Money } from '@/components/ui/money';
 import { Badge } from '@/components/ui/badge';
+import { PageHeader } from '@/components/ui/PageHeader';
+import { SectionCard } from '@/components/ui/SectionCard';
 import { cn } from '@/lib/cn';
 import {
   ChartCard,
@@ -231,18 +234,67 @@ export function DashboardPage(): JSX.Element {
   );
 
   return (
-    <div className="space-y-4 sm:space-y-6 pb-8 sm:pb-12">
+    <div className="space-y-5 sm:space-y-6 pb-8 sm:pb-12">
       {/* ---- 1. Header ---- */}
-      <header className="flex flex-col sm:flex-row sm:flex-wrap sm:items-end sm:justify-between gap-2 sm:gap-3">
-        <div className="space-y-1">
-          <p className="text-eyebrow uppercase text-ink-500">Today · {new Date().toLocaleDateString('en-IN', { weekday: 'long', day: 'numeric', month: 'long' })}</p>
-          <h1 className="font-display text-xl sm:text-display-sm text-ink-900">Welcome back, Anant.</h1>
+      <PageHeader
+        eyebrow={`Today · ${new Date().toLocaleDateString('en-IN', { weekday: 'long', day: 'numeric', month: 'long' })}`}
+        title="Welcome back, Anant."
+        description="Live across every shop — bills, leads, stock value and gold rate updating on a 60-second polling cadence."
+        actions={
+          <span className="inline-flex items-center gap-1.5 text-xs text-ink-500 px-2.5 h-8 rounded-full bg-ink-25 border border-ink-100">
+            <span className="relative inline-flex">
+              <span className="h-1.5 w-1.5 rounded-full bg-success-500" />
+              <span className="absolute inset-0 h-1.5 w-1.5 rounded-full bg-success-500 animate-ping opacity-75" />
+            </span>
+            <span className="font-medium text-ink-700">Live</span>
+            {summary?.asOf && (
+              <span className="font-mono text-ink-500">
+                · {new Date(summary.asOf).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}
+              </span>
+            )}
+          </span>
+        }
+      />
+
+      {/* ---- 1a. Gold rate hero ticker ----
+       *  Linear-style command bar: a single row showing the 4 metal rates the
+       *  jeweller checks compulsively, with a "stale" flag if MCX feed missed
+       *  its 5-minute beat. This is the highest-anxiety number in the building.
+       */}
+      <section className="relative overflow-hidden rounded-md border border-brand-200/60 bg-gradient-to-br from-brand-50/60 via-ink-0 to-ink-0">
+        <div aria-hidden className="absolute inset-0 bg-hairlines opacity-30 pointer-events-none" />
+        <div className="relative grid grid-cols-2 sm:grid-cols-4 divide-x divide-ink-100">
+          {[
+            { label: '24K', rate: rate24 },
+            { label: '22K', rate: rate22 },
+            { label: '18K', rate: rate18 },
+            { label: 'Silver', rate: rateSilver },
+          ].map(({ label, rate }, i) => (
+            <div
+              key={label}
+              className={cn(
+                'px-4 py-3.5 flex items-center justify-between gap-2',
+                i >= 2 && 'border-t sm:border-t-0 border-ink-100',
+              )}
+            >
+              <div className="flex items-center gap-2">
+                <Coins className={cn('h-3.5 w-3.5', label === 'Silver' ? 'text-ink-400' : 'text-brand-500')} />
+                <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-ink-500">
+                  {label}
+                </span>
+              </div>
+              <div className="text-right">
+                <p className="font-mono text-sm text-ink-900 font-medium tabular-nums">
+                  {rate ? formatRate(rate.ratePerGramPaise, rate.stale) : '—'}
+                </p>
+                {rate?.stale && (
+                  <p className="text-[10px] text-warning-700 font-medium leading-none mt-0.5">stale</p>
+                )}
+              </div>
+            </div>
+          ))}
         </div>
-        <div className="flex items-center gap-2 text-xs text-ink-500">
-          <Activity className="h-3.5 w-3.5 text-emerald-500" />
-          {summary?.asOf ? `Live · updated ${new Date(summary.asOf).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}` : 'Live'}
-        </div>
-      </header>
+      </section>
 
       {/* ---- 2. Primary KPI tiles ----
        *  Color psychology applied via MetricCard.tone:
@@ -339,76 +391,74 @@ export function DashboardPage(): JSX.Element {
             </p>
           )}
         </ChartCard>
-        <div className="rounded-md border border-ink-100 bg-ink-0 p-5">
-          <div className="flex items-center justify-between mb-3">
-            <h3 className="text-md text-ink-900 font-medium">Live gold rate</h3>
-            <Coins className="h-4 w-4 text-brand-500" />
-          </div>
-          <dl className="space-y-2 text-sm">
-            <div className="flex justify-between">
-              <dt className="text-ink-500">24K</dt>
-              <dd className="font-mono">{rate24 ? formatRate(rate24.ratePerGramPaise, rate24.stale) : '—'}</dd>
-            </div>
-            <div className="flex justify-between">
-              <dt className="text-ink-500">22K</dt>
-              <dd className="font-mono">{rate22 ? formatRate(rate22.ratePerGramPaise, rate22.stale) : '—'}</dd>
-            </div>
-            <div className="flex justify-between">
-              <dt className="text-ink-500">18K</dt>
-              <dd className="font-mono">{rate18 ? formatRate(rate18.ratePerGramPaise, rate18.stale) : '—'}</dd>
-            </div>
-            <div className="flex justify-between">
-              <dt className="text-ink-500">Silver</dt>
-              <dd className="font-mono">{rateSilver ? formatRate(rateSilver.ratePerGramPaise, rateSilver.stale) : '—'}</dd>
-            </div>
-          </dl>
-          <p className="mt-3 text-xs text-ink-400">
-            {summary?.asOf ? `Updated ${new Date(summary.asOf).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })} · GoldAPI` : 'Awaiting feed'}
-            {(rate24?.stale || rate22?.stale || rate18?.stale || rateSilver?.stale) && ' · stale'}
-          </p>
-          <hr className="my-4 border-ink-100" />
-          <p className="text-eyebrow uppercase text-ink-500 mb-2">Shops</p>
-          <ul className="space-y-1 text-xs text-ink-700">
+        <SectionCard
+          eyebrow="Locations"
+          title="Shops"
+          icon={<Store className="h-4 w-4" />}
+          action={
+            <span className="text-[11px] text-ink-500 font-mono">
+              {(shopsRes?.data ?? []).filter((s) => s.isActive).length}/{shopsRes?.data?.length ?? 0} open
+            </span>
+          }
+        >
+          <ul className="divide-y divide-ink-50 -my-1.5">
             {(shopsRes?.data ?? []).map((s) => (
-              <li key={s.id} className="flex items-center justify-between">
-                <span className="truncate">{s.name}</span>
+              <li key={s.id} className="flex items-center justify-between py-2 text-sm">
+                <span className="flex items-center gap-2 min-w-0">
+                  <span
+                    className={cn(
+                      'h-2 w-2 rounded-full shrink-0',
+                      s.isActive ? 'bg-success-500' : 'bg-ink-300',
+                    )}
+                  />
+                  <span className="truncate text-ink-800">{s.name}</span>
+                </span>
                 <Badge tone={s.isActive ? 'success' : 'neutral'}>{s.isActive ? 'open' : 'closed'}</Badge>
               </li>
             ))}
+            {(!shopsRes?.data || shopsRes.data.length === 0) && (
+              <li className="py-3 text-sm text-ink-500">No shops configured yet.</li>
+            )}
           </ul>
-        </div>
+          <p className="mt-4 pt-3 border-t border-ink-100 text-[11px] text-ink-500 inline-flex items-center gap-1.5">
+            <Activity className="h-3 w-3 text-success-500" />
+            {summary?.asOf
+              ? `Polling · last beat ${new Date(summary.asOf).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}`
+              : 'Awaiting first poll…'}
+          </p>
+        </SectionCard>
       </section>
 
       {/* ---- 5. Lead funnel + Top products ---- */}
       <section className="grid grid-cols-1 md:grid-cols-2 gap-3 sm:gap-4">
-        <div className="rounded-md border border-ink-100 bg-ink-0 p-5">
-          <div className="flex items-center justify-between mb-4">
-            <div>
-              <p className="text-eyebrow uppercase text-ink-500">Pipeline</p>
-              <h3 className="text-md text-ink-900 font-medium">Lead funnel</h3>
-            </div>
-            <Link to="/admin/crm" className="text-xs text-ink-500 hover:text-ink-900 inline-flex items-center gap-1">
+        <SectionCard
+          eyebrow="Pipeline"
+          title="Lead funnel"
+          icon={<Users className="h-4 w-4" />}
+          action={
+            <Link to="/admin/crm" className="text-ink-500 hover:text-ink-900 inline-flex items-center gap-1 font-medium">
               Open CRM <ArrowRight className="h-3 w-3" />
             </Link>
-          </div>
+          }
+        >
           {totalLeads === 0 ? (
-            <p className="text-sm text-ink-500">No leads yet.</p>
+            <p className="text-sm text-ink-500">No leads yet — the funnel populates as enquiries land.</p>
           ) : (
-            <ul className="space-y-2.5">
+            <ul className="space-y-3">
               {LEAD_STATUSES.map((status) => {
                 const count = leadCounts.get(status) ?? 0;
                 const pct = totalLeads > 0 ? Math.round((count / totalLeads) * 100) : 0;
                 return (
                   <li key={status}>
-                    <div className="flex items-center justify-between text-xs mb-1">
-                      <span className="text-ink-700 capitalize">{status.toLowerCase()}</span>
-                      <span className="font-mono text-ink-500">
-                        {count} · {pct}%
+                    <div className="flex items-center justify-between text-xs mb-1.5">
+                      <span className="text-ink-700 capitalize font-medium">{status.toLowerCase()}</span>
+                      <span className="font-mono tabular-nums text-ink-500">
+                        <span className="text-ink-900">{count}</span> · {pct}%
                       </span>
                     </div>
-                    <div className="h-1.5 rounded-full bg-ink-50 overflow-hidden">
+                    <div className="h-2 rounded-full bg-ink-50 overflow-hidden">
                       <div
-                        className={`h-full rounded-full ${LEAD_STAGE_COLOR[status]}`}
+                        className={cn('h-full rounded-full transition-all duration-slow', LEAD_STAGE_COLOR[status])}
                         style={{ width: `${Math.max(pct, count > 0 ? 4 : 0)}%` }}
                       />
                     </div>
@@ -417,7 +467,7 @@ export function DashboardPage(): JSX.Element {
               })}
             </ul>
           )}
-        </div>
+        </SectionCard>
 
         <ChartCard title="Top-selling products" eyebrow="This month" action={
           <Link to="/admin/ecommerce" className="text-xs text-ink-500 hover:text-ink-900 inline-flex items-center gap-1">
@@ -434,61 +484,63 @@ export function DashboardPage(): JSX.Element {
 
       {/* ---- 6. Recent storefront orders + Recent bills ---- */}
       <section className="grid grid-cols-1 md:grid-cols-2 gap-3 sm:gap-4">
-        <div className="rounded-md border border-ink-100 bg-ink-0">
-          <div className="flex items-center justify-between px-5 pt-5 mb-3">
-            <div className="flex items-center gap-2">
-              <ShoppingBag className="h-4 w-4 text-brand-500" />
-              <h3 className="text-md text-ink-900 font-medium">Recent storefront orders</h3>
-            </div>
-            <Link to="/admin/ecommerce" className="text-xs text-ink-500 hover:text-ink-900 inline-flex items-center gap-1">
+        <SectionCard
+          eyebrow="Online"
+          title="Recent storefront orders"
+          icon={<ShoppingBag className="h-4 w-4 text-brand-500" />}
+          action={
+            <Link to="/admin/ecommerce" className="text-ink-500 hover:text-ink-900 inline-flex items-center gap-1 font-medium">
               All orders <ArrowRight className="h-3 w-3" />
             </Link>
-          </div>
+          }
+          bareBody
+        >
           {orders.length === 0 ? (
             <p className="px-5 pb-5 text-sm text-ink-500">
               No orders yet. The cart &ldquo;Reserve at store&rdquo; flow shows up here once submitted.
             </p>
           ) : (
-            <ul className="divide-y divide-ink-100">
+            <ul className="divide-y divide-ink-50">
               {orders.slice(0, 6).map((o) => (
                 <li key={o.id}>
                   <Link
                     to="/admin/ecommerce"
-                    className="px-5 py-3 flex items-center justify-between gap-3 hover:bg-ink-25"
+                    className="px-5 py-3 flex items-center justify-between gap-3 hover:bg-ink-25 transition-colors duration-fast"
                   >
                     <div className="min-w-0 flex-1">
-                      <p className="font-mono text-xs text-ink-500 truncate">#{o.id.slice(-8).toUpperCase()}</p>
-                      <p className="text-xs text-ink-600 mt-0.5">
+                      <p className="font-mono text-xs text-ink-800 truncate font-medium">#{o.id.slice(-8).toUpperCase()}</p>
+                      <p className="text-xs text-ink-500 mt-0.5">
                         {shortTime(o.createdAt)} · {o.paymentMethod.replace(/-/g, ' ')}
                       </p>
                     </div>
                     <Badge tone={ORDER_STATUS_TONE[o.status] ?? 'neutral'}>{o.status.toLowerCase()}</Badge>
-                    <Money paise={o.totalPaise} className="font-mono tabular-nums text-sm" />
+                    <Money paise={o.totalPaise} className="font-mono tabular-nums text-sm text-ink-900 font-medium" />
                   </Link>
                 </li>
               ))}
             </ul>
           )}
-        </div>
+        </SectionCard>
 
-        <div className="rounded-md border border-ink-100 bg-ink-0">
-          <div className="flex items-center justify-between px-5 pt-5 mb-3">
-            <div className="flex items-center gap-2">
-              <Receipt className="h-4 w-4 text-brand-500" />
-              <h3 className="text-md text-ink-900 font-medium">Recent POS bills</h3>
-            </div>
-            <Link to="/admin/pos" className="text-xs text-ink-500 hover:text-ink-900 inline-flex items-center gap-1">
+        <SectionCard
+          eyebrow="Counter"
+          title="Recent POS bills"
+          icon={<Receipt className="h-4 w-4 text-brand-500" />}
+          action={
+            <Link to="/admin/pos" className="text-ink-500 hover:text-ink-900 inline-flex items-center gap-1 font-medium">
               Open POS <ArrowRight className="h-3 w-3" />
             </Link>
-          </div>
+          }
+          bareBody
+        >
           {bills.length === 0 ? (
             <p className="px-5 pb-5 text-sm text-ink-500">No bills yet.</p>
           ) : (
-            <ul className="divide-y divide-ink-100">
+            <ul className="divide-y divide-ink-50">
               {bills.slice(0, 6).map((b) => (
                 <li key={b.id} className="px-5 py-3 flex items-center justify-between gap-3">
                   <div className="min-w-0 flex-1">
-                    <p className="font-mono text-xs text-ink-900 truncate">{b.billNumber}</p>
+                    <p className="font-mono text-xs text-ink-900 truncate font-medium">{b.billNumber}</p>
                     <p className="text-xs text-ink-500 mt-0.5">{shortTime(b.createdAt)}</p>
                   </div>
                   <Badge
@@ -504,12 +556,12 @@ export function DashboardPage(): JSX.Element {
                   >
                     {b.paymentStatus.toLowerCase()}
                   </Badge>
-                  <Money paise={b.totalPaise} className="font-mono tabular-nums text-sm" />
+                  <Money paise={b.totalPaise} className="font-mono tabular-nums text-sm text-ink-900 font-medium" />
                 </li>
               ))}
             </ul>
           )}
-        </div>
+        </SectionCard>
       </section>
 
       {/* ---- 7. Finance — revenue/expense + GST + expense breakdown ---- */}
@@ -568,26 +620,17 @@ export function DashboardPage(): JSX.Element {
 
       {/* ---- 8. Inventory health (low stock + vendor outstanding) ---- */}
       <section className="grid grid-cols-1 md:grid-cols-2 gap-3 sm:gap-4">
-        <div
-          className={cn(
-            'rounded-md border bg-ink-0 p-5',
-            lowStock.length === 0 ? 'border-success-500/30' : 'border-danger-500/30',
-          )}
-        >
-          <div className="flex items-center justify-between mb-3">
-            <div className="flex items-center gap-2">
-              <TrendingDown
-                className={cn(
-                  'h-4 w-4',
-                  lowStock.length === 0 ? 'text-success-700' : 'text-danger-500',
-                )}
-              />
-              <h3 className="text-md text-ink-900 font-medium">Low stock alerts</h3>
-            </div>
-            <Link to="/admin/inventory" className="text-xs text-ink-500 hover:text-ink-900 inline-flex items-center gap-1">
+        <SectionCard
+          eyebrow="Alerts"
+          title="Low stock"
+          icon={<TrendingDown className="h-4 w-4" />}
+          tone={lowStock.length === 0 ? 'success' : 'danger'}
+          action={
+            <Link to="/admin/inventory" className="text-ink-500 hover:text-ink-900 inline-flex items-center gap-1 font-medium">
               Inventory <ArrowRight className="h-3 w-3" />
             </Link>
-          </div>
+          }
+        >
           {lowStock.length === 0 ? (
             <p className="text-sm text-success-700 inline-flex items-center gap-1.5">
               <span className="h-1.5 w-1.5 rounded-full bg-success-500" />
@@ -602,7 +645,7 @@ export function DashboardPage(): JSX.Element {
                 {lowStock.slice(0, 6).map((r, i) => (
                   <li key={i} className="flex items-center justify-between border-b border-ink-50 pb-2 last:border-0">
                     <span className="text-ink-800 text-xs">
-                      <span className="text-ink-900">{catsById.get(r.categoryId) ?? r.categoryId.slice(-6)}</span>
+                      <span className="text-ink-900 font-medium">{catsById.get(r.categoryId) ?? r.categoryId.slice(-6)}</span>
                       <span className="text-ink-400"> · </span>
                       <span>{shopsById.get(r.shopId) ?? r.shopId.slice(-6)}</span>
                     </span>
@@ -612,18 +655,18 @@ export function DashboardPage(): JSX.Element {
               </ul>
             </>
           )}
-        </div>
+        </SectionCard>
 
-        <div className="rounded-md border border-ink-100 bg-ink-0 p-5">
-          <div className="flex items-center justify-between mb-3">
-            <div className="flex items-center gap-2">
-              <Users className="h-4 w-4 text-brand-500" />
-              <h3 className="text-md text-ink-900 font-medium">Vendor outstanding</h3>
-            </div>
-            <Link to="/admin/inventory" className="text-xs text-ink-500 hover:text-ink-900 inline-flex items-center gap-1">
+        <SectionCard
+          eyebrow="Payables"
+          title="Vendor outstanding"
+          icon={<Users className="h-4 w-4 text-brand-500" />}
+          action={
+            <Link to="/admin/inventory" className="text-ink-500 hover:text-ink-900 inline-flex items-center gap-1 font-medium">
               Vendors <ArrowRight className="h-3 w-3" />
             </Link>
-          </div>
+          }
+        >
           {vendors.length === 0 ? (
             <p className="text-sm text-ink-500">No vendors yet.</p>
           ) : (
@@ -635,7 +678,7 @@ export function DashboardPage(): JSX.Element {
                 .map((v) => (
                   <li key={v.id} className="flex items-center justify-between gap-3 border-b border-ink-50 pb-2 last:border-0">
                     <div className="min-w-0 flex-1">
-                      <p className="text-ink-800 truncate">{v.name}</p>
+                      <p className="text-ink-800 truncate font-medium">{v.name}</p>
                       <p className="text-xs text-ink-500 font-mono">{v.phone}</p>
                     </div>
                     <Money
@@ -651,35 +694,36 @@ export function DashboardPage(): JSX.Element {
                 ))}
             </ul>
           )}
-        </div>
+        </SectionCard>
       </section>
 
       {/* ---- 9. Inventory + activity ---- */}
       <section className="grid grid-cols-1 lg:grid-cols-3 gap-3 sm:gap-4">
-        <div className="rounded-md border border-ink-100 bg-ink-0 p-5">
-          <div className="flex items-center gap-2 mb-3">
-            <Boxes className="h-4 w-4 text-brand-500" />
-            <h3 className="text-md text-ink-900 font-medium">Inventory snapshot</h3>
-          </div>
+        <SectionCard
+          eyebrow="Stock"
+          title="Inventory snapshot"
+          icon={<Boxes className="h-4 w-4 text-brand-500" />}
+        >
           <dl className="space-y-3 text-sm">
-            <Row label="Items in stock" value={summary ? <span className="font-mono">{summary.stock.itemCount}</span> : '…'} />
-            <Row label="Stock value" value={summary ? <Money paise={summary.stock.valuationPaise} className="font-mono" /> : '…'} />
-            <Row label="Vendors" value={<span className="font-mono">{vendors.length}</span>} />
+            <Row label="Items in stock" value={summary ? <span className="font-mono tabular-nums text-ink-900 font-medium">{summary.stock.itemCount}</span> : '…'} />
+            <Row label="Stock value" value={summary ? <Money paise={summary.stock.valuationPaise} className="font-mono tabular-nums text-ink-900 font-medium" /> : '…'} />
+            <Row label="Vendors" value={<span className="font-mono tabular-nums">{vendors.length}</span>} />
             <Row label="Top product" value={topProducts[0]?.name ?? '—'} />
             <Row label="Low-stock alerts" value={<Badge tone={lowStock.length > 0 ? 'warning' : 'success'}>{lowStock.length}</Badge>} />
           </dl>
-        </div>
+        </SectionCard>
 
-        <div className="lg:col-span-2 rounded-md border border-ink-100 bg-ink-0 p-5">
-          <div className="flex items-center justify-between mb-3">
-            <div className="flex items-center gap-2">
-              <ScrollText className="h-4 w-4 text-ink-500" />
-              <h3 className="text-md text-ink-900 font-medium">Recent activity</h3>
-            </div>
-            <Link to="/admin/inventory" className="text-xs text-ink-500 hover:text-ink-900 inline-flex items-center gap-1">
+        <SectionCard
+          className="lg:col-span-2"
+          eyebrow="Audit"
+          title="Recent activity"
+          icon={<ScrollText className="h-4 w-4 text-ink-500" />}
+          action={
+            <Link to="/admin/inventory" className="text-ink-500 hover:text-ink-900 inline-flex items-center gap-1 font-medium">
               Full audit log <ArrowRight className="h-3 w-3" />
             </Link>
-          </div>
+          }
+        >
           {audit.length === 0 ? (
             <p className="text-sm text-ink-500">No activity yet.</p>
           ) : (
@@ -723,7 +767,7 @@ export function DashboardPage(): JSX.Element {
               ))}
             </ul>
           )}
-        </div>
+        </SectionCard>
       </section>
 
       {/* ---- 10. Quick links footer ---- */}
@@ -802,31 +846,32 @@ function RecentReservations({ orders }: { orders: AdminOrder[] }): JSX.Element {
     .slice(0, 6);
 
   return (
-    <section className="rounded-md border border-ink-100 bg-ink-0">
-      <div className="flex items-center justify-between px-5 pt-5 mb-3">
-        <div className="flex items-center gap-2">
-          <ShoppingBag className="h-4 w-4 text-brand-500" />
-          <h3 className="text-md text-ink-900 font-medium">Recent storefront reservations</h3>
-          <span className="text-xs text-ink-500">· live (polling 60s)</span>
-        </div>
-        <Link to="/admin/ecommerce" className="text-xs text-ink-500 hover:text-ink-900 inline-flex items-center gap-1">
+    <SectionCard
+      eyebrow="Reservations"
+      title="Recent storefront reservations"
+      icon={<ShoppingBag className="h-4 w-4 text-brand-500" />}
+      tone="brand"
+      action={
+        <Link to="/admin/ecommerce" className="text-ink-500 hover:text-ink-900 inline-flex items-center gap-1 font-medium">
           All reservations <ArrowRight className="h-3 w-3" />
         </Link>
-      </div>
+      }
+      bareBody
+    >
       {reservations.length === 0 ? (
         <p className="px-5 pb-5 text-sm text-ink-500">
           No reservations yet. Place one from the storefront and refresh.
         </p>
       ) : (
-        <ul className="divide-y divide-ink-100">
+        <ul className="divide-y divide-ink-50">
           {reservations.map((o) => (
             <li key={o.id}>
               <Link
                 to="/admin/ecommerce"
-                className="px-5 py-3 flex items-center justify-between gap-3 hover:bg-ink-25"
+                className="px-5 py-3 flex items-center justify-between gap-3 hover:bg-ink-25 transition-colors duration-fast"
               >
                 <div className="min-w-0 flex-1">
-                  <p className="text-sm text-ink-900 truncate">
+                  <p className="text-sm text-ink-900 truncate font-medium">
                     {o.customer?.name ?? 'Guest'} · #{o.id.slice(-8).toUpperCase()}
                   </p>
                   <p className="text-xs text-ink-500 mt-0.5">
@@ -835,12 +880,12 @@ function RecentReservations({ orders }: { orders: AdminOrder[] }): JSX.Element {
                   </p>
                 </div>
                 <Badge tone={ORDER_STATUS_TONE[o.status] ?? 'neutral'}>{o.status.toLowerCase()}</Badge>
-                <Money paise={o.totalPaise} className="font-mono tabular-nums text-sm" />
+                <Money paise={o.totalPaise} className="font-mono tabular-nums text-sm text-ink-900 font-medium" />
               </Link>
             </li>
           ))}
         </ul>
       )}
-    </section>
+    </SectionCard>
   );
 }

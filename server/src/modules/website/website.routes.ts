@@ -214,6 +214,20 @@ websiteRouter.post('/orders', async (req, res, next) => {
               pricePaise: priceByProductId.get(i.productId) ?? 0,
             })),
           },
+          // Seed the timeline with the initial PENDING event so the customer
+          // tracking page renders something the moment they open it. Without
+          // this the new redesigned track page would show an empty list until
+          // the first admin transition.
+          events: {
+            create: [
+              {
+                tenantId,
+                status: 'PENDING',
+                note: 'Order placed',
+                actorName: 'System',
+              },
+            ],
+          },
         },
         include: { items: true },
       });
@@ -254,7 +268,16 @@ websiteRouter.post('/orders', async (req, res, next) => {
 // Public order lookup. Customers paste the order id (or last 6 chars) +
 // their phone — we match the order's customerId.phone. Never exposes
 // other customers' orders; phone is the auth here.
+//
+// Always returns the most recent matching order along with its full event
+// timeline (oldest first). The 10s-poll redesigned TrackOrderPage rehits
+// this endpoint to pick up new events without a refresh.
+//
+// Override the route-level s-maxage cache: order tracking is per-customer
+// and must reflect admin status changes within the poll window. A 60s CDN
+// cache would make the live timeline feel dead.
 websiteRouter.get('/orders/lookup', async (req, res, next) => {
+  res.setHeader('Cache-Control', 'private, no-store');
   try {
     const q = z
       .object({ id: z.string().min(4), phone: z.string().min(10) })
@@ -271,6 +294,7 @@ websiteRouter.get('/orders/lookup', async (req, res, next) => {
       include: {
         items: { include: { product: { select: { name: true, slug: true, images: true } } } },
         customer: { select: { name: true, phone: true } },
+        events: { orderBy: { createdAt: 'asc' } },
       },
       take: 30,
     });
@@ -280,6 +304,426 @@ websiteRouter.get('/orders/lookup', async (req, res, next) => {
       return;
     }
     res.json({ data: matches[0] });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// All orders for a phone — drives the "My Orders" panel on AccountPage.
+// Returns lightweight payload (no events, no item-image blobs) so the list
+// renders fast even for a phone with 50+ past orders.
+websiteRouter.get('/orders/by-phone', async (req, res, next) => {
+  res.setHeader('Cache-Control', 'private, no-store');
+  try {
+    const q = z.object({ phone: z.string().min(10) }).parse(req.query);
+    const tenantId = await tenantFromQueryOrFirst(req);
+    const normPhone = q.phone.startsWith('+') ? q.phone : `+91${q.phone.replace(/\D/g, '').slice(-10)}`;
+    const orders = await rawPrisma.order.findMany({
+      where: { tenantId, customer: { phone: normPhone } },
+      orderBy: { createdAt: 'desc' },
+      take: 50,
+      select: {
+        id: true,
+        status: true,
+        totalPaise: true,
+        createdAt: true,
+        expectedDeliveryAt: true,
+        items: { select: { id: true, qty: true, product: { select: { name: true, images: true } } } },
+      },
+    });
+    res.json({ data: orders });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ============================================================================
+// Storefront customer identity, cart, wishlist
+// ============================================================================
+//
+// V1 auth model: phone is the identity. /customers/identify either finds an
+// existing Customer row by (tenantId, phone) or creates one, then returns the
+// customer + their persisted cart + wishlist. All subsequent cart/wishlist
+// mutations require the phone (same convention as /orders/lookup).
+//
+// This deliberately omits a session cookie / OTP — for a small jeweller the
+// threat is low and the friction would tank conversion. Upgrade path: layer
+// a JWT cookie on top of /identify without changing the data model.
+
+const CustomerIdentifySchema = z.object({
+  phone: IndianPhoneSchema,
+  name: z.string().min(2).max(120).optional(),
+  email: z.string().email().max(180).optional(),
+  // Optional bag merge — if the visitor had localStorage items before signing
+  // in, we upsert those into the persisted cart so they don't lose work.
+  mergeCart: z
+    .array(z.object({ productId: z.string().min(1), qty: z.number().int().positive().max(99) }))
+    .max(50)
+    .optional(),
+  mergeWishlist: z.array(z.object({ productId: z.string().min(1) })).max(50).optional(),
+});
+
+websiteRouter.post('/customers/identify', async (req, res, next) => {
+  res.setHeader('Cache-Control', 'private, no-store');
+  try {
+    const tenantId = await tenantFromQueryOrFirst(req);
+    const body = CustomerIdentifySchema.parse(req.body);
+
+    // Pull the snapshot of what we'll return at the end + create/upsert the
+    // customer row in one go. Wrap in runWithTenant so the Prisma extension
+    // injects tenantId on the customer create.
+    const result = await runWithTenant({ tenantId }, async () => {
+      const existing = await rawPrisma.customer.findFirst({
+        where: { tenantId, phone: body.phone },
+      });
+      // NB: the Customer model intentionally stores no email — admin POS
+      // bills use phone as the canonical contact. Email coming in on the
+      // identify payload is kept client-side only (shopSlice.account.email).
+      const customer = existing
+        ? // Lightly patch name if the client passed an updated value and the
+          // existing row's name is generic ("Customer"). Never overwrite an
+          // already-edited name — that would erase admin edits.
+          existing.name && existing.name !== 'Customer'
+          ? existing
+          : await rawPrisma.customer.update({
+              where: { id: existing.id },
+              data: { name: body.name ?? existing.name },
+            })
+        : await rawPrisma.customer.create({
+            data: {
+              tenantId,
+              name: body.name ?? 'Customer',
+              phone: body.phone,
+              tags: ['Storefront'],
+            },
+          });
+
+      // Merge localStorage bag → persisted cart. Server-side product lookup
+      // validates the product belongs to this tenant + is published, so we
+      // never persist a productId the customer doesn't actually have a right
+      // to add to a real order.
+      if (body.mergeCart && body.mergeCart.length > 0) {
+        const ids = body.mergeCart.map((i) => i.productId);
+        const valid = await rawPrisma.product.findMany({
+          where: { tenantId, id: { in: ids }, isPublished: true },
+          select: { id: true },
+        });
+        const validIds = new Set(valid.map((p) => p.id));
+        for (const item of body.mergeCart) {
+          if (!validIds.has(item.productId)) continue;
+          // Upsert with qty = max(existing, incoming). Mobile-then-desktop
+          // pattern: user added 1 on mobile, then added another on desktop;
+          // we don't want to silently lose either branch.
+          await rawPrisma.cartItem.upsert({
+            where: { customerId_productId: { customerId: customer.id, productId: item.productId } },
+            create: { tenantId, customerId: customer.id, productId: item.productId, qty: item.qty },
+            update: { qty: { set: Math.max(item.qty, 1) } },
+          });
+        }
+      }
+      if (body.mergeWishlist && body.mergeWishlist.length > 0) {
+        const ids = body.mergeWishlist.map((i) => i.productId);
+        const valid = await rawPrisma.product.findMany({
+          where: { tenantId, id: { in: ids }, isPublished: true },
+          select: { id: true },
+        });
+        const validIds = new Set(valid.map((p) => p.id));
+        for (const item of body.mergeWishlist) {
+          if (!validIds.has(item.productId)) continue;
+          await rawPrisma.wishlistItem.upsert({
+            where: { customerId_productId: { customerId: customer.id, productId: item.productId } },
+            create: { tenantId, customerId: customer.id, productId: item.productId },
+            update: {}, // idempotent — wishlist is a set
+          });
+        }
+      }
+
+      const [cart, wishlist] = await Promise.all([
+        rawPrisma.cartItem.findMany({
+          where: { customerId: customer.id },
+          orderBy: { addedAt: 'desc' },
+          include: { product: { select: hydratedProductSelect() } },
+        }),
+        rawPrisma.wishlistItem.findMany({
+          where: { customerId: customer.id },
+          orderBy: { addedAt: 'desc' },
+          include: { product: { select: hydratedProductSelect() } },
+        }),
+      ]);
+      return { customer, cart, wishlist };
+    });
+
+    res.json({
+      data: {
+        customer: {
+          id: result.customer.id,
+          name: result.customer.name,
+          phone: result.customer.phone,
+          // Customer model has no email column — return null so the client's
+          // shopSlice can keep its locally-typed email without confusion.
+          email: null as string | null,
+        },
+        cart: result.cart.map(serializeCartItem),
+        wishlist: result.wishlist.map(serializeWishlistItem),
+      },
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Shape the storefront cart UI needs: product name + image + price are the
+// fields that drive the cart row + wishlist tile.
+function hydratedProductSelect(): {
+  id: true;
+  name: true;
+  slug: true;
+  images: true;
+  basePricePaise: true;
+  stoneChargePaise: true;
+  weightMg: true;
+  purityCaratX100: true;
+} {
+  return {
+    id: true,
+    name: true,
+    slug: true,
+    images: true,
+    basePricePaise: true,
+    stoneChargePaise: true,
+    weightMg: true,
+    purityCaratX100: true,
+  };
+}
+
+// Type guard for product-shaped objects returned by hydratedProductSelect().
+// We just need name/image/pricing here — exact Prisma type isn't worth
+// importing into route code.
+interface HydratedProduct {
+  id: string;
+  name: string;
+  slug: string;
+  images: string[];
+  basePricePaise: number;
+  stoneChargePaise: number;
+  weightMg: number;
+  purityCaratX100: number;
+}
+interface CartItemRow {
+  id: string;
+  productId: string;
+  qty: number;
+  addedAt: Date;
+  product: HydratedProduct;
+}
+interface WishlistItemRow {
+  id: string;
+  productId: string;
+  addedAt: Date;
+  product: HydratedProduct;
+}
+function serializeCartItem(item: CartItemRow): {
+  id: string;
+  productId: string;
+  qty: number;
+  pricePaise: number;
+  addedAt: string;
+  product: HydratedProduct;
+} {
+  return {
+    id: item.id,
+    productId: item.productId,
+    qty: item.qty,
+    pricePaise: item.product.basePricePaise + item.product.stoneChargePaise,
+    addedAt: item.addedAt.toISOString(),
+    product: item.product,
+  };
+}
+function serializeWishlistItem(item: WishlistItemRow): {
+  id: string;
+  productId: string;
+  addedAt: string;
+  product: HydratedProduct;
+} {
+  return {
+    id: item.id,
+    productId: item.productId,
+    addedAt: item.addedAt.toISOString(),
+    product: item.product,
+  };
+}
+
+// GET cart for a phone. Same auth model as /orders/lookup — phone is the
+// gate. Returns hydrated product details so the client renders immediately
+// without a second product fetch.
+websiteRouter.get('/cart', async (req, res, next) => {
+  res.setHeader('Cache-Control', 'private, no-store');
+  try {
+    const q = z.object({ phone: IndianPhoneSchema }).parse(req.query);
+    const tenantId = await tenantFromQueryOrFirst(req);
+    const customer = await rawPrisma.customer.findFirst({
+      where: { tenantId, phone: q.phone },
+      select: { id: true },
+    });
+    if (!customer) {
+      // No customer yet → empty cart. Don't 404, the client just shows empty.
+      res.json({ data: [] });
+      return;
+    }
+    const items = await rawPrisma.cartItem.findMany({
+      where: { customerId: customer.id },
+      orderBy: { addedAt: 'desc' },
+      include: { product: { select: hydratedProductSelect() } },
+    });
+    res.json({ data: items.map(serializeCartItem) });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Upsert cart item. POST body: { phone, productId, qty }. Setting qty=0
+// is treated as a delete so the client only needs one mutation primitive.
+const CartUpsertSchema = z.object({
+  phone: IndianPhoneSchema,
+  productId: z.string().min(1),
+  qty: z.number().int().min(0).max(99),
+});
+websiteRouter.post('/cart/items', async (req, res, next) => {
+  res.setHeader('Cache-Control', 'private, no-store');
+  try {
+    const tenantId = await tenantFromQueryOrFirst(req);
+    const body = CartUpsertSchema.parse(req.body);
+    const customer = await rawPrisma.customer.findFirst({
+      where: { tenantId, phone: body.phone },
+      select: { id: true },
+    });
+    if (!customer) {
+      res.status(404).json({
+        error: { code: 'CUSTOMER_NOT_FOUND', message: 'Sign in before adding to bag' },
+      });
+      return;
+    }
+    // Validate the product belongs to this tenant + is published.
+    const product = await rawPrisma.product.findFirst({
+      where: { tenantId, id: body.productId, isPublished: true },
+      select: { id: true },
+    });
+    if (!product) {
+      res.status(400).json({
+        error: { code: 'PRODUCT_UNAVAILABLE', message: 'That piece is not available right now' },
+      });
+      return;
+    }
+    if (body.qty === 0) {
+      await rawPrisma.cartItem.deleteMany({
+        where: { customerId: customer.id, productId: body.productId },
+      });
+      res.json({ data: { deleted: true } });
+      return;
+    }
+    const upserted = await rawPrisma.cartItem.upsert({
+      where: { customerId_productId: { customerId: customer.id, productId: body.productId } },
+      create: { tenantId, customerId: customer.id, productId: body.productId, qty: body.qty },
+      update: { qty: body.qty },
+      include: { product: { select: hydratedProductSelect() } },
+    });
+    res.json({ data: serializeCartItem(upserted) });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Clear the entire cart for a customer. Used post-checkout from the success
+// page (which currently nukes localStorage; we mirror that to the server now).
+websiteRouter.delete('/cart', async (req, res, next) => {
+  res.setHeader('Cache-Control', 'private, no-store');
+  try {
+    const q = z.object({ phone: IndianPhoneSchema }).parse(req.query);
+    const tenantId = await tenantFromQueryOrFirst(req);
+    const customer = await rawPrisma.customer.findFirst({
+      where: { tenantId, phone: q.phone },
+      select: { id: true },
+    });
+    if (!customer) {
+      res.json({ data: { cleared: true } });
+      return;
+    }
+    await rawPrisma.cartItem.deleteMany({ where: { customerId: customer.id } });
+    res.json({ data: { cleared: true } });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Wishlist endpoints — mirror the cart trio but no qty.
+websiteRouter.get('/wishlist', async (req, res, next) => {
+  res.setHeader('Cache-Control', 'private, no-store');
+  try {
+    const q = z.object({ phone: IndianPhoneSchema }).parse(req.query);
+    const tenantId = await tenantFromQueryOrFirst(req);
+    const customer = await rawPrisma.customer.findFirst({
+      where: { tenantId, phone: q.phone },
+      select: { id: true },
+    });
+    if (!customer) {
+      res.json({ data: [] });
+      return;
+    }
+    const items = await rawPrisma.wishlistItem.findMany({
+      where: { customerId: customer.id },
+      orderBy: { addedAt: 'desc' },
+      include: { product: { select: hydratedProductSelect() } },
+    });
+    res.json({ data: items.map(serializeWishlistItem) });
+  } catch (err) {
+    next(err);
+  }
+});
+
+const WishlistTogglePayload = z.object({
+  phone: IndianPhoneSchema,
+  productId: z.string().min(1),
+});
+websiteRouter.post('/wishlist/items', async (req, res, next) => {
+  res.setHeader('Cache-Control', 'private, no-store');
+  try {
+    const tenantId = await tenantFromQueryOrFirst(req);
+    const body = WishlistTogglePayload.parse(req.body);
+    const customer = await rawPrisma.customer.findFirst({
+      where: { tenantId, phone: body.phone },
+      select: { id: true },
+    });
+    if (!customer) {
+      res.status(404).json({
+        error: { code: 'CUSTOMER_NOT_FOUND', message: 'Sign in before favouriting' },
+      });
+      return;
+    }
+    // Toggle behavior: if it's there, remove. Otherwise add. Mirrors the
+    // existing localStorage shopSlice.toggleWishlist semantic.
+    const existing = await rawPrisma.wishlistItem.findUnique({
+      where: { customerId_productId: { customerId: customer.id, productId: body.productId } },
+    });
+    if (existing) {
+      await rawPrisma.wishlistItem.delete({ where: { id: existing.id } });
+      res.json({ data: { removed: true } });
+      return;
+    }
+    const product = await rawPrisma.product.findFirst({
+      where: { tenantId, id: body.productId, isPublished: true },
+      select: { id: true },
+    });
+    if (!product) {
+      res.status(400).json({
+        error: { code: 'PRODUCT_UNAVAILABLE', message: 'That piece is not available right now' },
+      });
+      return;
+    }
+    const created = await rawPrisma.wishlistItem.create({
+      data: { tenantId, customerId: customer.id, productId: body.productId },
+      include: { product: { select: hydratedProductSelect() } },
+    });
+    res.json({ data: serializeWishlistItem(created) });
   } catch (err) {
     next(err);
   }

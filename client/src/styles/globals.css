@@ -25,3 +25,20 @@
     font-variant-numeric: tabular-nums;
   }
 }
+
+/* Skeleton shimmer — used by <Skeleton/>. Slow + gold-tinted via ink-25 so
+   it reads as "loading" without competing with real content. The keyframe
+   travels left → right; the @media query disables it for reduced motion. */
+@keyframes shimmer {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(100%); }
+}
+
+/* Reusable hairline grid background — used on hero blocks for a subtle
+   editorial texture without leaning into "AI gradient" aesthetics. */
+.bg-hairlines {
+  background-image:
+    linear-gradient(to right, rgba(15, 14, 12, 0.04) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(15, 14, 12, 0.04) 1px, transparent 1px);
+  background-size: 32px 32px;
+}

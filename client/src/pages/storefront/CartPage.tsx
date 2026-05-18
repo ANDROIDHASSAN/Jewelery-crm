@@ -1,19 +1,21 @@
 import { useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import * as Dialog from '@radix-ui/react-dialog';
-import { Minus, Plus, Trash2, ShoppingBag, ShieldCheck, Truck, RotateCcw, X } from 'lucide-react';
+import { Minus, Plus, Trash2, ShoppingBag, ShieldCheck, Truck, RotateCcw, X, BadgeCheck } from 'lucide-react';
 import { toast } from 'sonner';
 import { Money } from '@/components/ui/money';
 import { useAppDispatch, useAppSelector } from '@/app/hooks';
-import { setCartQty, removeFromCart, clearCart } from '@/features/storefront/shopSlice';
+import { updateAccount, hydrateFromServer } from '@/features/storefront/shopSlice';
+import { useShopActions } from '@/features/storefront/useShopActions';
 import {
   useGetPublicProductsQuery,
   useCreatePublicOrderMutation,
 } from '@/features/storefront/storefrontApi';
+import { useIdentifyCustomerMutation } from '@/features/storefront/customerApi';
 
 export function CartPage(): JSX.Element {
   const cart = useAppSelector((s) => s.shop.cart);
-  const dispatch = useAppDispatch();
+  const shop = useShopActions();
   const [checkoutOpen, setCheckoutOpen] = useState(false);
 
   const subtotal = cart.reduce((sum, item) => sum + item.pricePaise * item.qty, 0);
@@ -68,7 +70,7 @@ export function CartPage(): JSX.Element {
                 <div className="mt-auto flex items-center justify-between flex-wrap gap-3 pt-3 sm:pt-4">
                   <div className="inline-flex items-center h-10 rounded-full border border-ink-200 overflow-hidden">
                     <button
-                      onClick={() => dispatch(setCartQty({ slug: item.slug, qty: item.qty - 1 }))}
+                      onClick={() => shop.setCartQty(item.slug, item.qty - 1, item.productId)}
                       className="h-10 w-10 inline-flex items-center justify-center text-ink-700 hover:bg-ink-50"
                       aria-label="Decrease quantity"
                     >
@@ -76,7 +78,7 @@ export function CartPage(): JSX.Element {
                     </button>
                     <span className="w-8 text-center text-sm font-mono tabular-nums">{item.qty}</span>
                     <button
-                      onClick={() => dispatch(setCartQty({ slug: item.slug, qty: item.qty + 1 }))}
+                      onClick={() => shop.setCartQty(item.slug, item.qty + 1, item.productId)}
                       className="h-10 w-10 inline-flex items-center justify-center text-ink-700 hover:bg-ink-50"
                       aria-label="Increase quantity"
                     >
@@ -85,7 +87,7 @@ export function CartPage(): JSX.Element {
                   </div>
                   <button
                     type="button"
-                    onClick={() => dispatch(removeFromCart(item.slug))}
+                    onClick={() => shop.removeFromCart(item.slug, item.productId)}
                     className="inline-flex items-center gap-2 text-xs text-ink-500 hover:text-ink-900"
                   >
                     <Trash2 className="h-3.5 w-3.5" />
@@ -96,13 +98,21 @@ export function CartPage(): JSX.Element {
             </article>
           ))}
 
-          <button
-            type="button"
-            onClick={() => dispatch(clearCart())}
-            className="text-xs text-ink-500 hover:text-ink-900 underline decoration-ink-200 underline-offset-4"
-          >
-            Clear bag
-          </button>
+          <div className="flex items-center justify-between flex-wrap gap-3">
+            <button
+              type="button"
+              onClick={() => shop.clearCart()}
+              className="text-xs text-ink-500 hover:text-ink-900 underline decoration-ink-200 underline-offset-4"
+            >
+              Clear bag
+            </button>
+            {shop.isSyncing && (
+              <span className="inline-flex items-center gap-1.5 text-[11px] text-success-700">
+                <BadgeCheck className="h-3.5 w-3.5" />
+                Saved to your account
+              </span>
+            )}
+          </div>
         </section>
 
         <aside className="lg:sticky lg:top-28 self-start">
@@ -153,8 +163,11 @@ function CheckoutDialog({ open, onClose }: { open: boolean; onClose: () => void 
   const cart = useAppSelector((s) => s.shop.cart);
   const account = useAppSelector((s) => s.shop.account);
   const dispatch = useAppDispatch();
+  const navigate = useNavigate();
   const { data: products, refetch: refetchProducts } = useGetPublicProductsQuery();
   const [createOrder, { isLoading }] = useCreatePublicOrderMutation();
+  const [identifyCustomer] = useIdentifyCustomerMutation();
+  const shop = useShopActions();
   const [name, setName] = useState(account.name);
   const [phone, setPhone] = useState(account.phone || '+91 ');
 
@@ -191,26 +204,41 @@ function CheckoutDialog({ open, onClose }: { open: boolean; onClose: () => void 
     }
 
     try {
+      const normalizedPhone = `+91${local}`;
       const res = await createOrder({
-        customer: { name: name.trim(), phone: `+91${local}` },
+        customer: { name: name.trim(), phone: normalizedPhone },
         items,
         paymentMethod: 'cod',
       }).unwrap();
-      const eta = res.expectedDeliveryAt
-        ? new Date(res.expectedDeliveryAt).toLocaleDateString('en-IN', {
-            weekday: 'long',
-            day: 'numeric',
-            month: 'short',
-          })
-        : null;
-      toast.success(`Order placed! Confirmation ZL-${res.id.slice(-6).toUpperCase()}`, {
-        description: eta
-          ? `Arrives by ${eta}. We'll WhatsApp tracking once the courier picks up.`
-          : `We'll WhatsApp tracking once the courier picks up.`,
-        duration: 9000,
-      });
-      dispatch(clearCart());
+      toast.success(`Order placed! ZL-${res.id.slice(-6).toUpperCase()}`, { duration: 4000 });
+      // Persist phone + name in the account so the Track page can auto-fill
+      // them on repeat visits and "My Orders" works after a session restore.
+      dispatch(updateAccount({ name: name.trim(), phone: normalizedPhone }));
+      // Promote the buyer to a "signed-in" customer in the DB so their
+      // future cart/wishlist sync. The server upserts the Customer row, and
+      // hydrateFromServer mirrors the empty cart (post-checkout) into the
+      // slice. This is what makes the order-placement-flow also a sign-in.
+      try {
+        const identity = await identifyCustomer({
+          phone: normalizedPhone,
+          name: name.trim(),
+        }).unwrap();
+        dispatch(hydrateFromServer(identity));
+      } catch {
+        // Identify failure shouldn't break checkout — local clearCart still runs.
+      }
+      shop.clearCart();
       onClose();
+      // Hand off to the success page — that's where the customer gets the
+      // big order number, ETA, and a clear CTA to track. Pass the phone via
+      // location state so the lookup auto-fires without re-entry.
+      navigate(`/store/order/success/${res.id}`, {
+        state: {
+          phone: normalizedPhone,
+          totalPaise: res.totalPaise,
+          expectedDeliveryAt: res.expectedDeliveryAt,
+        },
+      });
     } catch (err) {
       const message =
         (err as { data?: { error?: { message?: string } } }).data?.error?.message ??

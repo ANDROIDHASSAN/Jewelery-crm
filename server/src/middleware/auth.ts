@@ -47,9 +47,22 @@ export async function authMiddleware(req: Request, _res: Response, next: NextFun
     }
     const token = header.slice('Bearer '.length).trim();
 
-    // Sentinel-token bypass for legacy admin pages (kept until client login
-    // overhaul lands). Grants full permission set.
-    if (env.ADMIN_API_TOKEN && token === env.ADMIN_API_TOKEN) {
+    // Sentinel-token bypass for legacy admin pages. DEV/STAGING ONLY —
+    // permanently refused in production regardless of env config. Even if
+    // ADMIN_API_TOKEN is set in prod (misconfiguration, leaked .env, ops
+    // mistake), an attacker who learns the value cannot use it. The boot
+    // warning in server/src/index.ts surfaces the misconfiguration so the
+    // operator notices and removes the env var.
+    //
+    // Read NODE_ENV from process.env (not the cached `env` object) so an
+    // orchestrator that flips the env mid-process — and the security tests
+    // that simulate prod — see the change immediately.
+    const isProdRuntime = process.env['NODE_ENV'] === 'production';
+    if (
+      !isProdRuntime &&
+      env.ADMIN_API_TOKEN &&
+      token === env.ADMIN_API_TOKEN
+    ) {
       const tenantId = await resolveAdminTenantId();
       // Find the SUPER_ADMIN role for this tenant so route handlers that
       // dereference req.user.roleId still work.

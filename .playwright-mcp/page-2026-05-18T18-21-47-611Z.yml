@@ -1,0 +1,210 @@
+- generic [ref=e3]:
+  - banner [ref=e4]:
+    - generic [ref=e6]:
+      - generic [ref=e7]:
+        - text: Today's rate ·
+        - generic [ref=e8]: 24K —
+        - text: ·
+        - generic [ref=e9]: 22K ₹6,420/g
+        - text: ·
+        - generic [ref=e10]: 18K ₹5,255/g · Silver ₹84.50/g
+      - generic [ref=e11]:
+        - link "2 stores" [ref=e12] [cursor=pointer]:
+          - /url: /store/locations
+          - img [ref=e13]
+          - text: 2 stores
+        - link "Track order" [ref=e16] [cursor=pointer]:
+          - /url: /store/track
+        - link "Help" [ref=e17] [cursor=pointer]:
+          - /url: /store/help
+    - generic [ref=e19]:
+      - link "Anant Jewellers — home" [ref=e20] [cursor=pointer]:
+        - /url: /store
+        - img [ref=e21]
+        - generic [ref=e22]:
+          - generic [ref=e23]: Anant Jewellers
+          - generic [ref=e24]: Haryana · Since 1972
+      - navigation "Primary" [ref=e25]:
+        - link "Bridal" [ref=e26] [cursor=pointer]:
+          - /url: /store/collections/bridal
+        - link "Daily wear" [ref=e27] [cursor=pointer]:
+          - /url: /store/collections/daily-wear
+        - link "Festive" [ref=e28] [cursor=pointer]:
+          - /url: /store/collections/festive
+        - link "Diamond" [ref=e29] [cursor=pointer]:
+          - /url: /store/collections/diamond
+        - link "Silver" [ref=e30] [cursor=pointer]:
+          - /url: /store/collections/silver
+        - link "Stores" [ref=e31] [cursor=pointer]:
+          - /url: /store/locations
+      - generic [ref=e32]:
+        - button "Search" [ref=e33] [cursor=pointer]:
+          - img [ref=e34]
+        - link "Wishlist (4)" [ref=e37] [cursor=pointer]:
+          - /url: /store/wishlist
+          - img [ref=e38]
+          - generic [ref=e40]: "4"
+        - link "Your account" [ref=e41] [cursor=pointer]:
+          - /url: /store/account
+          - img [ref=e42]
+        - link "Cart (4)" [ref=e45] [cursor=pointer]:
+          - /url: /store/cart
+          - img [ref=e46]
+          - generic [ref=e49]: "4"
+  - main [ref=e50]:
+    - generic [ref=e51]:
+      - generic [ref=e52]:
+        - paragraph [ref=e53]: Saved for you
+        - heading "4 pieces on your wishlist" [level=1] [ref=e54]
+      - generic [ref=e55]:
+        - article [ref=e56]:
+          - button "Remove Meera Temple Necklace from wishlist" [ref=e57] [cursor=pointer]:
+            - img [ref=e58]
+          - link "Meera Temple Necklace Meera Temple Necklace 58.4g ₹3,42,000" [ref=e61] [cursor=pointer]:
+            - /url: /store/products/wish-1
+            - img "Meera Temple Necklace" [ref=e63]
+            - generic [ref=e64]:
+              - heading "Meera Temple Necklace" [level=3] [ref=e65]
+              - paragraph [ref=e66]: 58.4g
+              - paragraph [ref=e67]: ₹3,42,000
+          - button "Move to bag" [ref=e68] [cursor=pointer]:
+            - img [ref=e69]
+            - text: Move to bag
+        - article [ref=e72]:
+          - button "Remove Kavya Diamond Bangle from wishlist" [ref=e73] [cursor=pointer]:
+            - img [ref=e74]
+          - link "Kavya Diamond Bangle Kavya Diamond Bangle 24.1g ₹1,68,000" [ref=e77] [cursor=pointer]:
+            - /url: /store/products/wish-2
+            - img "Kavya Diamond Bangle" [ref=e79]
+            - generic [ref=e80]:
+              - heading "Kavya Diamond Bangle" [level=3] [ref=e81]
+              - paragraph [ref=e82]: 24.1g
+              - paragraph [ref=e83]: ₹1,68,000
+          - button "Move to bag" [ref=e84] [cursor=pointer]:
+            - img [ref=e85]
+            - text: Move to bag
+        - article [ref=e88]:
+          - button "Remove Ishaani Solitaire Ring from wishlist" [ref=e89] [cursor=pointer]:
+            - img [ref=e90]
+          - link "Ishaani Solitaire Ring Ishaani Solitaire Ring 3.6g ₹84,500" [ref=e93] [cursor=pointer]:
+            - /url: /store/products/wish-3
+            - img "Ishaani Solitaire Ring" [ref=e95]
+            - generic [ref=e96]:
+              - heading "Ishaani Solitaire Ring" [level=3] [ref=e97]
+              - paragraph [ref=e98]: 3.6g
+              - paragraph [ref=e99]: ₹84,500
+          - button "Move to bag" [ref=e100] [cursor=pointer]:
+            - img [ref=e101]
+            - text: Move to bag
+        - article [ref=e104]:
+          - button "Remove Tara Pearl Drop from wishlist" [ref=e105] [cursor=pointer]:
+            - img [ref=e106]
+          - link "Tara Pearl Drop Tara Pearl Drop 8.2g ₹52,300" [ref=e109] [cursor=pointer]:
+            - /url: /store/products/wish-4
+            - img "Tara Pearl Drop" [ref=e111]
+            - generic [ref=e112]:
+              - heading "Tara Pearl Drop" [level=3] [ref=e113]
+              - paragraph [ref=e114]: 8.2g
+              - paragraph [ref=e115]: ₹52,300
+          - button "Move to bag" [ref=e116] [cursor=pointer]:
+            - img [ref=e117]
+            - text: Move to bag
+  - contentinfo [ref=e120]:
+    - generic [ref=e122]:
+      - generic [ref=e123]:
+        - paragraph [ref=e124]: Stay in the loop
+        - heading "New collections, in your inbox." [level=2] [ref=e125]
+        - paragraph [ref=e126]: Quiet, once a month. Unsubscribe anytime.
+      - generic [ref=e127]:
+        - generic [ref=e128]: Email
+        - textbox "Email" [ref=e129]:
+          - /placeholder: you@email.com
+        - button "Subscribe" [ref=e130] [cursor=pointer]:
+          - generic [ref=e131]: Subscribe
+          - img [ref=e132]
+    - generic [ref=e134]:
+      - generic [ref=e135]:
+        - link "Anant Jewellers" [ref=e136] [cursor=pointer]:
+          - /url: /store
+          - img [ref=e137]
+          - text: Anant Jewellers
+        - paragraph [ref=e138]: Family jewellers since 1972. Hallmarked gold. Transparent pricing. Hand-crafted in Haryana.
+        - list [ref=e139]:
+          - listitem [ref=e140]:
+            - img [ref=e141]
+            - text: MG Road, Gurugram, Haryana 122001
+          - listitem [ref=e144]:
+            - img [ref=e145]
+            - text: +91 124 444 0011
+          - listitem [ref=e147]:
+            - img [ref=e148]
+            - text: hello@anantjewellers.in
+        - generic [ref=e151]:
+          - link "Instagram" [ref=e152] [cursor=pointer]:
+            - /url: "#"
+            - img [ref=e153]
+          - link "Facebook" [ref=e156] [cursor=pointer]:
+            - /url: "#"
+            - img [ref=e157]
+          - link "YouTube" [ref=e159] [cursor=pointer]:
+            - /url: "#"
+            - img [ref=e160]
+      - generic [ref=e163]:
+        - paragraph [ref=e164]: Shop
+        - list [ref=e165]:
+          - listitem [ref=e166]:
+            - link "Bridal" [ref=e167] [cursor=pointer]:
+              - /url: /store/collections/bridal
+          - listitem [ref=e168]:
+            - link "Daily wear" [ref=e169] [cursor=pointer]:
+              - /url: /store/collections/daily-wear
+          - listitem [ref=e170]:
+            - link "Festive" [ref=e171] [cursor=pointer]:
+              - /url: /store/collections/festive
+          - listitem [ref=e172]:
+            - link "Diamond" [ref=e173] [cursor=pointer]:
+              - /url: /store/collections/diamond
+          - listitem [ref=e174]:
+            - link "Silver" [ref=e175] [cursor=pointer]:
+              - /url: /store/collections/silver
+      - generic [ref=e176]:
+        - paragraph [ref=e177]: Visit
+        - list [ref=e178]:
+          - listitem [ref=e179]:
+            - link "Stores" [ref=e180] [cursor=pointer]:
+              - /url: /store/locations
+          - listitem [ref=e181]:
+            - link "Our story" [ref=e182] [cursor=pointer]:
+              - /url: /store/story
+          - listitem [ref=e183]:
+            - link "Workshop tours" [ref=e184] [cursor=pointer]:
+              - /url: /store/workshop
+          - listitem [ref=e185]:
+            - link "Contact" [ref=e186] [cursor=pointer]:
+              - /url: /store/contact
+      - generic [ref=e187]:
+        - paragraph [ref=e188]: Help
+        - list [ref=e189]:
+          - listitem [ref=e190]:
+            - link "Track order" [ref=e191] [cursor=pointer]:
+              - /url: /store/track
+          - listitem [ref=e192]:
+            - link "Shipping & returns" [ref=e193] [cursor=pointer]:
+              - /url: /store/help
+          - listitem [ref=e194]:
+            - link "Care guide" [ref=e195] [cursor=pointer]:
+              - /url: /store/care
+          - listitem [ref=e196]:
+            - link "Hallmark guide" [ref=e197] [cursor=pointer]:
+              - /url: /store/hallmark
+    - generic [ref=e199]:
+      - paragraph [ref=e200]: "© 2026 Anant Jewellers · BIS Hallmark #IND-916 · GSTIN 27ABCDE1234F1Z5"
+      - generic [ref=e201]:
+        - link "Privacy" [ref=e202] [cursor=pointer]:
+          - /url: /store/privacy
+        - link "Terms" [ref=e203] [cursor=pointer]:
+          - /url: /store/terms
+        - generic [ref=e204]: Powered by Zelora
+  - link "Chat on WhatsApp" [ref=e205] [cursor=pointer]:
+    - /url: https://wa.me/919876543210
+    - img [ref=e206]

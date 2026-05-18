@@ -4,6 +4,7 @@ import { Router } from 'express';
 import { ShopInputSchema } from '@goldos/shared/schemas';
 import { prisma } from '../../lib/prisma.js';
 import { NotFoundError } from '../../lib/errors.js';
+import { getTenantId } from '../../lib/async-context.js';
 
 export const shopsRouter: Router = Router();
 
@@ -32,7 +33,9 @@ shopsRouter.get('/:id', async (req, res, next) => {
 shopsRouter.post('/', async (req, res, next) => {
   try {
     const body = ShopInputSchema.parse(req.body);
-    const shop = await prisma.shop.create({ data: body });
+    const tenantId = getTenantId();
+    if (!tenantId) throw new Error('tenantId missing');
+    const shop = await prisma.shop.create({ data: { ...body, tenantId } });
     res.status(201).json({ data: shop });
   } catch (err) {
     next(err);

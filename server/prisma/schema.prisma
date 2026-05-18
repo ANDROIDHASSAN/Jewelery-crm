@@ -53,6 +53,8 @@ model Tenant {
   whatsappMessages WhatsAppMessage[]
   products      Product[]
   orders        Order[]
+  cartItems     CartItem[]
+  wishlistItems WishlistItem[]
   auditLogs     AuditLog[]
   storefrontContent StorefrontContent?
   registerSessions  RegisterSession[]
@@ -438,6 +440,8 @@ model Customer {
   estimates        Estimate[]
   repairs          Repair[]
   advances         Advance[]
+  cartItems        CartItem[]
+  wishlistItems    WishlistItem[]
 
   @@unique([tenantId, phone])
   @@index([tenantId])
@@ -964,6 +968,8 @@ model Product {
   tenant             Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   category           Category @relation(fields: [categoryId], references: [id])
   orderItems         OrderItem[]
+  cartItems          CartItem[]
+  wishlistItems      WishlistItem[]
 
   @@unique([tenantId, slug])
   @@index([tenantId])
@@ -983,11 +989,16 @@ model Order {
   razorpayOrderId String?
   shiprocketAwb   String?
   expectedDeliveryAt DateTime?
+  // Free-form reason captured when the order moves to CANCELLED or RETURNED.
+  // Surfaced verbatim on the customer track page so the customer sees the
+  // same explanation the cashier wrote.
+  cancelReason    String?
   createdAt       DateTime    @default(now())
 
   tenant          Tenant      @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   customer        Customer    @relation(fields: [customerId], references: [id])
   items           OrderItem[]
+  events          OrderEvent[]
 
   @@index([tenantId])
   @@index([tenantId, status])
@@ -1004,6 +1015,71 @@ model OrderItem {
   product    Product @relation(fields: [productId], references: [id])
 
   @@index([orderId])
+}
+
+// Persistent storefront customer cart. One row per (customer, product) pair
+// — qty bumps are an upsert. Replaces the localStorage-only cart in
+// `shopSlice.ts` so a customer can add a piece on mobile and check out on
+// desktop. Anonymous shoppers still use localStorage; on sign-in we sync
+// the local cart into here via `POST /website/cart/items` (merge-by-product).
+model CartItem {
+  id         String   @id @default(cuid())
+  tenantId   String
+  customerId String
+  productId  String
+  qty        Int      @default(1)
+  addedAt    DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  tenant     Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  customer   Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  product    Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@unique([customerId, productId])
+  @@index([tenantId, customerId])
+}
+
+// Persistent storefront customer wishlist. Same shape as CartItem minus qty
+// (a wishlist entry is binary — the piece is favorited or it isn't).
+model WishlistItem {
+  id         String   @id @default(cuid())
+  tenantId   String
+  customerId String
+  productId  String
+  addedAt    DateTime @default(now())
+
+  tenant     Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  customer   Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  product    Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@unique([customerId, productId])
+  @@index([tenantId, customerId])
+}
+
+// Append-only timeline of state transitions on an Order. One row per status
+// change (plus the initial PENDING placement). Drives the live customer
+// tracking page and the admin order drawer's "what happened when" timeline.
+//
+// `actorName` is a free-form label ("System", "Priya at Store", "Shiprocket
+// courier") rather than a hard FK so unauthenticated public-side events and
+// third-party webhook events can co-exist with admin-authored ones.
+//
+// `location` is the optional "where is the piece right now" string surfaced
+// to the customer ("Mumbai sort hub", "Out for delivery, Gurgaon").
+model OrderEvent {
+  id         String      @id @default(cuid())
+  orderId    String
+  tenantId   String
+  status     OrderStatus
+  note       String?
+  location   String?
+  actorName  String?
+  createdAt  DateTime    @default(now())
+
+  order      Order       @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@index([orderId, createdAt])
+  @@index([tenantId, createdAt])
 }
 
 // --------------------------------------------------------------------------

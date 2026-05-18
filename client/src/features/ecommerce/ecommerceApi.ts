@@ -25,6 +25,16 @@ export interface AdminOrderItem {
   productId: string;
   qty: number;
   pricePaise: number;
+  product?: { id: string; name: string; slug: string; images: string[] } | null;
+}
+
+export interface AdminOrderEvent {
+  id: string;
+  status: OrderStatus;
+  note: string | null;
+  location: string | null;
+  actorName: string | null;
+  createdAt: string;
 }
 
 // Order shape from /ecommerce/orders — includes customer + items.
@@ -39,9 +49,40 @@ export interface AdminOrder {
   totalPaise: number;
   paymentMethod: string;
   shiprocketAwb: string | null;
+  expectedDeliveryAt: string | null;
+  cancelReason: string | null;
   createdAt: string;
   customer?: { id: string; name: string; phone: string } | null;
   items?: AdminOrderItem[];
+  events?: AdminOrderEvent[];
+}
+
+// Live-count snapshot returned by /ecommerce/orders/live-count. The single
+// tenant-wide source of truth for every count + revenue figure displayed on
+// EcommerceAdminPage — KPI cards, tab badges, board column headers, and the
+// pulsing live banner all read from here so they're guaranteed in sync.
+export interface OrderLiveCount {
+  byStatus: Record<OrderStatus, number>;
+  total: number;
+  open: number;
+  inTransit: number;
+  needsAction: number;
+  /** Sum of totalPaise across every order in the tenant (paise). */
+  revenuePaise: number;
+  reservationsTotal: number;
+  reservationsOpen: number;
+  productsTotal: number;
+  productsPublished: number;
+  asOf: string;
+}
+
+export interface OrderPatchPayload {
+  status?: OrderStatus;
+  shiprocketAwb?: string | null;
+  note?: string;
+  location?: string;
+  cancelReason?: string;
+  actorName?: string;
 }
 
 export const ecommerceApi = baseApi.injectEndpoints({
@@ -82,9 +123,24 @@ export const ecommerceApi = baseApi.injectEndpoints({
             ]
           : [{ type: 'Order' as const, id: 'LIST' }],
     }),
-    updateOrder: b.mutation<ApiOne<AdminOrder>, { id: string; patch: { status?: OrderStatus; shiprocketAwb?: string | null } }>({
+    // Single order with full event timeline. Used by the admin order drawer
+    // so we can render the "what happened when" timeline without overloading
+    // the list endpoint.
+    getOrderDetail: b.query<ApiOne<AdminOrder>, string>({
+      query: (id) => ({ url: `/ecommerce/orders/${id}` }),
+      providesTags: (_r, _e, id) => [{ type: 'Order', id }],
+    }),
+    getOrdersLiveCount: b.query<ApiOne<OrderLiveCount>, void>({
+      query: () => ({ url: '/ecommerce/orders/live-count' }),
+      providesTags: [{ type: 'Order', id: 'LIVE_COUNT' }],
+    }),
+    updateOrder: b.mutation<ApiOne<AdminOrder>, { id: string; patch: OrderPatchPayload }>({
       query: ({ id, patch }) => ({ url: `/ecommerce/orders/${id}`, method: 'PATCH', body: patch }),
-      invalidatesTags: (_r, _e, a) => [{ type: 'Order', id: a.id }, { type: 'Order', id: 'LIST' }],
+      invalidatesTags: (_r, _e, a) => [
+        { type: 'Order', id: a.id },
+        { type: 'Order', id: 'LIST' },
+        { type: 'Order', id: 'LIVE_COUNT' },
+      ],
     }),
   }),
 });
@@ -95,5 +151,7 @@ export const {
   useUpdateAdminProductMutation,
   useDeleteAdminProductMutation,
   useGetOrdersQuery,
+  useGetOrderDetailQuery,
+  useGetOrdersLiveCountQuery,
   useUpdateOrderMutation,
 } = ecommerceApi;

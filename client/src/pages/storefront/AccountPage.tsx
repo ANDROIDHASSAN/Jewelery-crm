@@ -1,8 +1,20 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
-import { User, LogOut, Heart, ShoppingBag, MapPin, Phone, Mail } from 'lucide-react';
+import { User, LogOut, Heart, ShoppingBag, MapPin, Phone, Mail, Package, Clock, CheckCircle2, Truck, XCircle } from 'lucide-react';
 import { useAppDispatch, useAppSelector } from '@/app/hooks';
 import { signIn, signOut } from '@/features/storefront/shopSlice';
+import { useListOrdersByPhoneQuery } from '@/features/storefront/storefrontApi';
+import { Money } from '@/components/ui/money';
+
+const STATUS_LABEL: Record<string, { label: string; tone: string; Icon: typeof Clock }> = {
+  PENDING:   { label: 'Pending',    tone: 'bg-warning-50 text-warning-700 border-warning-100', Icon: Clock },
+  CONFIRMED: { label: 'Confirmed',  tone: 'bg-info-50 text-info-700 border-info-100', Icon: CheckCircle2 },
+  PACKED:    { label: 'Packed',     tone: 'bg-info-50 text-info-700 border-info-100', Icon: Package },
+  SHIPPED:   { label: 'In transit', tone: 'bg-info-50 text-info-700 border-info-100', Icon: Truck },
+  DELIVERED: { label: 'Delivered',  tone: 'bg-success-50 text-success-700 border-success-100', Icon: CheckCircle2 },
+  CANCELLED: { label: 'Cancelled',  tone: 'bg-ink-50 text-ink-600 border-ink-100', Icon: XCircle },
+  RETURNED:  { label: 'Returned',   tone: 'bg-ink-50 text-ink-600 border-ink-100', Icon: XCircle },
+};
 
 export function AccountPage(): JSX.Element {
   const account = useAppSelector((s) => s.shop.account);
@@ -67,11 +79,7 @@ export function AccountPage(): JSX.Element {
         </button>
       </header>
 
-      <div className="mt-8 sm:mt-10 grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4">
-        <Tile to="/store/wishlist" icon={<Heart className="h-4 w-4 text-brand-700" />} label="Wishlist" value={`${wishlistCount} ${wishlistCount === 1 ? 'piece' : 'pieces'}`} />
-        <Tile to="/store/cart" icon={<ShoppingBag className="h-4 w-4 text-brand-700" />} label="Bag" value={`${cartCount} ${cartCount === 1 ? 'piece' : 'pieces'}`} />
-        <Tile to="/store/track" icon={<MapPin className="h-4 w-4 text-brand-700" />} label="Orders" value="None yet" />
-      </div>
+      <MyOrders phone={account.phone} wishlistCount={wishlistCount} cartCount={cartCount} />
 
       <section className="mt-8 sm:mt-10 rounded-md border border-ink-100 bg-ink-25 p-5 sm:p-6">
         <p className="text-eyebrow uppercase text-ink-500">Contact details</p>
@@ -82,6 +90,128 @@ export function AccountPage(): JSX.Element {
         </ul>
       </section>
     </div>
+  );
+}
+
+function MyOrders({
+  phone,
+  wishlistCount,
+  cartCount,
+}: {
+  phone: string;
+  wishlistCount: number;
+  cartCount: number;
+}): JSX.Element {
+  // Poll every 20s while the account page is open so a status change pushed
+  // from admin shows up without a refresh. Skip entirely if the customer
+  // hasn't given us a phone (the lookup is phone-keyed).
+  const { data: orders = [], isLoading } = useListOrdersByPhoneQuery(
+    { phone },
+    { skip: !phone, pollingInterval: 20_000 },
+  );
+
+  const open = orders.filter((o) => !['DELIVERED', 'CANCELLED', 'RETURNED'].includes(o.status));
+  const inTransit = orders.filter((o) => o.status === 'SHIPPED');
+
+  return (
+    <>
+      <div className="mt-8 sm:mt-10 grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4">
+        <Tile
+          to="/store/wishlist"
+          icon={<Heart className="h-4 w-4 text-brand-700" />}
+          label="Wishlist"
+          value={`${wishlistCount} ${wishlistCount === 1 ? 'piece' : 'pieces'}`}
+        />
+        <Tile
+          to="/store/cart"
+          icon={<ShoppingBag className="h-4 w-4 text-brand-700" />}
+          label="Bag"
+          value={`${cartCount} ${cartCount === 1 ? 'piece' : 'pieces'}`}
+        />
+        <Tile
+          to={inTransit.length === 1 ? `/store/track/${inTransit[0]!.id.slice(-6).toUpperCase()}` : '/store/track'}
+          icon={<MapPin className="h-4 w-4 text-brand-700" />}
+          label="In transit"
+          value={inTransit.length > 0 ? `${inTransit.length} on the way` : open.length > 0 ? `${open.length} open` : 'None'}
+        />
+      </div>
+
+      <section className="mt-8 sm:mt-10">
+        <header className="flex items-center justify-between mb-4">
+          <h2 className="text-eyebrow uppercase text-ink-500">My orders</h2>
+          {orders.length > 0 && (
+            <span className="text-xs text-ink-500">{orders.length} total</span>
+          )}
+        </header>
+        {isLoading && (
+          <p className="text-sm text-ink-500">Loading your orders…</p>
+        )}
+        {!isLoading && orders.length === 0 && (
+          <div className="rounded-md border border-ink-100 bg-ink-0 p-6 text-center">
+            <Package className="h-6 w-6 text-ink-400 mx-auto" />
+            <p className="text-sm text-ink-700 mt-3">No orders yet.</p>
+            <p className="text-xs text-ink-500 mt-1">
+              Place your first order and it&apos;ll show up here automatically.
+            </p>
+            <Link
+              to="/store/collections/bridal"
+              className="inline-block mt-4 h-10 px-5 rounded-full bg-ink-900 text-ink-0 text-xs font-medium leading-[2.5rem]"
+            >
+              Browse collections
+            </Link>
+          </div>
+        )}
+        {orders.length > 0 && (
+          <ul className="space-y-2">
+            {orders.map((o) => {
+              // Both lookups are guaranteed by the STATUS_LABEL definition
+              // (PENDING is a literal key), but TS strict index access can't
+              // see through the Record<string, …> indexer. Non-null assert.
+              const meta = STATUS_LABEL[o.status] ?? STATUS_LABEL.PENDING!;
+              const Icon = meta.Icon;
+              const firstImage = o.items.find((i) => i.product?.images?.[0])?.product?.images?.[0];
+              const titleLine =
+                o.items.length === 1
+                  ? o.items[0]!.product?.name ?? 'Piece'
+                  : `${o.items[0]!.product?.name ?? 'Piece'} + ${o.items.length - 1} more`;
+              return (
+                <li key={o.id}>
+                  <Link
+                    to={`/store/track/${o.id.slice(-6).toUpperCase()}`}
+                    className="flex items-center gap-4 rounded-md border border-ink-100 bg-ink-0 p-4 hover:border-ink-300 transition-colors"
+                  >
+                    {firstImage ? (
+                      <img src={firstImage} alt="" className="h-14 w-14 rounded object-cover bg-ink-50" />
+                    ) : (
+                      <div className="h-14 w-14 rounded bg-ink-50 flex items-center justify-center">
+                        <Package className="h-5 w-5 text-ink-400" />
+                      </div>
+                    )}
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm text-ink-900 truncate">{titleLine}</p>
+                      <p className="font-mono text-xs text-ink-500 mt-0.5">
+                        ZL-{o.id.slice(-6).toUpperCase()} &middot;{' '}
+                        {new Date(o.createdAt).toLocaleDateString('en-IN', {
+                          day: 'numeric',
+                          month: 'short',
+                        })}
+                      </p>
+                    </div>
+                    <span
+                      className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] border ${meta.tone}`}
+                    >
+                      <Icon className="h-3 w-3" />
+                      {meta.label}
+                    </span>
+                    <Money paise={o.totalPaise} className="font-mono tabular-nums text-sm text-ink-900 w-24 text-right" />
+                  </Link>
+                </li>
+              );
+            })}
+          </ul>
+        )}
+      </section>
+    </>
   );
 }
 

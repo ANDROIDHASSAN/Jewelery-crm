@@ -14,6 +14,8 @@ import {
 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { PageHeader } from '@/components/ui/PageHeader';
+import { TabStrip, type TabStripItem } from '@/components/ui/TabStrip';
 import { LEAD_STATUSES, type LeadStatus } from '@goldos/shared/constants';
 import {
   useGetLeadsQuery, useUpdateLeadMutation, useCreateLeadMutation, useSendBroadcastMutation,
@@ -58,49 +60,32 @@ export function CrmPage(): JSX.Element {
 
   const leads: Lead[] = data?.data ?? [];
 
+  const tabItems: TabStripItem<TabId>[] = TABS.map((t) => ({ id: t.id, label: t.label, icon: t.icon }));
   return (
-    <div className="space-y-4 sm:space-y-6">
-      <header className="flex flex-col sm:flex-row sm:flex-wrap sm:items-end sm:justify-between gap-3 sm:gap-4">
-        <div>
-          <p className="text-eyebrow uppercase text-ink-500">Lead CRM + Ads</p>
-          <h1 className="font-display text-xl sm:text-display-sm text-ink-900">Lead Command Center</h1>
-          <p className="text-sm text-ink-600 mt-1">
-            Every enquiry from WhatsApp, Instagram, Facebook, Google &amp; walk-in — in one inbox.
-          </p>
-        </div>
-        <div className="flex flex-wrap items-center gap-2">
-          {isLoading && <span className="text-xs text-ink-500">Loading…</span>}
-          {isError && (
-            <span className="text-xs text-rose-600" title={JSON.stringify(error)}>
-              Failed to load leads ({(error as { status?: number | string })?.status ?? 'network'})
-            </span>
-          )}
-          <Button onClick={() => setNewOpen(true)} className="gap-1.5">
-            <Plus className="h-4 w-4" /> New lead
-          </Button>
-        </div>
-      </header>
+    <div className="space-y-5">
+      <PageHeader
+        eyebrow="Lead CRM + Ads"
+        title="Lead command center"
+        description="Every enquiry from WhatsApp, Instagram, Facebook, Google & walk-in — in one inbox."
+        actions={
+          <>
+            {isLoading && <span className="text-xs text-ink-500">Loading…</span>}
+            {isError && (
+              <span className="text-xs text-danger-700" title={JSON.stringify(error)}>
+                Failed to load leads ({(error as { status?: number | string })?.status ?? 'network'})
+              </span>
+            )}
+            <Button onClick={() => setNewOpen(true)}>
+              <Plus className="h-4 w-4" /> New lead
+            </Button>
+          </>
+        }
+        bare
+      />
 
       <CapabilityStrip />
 
-      <nav className="flex gap-1 border-b border-ink-100 overflow-x-auto -mx-3 sm:-mx-4 lg:-mx-6 px-3 sm:px-4 lg:px-6">
-        {TABS.map(({ id, label, icon: Icon }) => (
-          <button
-            key={id}
-            type="button"
-            onClick={() => setTab(id)}
-            className={cn(
-              'inline-flex items-center gap-2 px-4 py-2.5 text-sm border-b-2 -mb-px transition-colors whitespace-nowrap shrink-0',
-              tab === id
-                ? 'border-brand-500 text-ink-900'
-                : 'border-transparent text-ink-600 hover:text-ink-900',
-            )}
-          >
-            <Icon className="h-4 w-4" />
-            {label}
-          </button>
-        ))}
-      </nav>
+      <TabStrip<TabId> items={tabItems} value={tab} onChange={setTab} />
 
       {tab === 'inbox'      && <InboxView leads={leads} />}
       {tab === 'pipeline'   && <PipelineView leads={leads} />}

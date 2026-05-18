@@ -31,10 +31,13 @@ const baseQueryWithRefresh: BaseQueryFn<string | FetchArgs, unknown, FetchBaseQu
   const currentToken = (api.getState() as RootState).auth.accessToken;
   let result = await rawBaseQuery(args, api, extraOptions);
   if (result.error && result.error.status === 401) {
-    // Admin sentinel session has no JWT refresh cookie — surface the 401 instead
-    // of bouncing through /auth/refresh (which would also 401 and trigger logout).
-    const adminToken = import.meta.env.VITE_ADMIN_API_TOKEN ?? 'admin-session-token';
-    if (currentToken === adminToken) return result;
+    // Admin sentinel session has no JWT refresh cookie — surface the 401
+    // instead of bouncing through /auth/refresh (which would also 401 and
+    // trigger logout). We compare against the env-supplied value ONLY (no
+    // hardcoded fallback) so the prod bundle never carries the dev sentinel
+    // token literal — anyone reading the bundled JS would otherwise see it.
+    const adminToken = import.meta.env.VITE_ADMIN_API_TOKEN;
+    if (adminToken && currentToken === adminToken) return result;
     const refresh = await rawBaseQuery(
       { url: '/auth/refresh', method: 'POST' },
       api,
@@ -107,6 +110,9 @@ export const baseApi = createApi({
     'Enquiry',
     'GoldRate',
     'StorefrontContent',
+    // Storefront customer-side persistence (cart + wishlist live in Neon).
+    'Cart',
+    'Wishlist',
     // POS shop-owner features
     'RegisterSession',
     'ParkedBill',

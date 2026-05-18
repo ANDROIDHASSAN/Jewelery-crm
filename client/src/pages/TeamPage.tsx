@@ -39,6 +39,8 @@ import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
 import { Sheet, SheetContent } from '@/components/ui/sheet';
 import { EmptyState } from '@/components/ui/EmptyState';
+import { PageHeader } from '@/components/ui/PageHeader';
+import { TabStrip, type TabStripItem } from '@/components/ui/TabStrip';
 import { cn } from '@/lib/cn';
 import { MODULE_LABELS, MODULE_ORDER, PERMISSIONS } from '@goldos/shared/constants';
 
@@ -85,35 +87,27 @@ type Tab = 'members' | 'roles' | 'permissions';
 
 export function TeamPage(): JSX.Element {
   const [tab, setTab] = useState<Tab>('members');
+  const teamTabs: TabStripItem<Tab>[] = [
+    { id: 'members', label: 'Members' },
+    { id: 'roles', label: 'Roles' },
+    { id: 'permissions', label: 'Permissions reference' },
+  ];
 
   return (
-    <div className="max-w-7xl mx-auto space-y-4 sm:space-y-6">
-      <header className="flex items-start justify-between gap-4">
-        <div>
-          <p className="text-eyebrow uppercase text-ink-500">Settings</p>
-          <h1 className="font-display text-xl sm:text-display-sm text-ink-900 mt-1">Team & Roles</h1>
-          <p className="text-sm text-ink-500 mt-2 max-w-2xl">
-            Create staff accounts, assign roles, and customise what each role can do.
-            Built-in roles can be edited; you can also create custom roles for desks like
-            "Bridal Consultant" or "Day-Shift Lead".
-          </p>
-        </div>
-      </header>
+    <div className="max-w-7xl mx-auto space-y-5">
+      <PageHeader
+        eyebrow="Team & roles"
+        title="Members, roles & permissions"
+        description={
+          <>
+            Create staff accounts, assign roles, and customise what each role can do. Built-in roles can be edited;
+            you can also create custom roles for desks like &ldquo;Bridal Consultant&rdquo; or &ldquo;Day-Shift Lead&rdquo;.
+          </>
+        }
+        bare
+      />
 
-      <nav className="flex gap-1 border-b border-ink-100 overflow-x-auto -mx-4 px-4 sm:mx-0 sm:px-0" aria-label="Team tabs">
-        {(['members', 'roles', 'permissions'] as const).map((t) => (
-          <button
-            key={t}
-            onClick={() => setTab(t)}
-            className={cn(
-              'shrink-0 px-3 sm:px-4 h-10 text-sm capitalize border-b-2 -mb-px transition-colors',
-              tab === t ? 'border-brand-500 text-ink-900' : 'border-transparent text-ink-500 hover:text-ink-800',
-            )}
-          >
-            {t === 'permissions' ? 'Permissions reference' : t}
-          </button>
-        ))}
-      </nav>
+      <TabStrip<Tab> items={teamTabs} value={tab} onChange={setTab} />
 
       {tab === 'members' && <MembersTab />}
       {tab === 'roles' && <RolesTab />}

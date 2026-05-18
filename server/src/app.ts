@@ -19,6 +19,7 @@ import { tenantScope } from './middleware/tenant-scope.js';
 import { apiRateLimit } from './middleware/rate-limit.js';
 import { errorHandler } from './middleware/error-handler.js';
 import { requirePermission, requireAnyPermission } from './middleware/require-permission.js';
+import { securityHeaders } from './middleware/security-headers.js';
 
 import { authRouter } from './modules/auth/auth.routes.js';
 import { usersRouter } from './modules/users/users.routes.js';
@@ -40,6 +41,9 @@ export function createApp(): express.Express {
 
   // Trust 1 proxy hop in prod (Nginx).
   app.set('trust proxy', env.NODE_ENV === 'production' ? 1 : false);
+
+  // Security headers FIRST so every response (including errors) carries them.
+  app.use(securityHeaders);
 
   app.use(compression());
   app.use(express.json({ limit: '1mb' }));

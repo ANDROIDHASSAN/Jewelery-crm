@@ -103,6 +103,7 @@ export async function createBill(input: BillCreate, createdByUserId?: string) {
   const bill = await prisma.$transaction(async (tx) => {
     const created = await tx.bill.create({
       data: {
+        tenantId,
         shopId: input.shopId,
         billNumber,
         customerId: input.customerId ?? null,

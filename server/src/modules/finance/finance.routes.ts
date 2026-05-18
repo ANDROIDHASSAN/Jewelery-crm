@@ -616,8 +616,10 @@ financeRouter.post(
         return;
       }
       const tenantId = getTenantId();
+      if (!tenantId) throw new Error('tenantId missing');
       const created = await prisma.expense.create({
         data: {
+          tenantId,
           shopId: body.shopId,
           category: body.category,
           amountPaise: body.amountPaise,

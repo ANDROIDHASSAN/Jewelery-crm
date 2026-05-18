@@ -2,6 +2,7 @@
 // has live data. Run: `npm run db:seed`. Uses rawPrisma (no tenant extension)
 // since we're populating from scratch.
 
+import { Prisma } from '@prisma/client';
 import { rawPrisma as prisma } from '../src/lib/prisma.js';
 import { redis } from '../src/lib/redis.js';
 import { hashPassword } from '../src/modules/auth/password.js';
@@ -1010,7 +1011,7 @@ async function main(): Promise<void> {
       data: preservedContent
         ? {
             tenantId: tenant.id,
-            content: preservedContent.content,
+            content: preservedContent.content as Prisma.InputJsonValue,
             version: preservedContent.version,
             updatedBy: preservedContent.updatedBy,
           }

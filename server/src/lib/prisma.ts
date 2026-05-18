@@ -33,6 +33,9 @@ const TENANT_SCOPED_MODELS = new Set<string>([
   'WhatsAppMessage',
   'Product',
   'Order',
+  'OrderEvent',
+  'CartItem',
+  'WishlistItem',
   'AuditLog',
   'StorefrontContent',
   // POS shop-owner v2 + Finance v2 — also tenant-scoped.

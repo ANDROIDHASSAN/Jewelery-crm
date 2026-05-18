@@ -2,6 +2,8 @@ import { useMemo, useState } from 'react';
 import { MetricCard } from '@/components/ui/MetricCard';
 import { Money } from '@/components/ui/money';
 import { ChartCard, RevenueAreaChart, RankedBarChart } from '@/components/ui/charts';
+import { PageHeader } from '@/components/ui/PageHeader';
+import { cn } from '@/lib/cn';
 import {
   useGetAnalyticsDashboardQuery,
   useGetStaffReportQuery,
@@ -84,25 +86,32 @@ export function AnalyticsPage(): JSX.Element {
   );
 
   return (
-    <div className="space-y-4 sm:space-y-6">
-      <header className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-3">
-        <div>
-          <p className="text-eyebrow uppercase text-ink-500">Reports & analytics</p>
-          <h1 className="font-display text-xl sm:text-display-sm text-ink-900">Real-time</h1>
-        </div>
-        <div className="inline-flex rounded-md border border-ink-200 overflow-hidden text-xs sm:text-sm self-start sm:self-auto">
-          {(['week', 'month', 'quarter'] as const).map((p) => (
-            <button
-              key={p}
-              type="button"
-              onClick={() => setPeriod(p)}
-              className={`px-3 sm:px-4 h-9 whitespace-nowrap ${period === p ? 'bg-ink-900 text-ink-0' : 'text-ink-700 hover:bg-ink-50'}`}
-            >
-              {p === 'week' ? 'Last 7 days' : p === 'month' ? 'Last 30 days' : 'Last 90 days'}
-            </button>
-          ))}
-        </div>
-      </header>
+    <div className="space-y-5">
+      <PageHeader
+        eyebrow="Module 07 · Reports & analytics"
+        title="Real-time"
+        description="Revenue trend, top products, and staff performance — sliced by your chosen window."
+        actions={
+          <div className="inline-flex rounded-md border border-ink-200 overflow-hidden text-xs sm:text-sm bg-ink-0">
+            {(['week', 'month', 'quarter'] as const).map((p) => (
+              <button
+                key={p}
+                type="button"
+                onClick={() => setPeriod(p)}
+                className={cn(
+                  'px-3 sm:px-4 h-9 whitespace-nowrap font-medium transition-colors duration-fast',
+                  period === p
+                    ? 'bg-ink-900 text-ink-0'
+                    : 'text-ink-600 hover:bg-ink-50 hover:text-ink-800',
+                )}
+              >
+                {p === 'week' ? 'Last 7 days' : p === 'month' ? 'Last 30 days' : 'Last 90 days'}
+              </button>
+            ))}
+          </div>
+        }
+        bare
+      />
       <section className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
         <MetricCard
           label="Revenue (today)"

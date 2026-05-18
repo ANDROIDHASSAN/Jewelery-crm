@@ -1,12 +1,12 @@
 import { Link } from 'react-router-dom';
 import { Heart, ShoppingBag, X } from 'lucide-react';
 import { toast } from 'sonner';
-import { useAppDispatch, useAppSelector } from '@/app/hooks';
-import { removeFromWishlist, addToCart } from '@/features/storefront/shopSlice';
+import { useAppSelector } from '@/app/hooks';
+import { useShopActions } from '@/features/storefront/useShopActions';
 
 export function WishlistPage(): JSX.Element {
   const wishlist = useAppSelector((s) => s.shop.wishlist);
-  const dispatch = useAppDispatch();
+  const shop = useShopActions();
 
   if (wishlist.length === 0) {
     return (
@@ -43,7 +43,7 @@ export function WishlistPage(): JSX.Element {
             <button
               type="button"
               onClick={() => {
-                dispatch(removeFromWishlist(item.slug));
+                shop.removeFromWishlist(item.slug, item.productId);
                 toast.success('Removed from wishlist');
               }}
               className="absolute top-2 right-2 sm:top-3 sm:right-3 z-10 h-8 w-8 sm:h-9 sm:w-9 rounded-full bg-ink-0/95 backdrop-blur text-ink-700 hover:text-ink-900 inline-flex items-center justify-center opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity shadow-sm"
@@ -69,16 +69,15 @@ export function WishlistPage(): JSX.Element {
             <button
               type="button"
               onClick={() => {
-                dispatch(
-                  addToCart({
-                    slug: item.slug,
-                    name: item.name,
-                    weight: item.weight,
-                    priceLabel: item.priceLabel,
-                    pricePaise: item.pricePaise,
-                    img: item.img,
-                  }),
-                );
+                shop.addToCart({
+                  slug: item.slug,
+                  productId: item.productId,
+                  name: item.name,
+                  weight: item.weight,
+                  priceLabel: item.priceLabel,
+                  pricePaise: item.pricePaise,
+                  img: item.img,
+                });
                 toast.success(`${item.name} added to bag`);
               }}
               className="mt-3 w-full h-10 rounded-full border border-ink-200 text-ink-900 text-xs font-medium hover:bg-ink-50 inline-flex items-center justify-center gap-2 transition-colors"

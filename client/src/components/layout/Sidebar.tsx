@@ -26,18 +26,47 @@ interface NavItem {
   anyPerm?: readonly string[];
 }
 
-const items: NavItem[] = [
-  { to: '/admin', label: 'Dashboard', icon: LayoutDashboard, end: true, anyPerm: ['dashboard.view'] },
-  { to: '/admin/inventory', label: 'Inventory', icon: Boxes, anyPerm: ['inventory.read', 'inventory.write'] },
-  // No POS billing here — that lives on the pos.<host> subdomain.
-  // This is the read-only owner / accountant monitor across every shop.
-  { to: '/admin/counter', label: 'Offline Shops', icon: Store, anyPerm: ['pos.monitor'] },
-  { to: '/admin/finance', label: 'Finance', icon: Wallet, anyPerm: ['finance.read', 'finance.expense_write'] },
-  { to: '/admin/ecommerce', label: 'E-Commerce', icon: ShoppingBag, anyPerm: ['ecommerce.read', 'ecommerce.product_write'] },
-  { to: '/admin/website', label: 'Website', icon: Globe, anyPerm: ['website.read', 'website.write'] },
-  { to: '/admin/crm', label: 'CRM', icon: Users, anyPerm: ['crm.read', 'crm.write'] },
-  { to: '/admin/analytics', label: 'Analytics', icon: BarChart3, anyPerm: ['reports.view'] },
-  { to: '/admin/team', label: 'Team & Roles', icon: UserCog, anyPerm: ['users.read', 'roles.read'] },
+interface NavSection {
+  title: string;
+  items: NavItem[];
+}
+
+// Nav items are grouped visually so a power user can scan the sidebar by
+// theme — operations live together, customer-facing channels live together,
+// reporting and admin sit at the bottom. The titles are purely presentational;
+// permission gating is identical to before.
+const sections: NavSection[] = [
+  {
+    title: 'Main',
+    items: [
+      { to: '/admin', label: 'Dashboard', icon: LayoutDashboard, end: true, anyPerm: ['dashboard.view'] },
+    ],
+  },
+  {
+    title: 'Operations',
+    items: [
+      { to: '/admin/inventory', label: 'Inventory', icon: Boxes, anyPerm: ['inventory.read', 'inventory.write'] },
+      // No POS billing here — that lives on the pos.<host> subdomain.
+      // This is the read-only owner / accountant monitor across every shop.
+      { to: '/admin/counter', label: 'Offline shops', icon: Store, anyPerm: ['pos.monitor'] },
+      { to: '/admin/finance', label: 'Finance', icon: Wallet, anyPerm: ['finance.read', 'finance.expense_write'] },
+    ],
+  },
+  {
+    title: 'Channels',
+    items: [
+      { to: '/admin/ecommerce', label: 'E-commerce', icon: ShoppingBag, anyPerm: ['ecommerce.read', 'ecommerce.product_write'] },
+      { to: '/admin/website', label: 'Website', icon: Globe, anyPerm: ['website.read', 'website.write'] },
+      { to: '/admin/crm', label: 'CRM & ads', icon: Users, anyPerm: ['crm.read', 'crm.write'] },
+    ],
+  },
+  {
+    title: 'Insights',
+    items: [
+      { to: '/admin/analytics', label: 'Analytics', icon: BarChart3, anyPerm: ['reports.view'] },
+      { to: '/admin/team', label: 'Team & roles', icon: UserCog, anyPerm: ['users.read', 'roles.read'] },
+    ],
+  },
 ];
 
 interface SidebarProps {
@@ -49,54 +78,107 @@ interface SidebarProps {
 
 function SidebarInner({ onNavigate }: { onNavigate?: () => void }): JSX.Element {
   const user = useAppSelector((s) => s.auth.user);
-  const visible = items.filter((it) => !it.anyPerm || hasAnyPermission(user, it.anyPerm));
+
+  // Filter items per section by permissions, then drop any section that ends
+  // up empty so we don't render a stranded heading.
+  const visibleSections = sections
+    .map((sec) => ({
+      ...sec,
+      items: sec.items.filter((it) => !it.anyPerm || hasAnyPermission(user, it.anyPerm)),
+    }))
+    .filter((sec) => sec.items.length > 0);
 
   return (
     <>
       <div className="px-5 py-5 flex items-center gap-2.5">
-        <img
-          src="/logo/zelora-mark.png"
-          alt=""
-          aria-hidden="true"
-          className="h-8 w-8 rounded-md object-cover"
-        />
-        <div className="flex flex-col">
-          <span className="font-display text-md text-ink-900 leading-none">Zelora</span>
+        <div className="relative h-9 w-9 shrink-0">
+          <img
+            src="/logo/zelora-mark.png"
+            alt=""
+            aria-hidden="true"
+            className="h-9 w-9 rounded-md object-cover ring-1 ring-ink-100"
+          />
+          {/* Tiny gold "live" dot — purely decorative; reads as a brand accent. */}
+          <span
+            aria-hidden
+            className="absolute -bottom-0.5 -right-0.5 h-2.5 w-2.5 rounded-full bg-brand-400 ring-2 ring-ink-0"
+          />
+        </div>
+        <div className="flex flex-col min-w-0">
+          <span className="font-display text-[17px] text-ink-900 leading-none tracking-tight">
+            Zelora
+          </span>
           {user && (
-            <span className="text-[10px] uppercase tracking-wider text-ink-400 mt-0.5">
-              {user.roleSlug.replace('_', ' ')}
+            <span className="text-[10px] uppercase tracking-[0.14em] text-ink-400 mt-1 font-medium truncate">
+              {user.roleSlug.replace(/_/g, ' ')}
             </span>
           )}
         </div>
       </div>
-      <nav className="px-3 pt-2 flex-1 space-y-0.5 overflow-y-auto" aria-label="Primary">
-        {visible.map((it) => (
-          <NavLink
-            key={it.to}
-            to={it.to}
-            end={it.end}
-            onClick={onNavigate}
-            className={({ isActive }) =>
-              cn(
-                'flex items-center gap-2.5 rounded-md px-3 h-9 text-sm transition-colors duration-fast',
-                isActive
-                  ? 'bg-brand-50 text-ink-900 border-l-2 border-brand-400 -ml-[2px] pl-[10px]'
-                  : 'text-ink-600 hover:bg-ink-50 hover:text-ink-800',
-              )
-            }
-          >
-            <it.icon className="h-4 w-4 shrink-0" aria-hidden />
-            <span>{it.label}</span>
-          </NavLink>
+
+      <nav className="px-3 pt-2 flex-1 overflow-y-auto" aria-label="Primary">
+        {visibleSections.map((sec, idx) => (
+          <div key={sec.title} className={cn(idx > 0 && 'mt-5')}>
+            <p className="px-3 mb-1.5 text-[10px] font-semibold uppercase tracking-[0.16em] text-ink-400">
+              {sec.title}
+            </p>
+            <div className="space-y-0.5">
+              {sec.items.map((it) => (
+                <NavLink
+                  key={it.to}
+                  to={it.to}
+                  end={it.end}
+                  onClick={onNavigate}
+                  className={({ isActive }) =>
+                    cn(
+                      'group relative flex items-center gap-2.5 rounded-md h-9 px-3 text-sm transition-colors duration-fast',
+                      isActive
+                        ? 'bg-brand-50 text-ink-900 font-medium'
+                        : 'text-ink-600 hover:bg-ink-50 hover:text-ink-900',
+                    )
+                  }
+                >
+                  {({ isActive }) => (
+                    <>
+                      {/* Active-state left bar — small, gold, anchored. */}
+                      <span
+                        aria-hidden
+                        className={cn(
+                          'absolute left-0 top-1.5 bottom-1.5 w-[2px] rounded-r-full transition-all duration-fast',
+                          isActive ? 'bg-brand-500' : 'bg-transparent',
+                        )}
+                      />
+                      <it.icon
+                        className={cn(
+                          'h-4 w-4 shrink-0 transition-colors duration-fast',
+                          isActive ? 'text-brand-600' : 'text-ink-400 group-hover:text-ink-700',
+                        )}
+                        aria-hidden
+                      />
+                      <span className="truncate">{it.label}</span>
+                    </>
+                  )}
+                </NavLink>
+              ))}
+            </div>
+          </div>
         ))}
       </nav>
+
       <div className="px-3 py-3 border-t border-ink-100">
         <NavLink
           to="/admin/settings"
           onClick={onNavigate}
-          className="flex items-center gap-2.5 rounded-md px-3 h-9 text-sm text-ink-600 hover:bg-ink-50 hover:text-ink-800 transition-colors duration-fast"
+          className={({ isActive }) =>
+            cn(
+              'flex items-center gap-2.5 rounded-md h-9 px-3 text-sm transition-colors duration-fast',
+              isActive
+                ? 'bg-ink-50 text-ink-900'
+                : 'text-ink-600 hover:bg-ink-50 hover:text-ink-900',
+            )
+          }
         >
-          <Settings className="h-4 w-4" aria-hidden />
+          <Settings className="h-4 w-4 text-ink-400" aria-hidden />
           <span>Settings</span>
         </NavLink>
       </div>

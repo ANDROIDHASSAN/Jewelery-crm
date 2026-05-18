@@ -8,6 +8,7 @@ import { useNavigate } from 'react-router-dom';
 import { LogOut, Store, Phone, MapPin, ExternalLink, ShieldCheck } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
+import { PageHeader } from '@/components/ui/PageHeader';
 import { useAppDispatch } from '@/app/hooks';
 import { logout } from '@/features/auth/authSlice';
 import { useGetShopsQuery } from '@/features/shops/shopsApi';
@@ -62,14 +63,13 @@ export function SettingsPage(): JSX.Element {
   }
 
   return (
-    <div className="space-y-4 sm:space-y-6 max-w-3xl">
-      <header>
-        <p className="text-eyebrow uppercase text-ink-500">Workspace</p>
-        <h1 className="font-display text-xl sm:text-display-sm text-ink-900">Settings</h1>
-        <p className="text-sm text-ink-500 mt-1">
-          Business info, stores, integrations, and your admin session.
-        </p>
-      </header>
+    <div className="space-y-5 max-w-3xl">
+      <PageHeader
+        eyebrow="Workspace"
+        title="Settings"
+        description="Business info, stores, integrations, and your admin session."
+        bare
+      />
 
       <SettingsCard
         title="Business"

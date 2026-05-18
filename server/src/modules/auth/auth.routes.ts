@@ -29,10 +29,20 @@ import { env } from '../../env.js';
 export const authRouter: Router = Router();
 
 const REFRESH_COOKIE = 'refresh_token';
+// Refresh cookie hardening:
+//  - httpOnly: not visible to JS, immune to XSS exfil.
+//  - secure: HTTPS-only in prod.
+//  - sameSite: strict — refresh is a same-origin admin flow; we never need
+//    a cross-site request (e.g. from a third-party page) to be able to mint
+//    a new access token. Lax would allow top-level GET navigation to attach
+//    the cookie; strict denies even that. Refresh is POST anyway.
+//  - path: scoped to the auth refresh endpoint only — never sent to any
+//    other route, so a vuln on another endpoint can't trigger refresh on
+//    the user's behalf.
 const COOKIE_OPTS = {
   httpOnly: true,
   secure: process.env.NODE_ENV === 'production',
-  sameSite: 'lax' as const,
+  sameSite: 'strict' as const,
   maxAge: 7 * 24 * 60 * 60 * 1000,
   path: '/api/v1/auth',
 };

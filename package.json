@@ -13,6 +13,9 @@
     "lint": "npm run lint -w server && npm run lint -w client",
     "test": "npm run test -w server && npm run test -w client",
     "test:e2e": "playwright test",
+    "test:tracking": "tsx scripts/e2e-order-tracking.ts",
+    "test:load": "tsx scripts/load-orders.ts",
+    "test:stress": "STRESS=1 tsx scripts/load-orders.ts",
     "format": "prettier --write \"**/*.{ts,tsx,js,jsx,json,md,css,html}\""
   },
   "devDependencies": {

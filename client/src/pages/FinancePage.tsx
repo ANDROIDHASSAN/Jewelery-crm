@@ -9,6 +9,7 @@ import { useSearchParams } from 'react-router-dom';
 import { Download, Plus } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
+import { PageHeader } from '@/components/ui/PageHeader';
 import { FinanceTabs } from '@/features/finance/components/FinanceTabs';
 import { OverviewSection } from '@/features/finance/sections/OverviewSection';
 import { ProfitLossSection } from '@/features/finance/sections/ProfitLossSection';
@@ -122,33 +123,32 @@ export function FinancePage(): JSX.Element {
   }
 
   return (
-    <div className="space-y-4 sm:space-y-5">
-      {/* Header */}
-      <header className="flex flex-col lg:flex-row lg:items-end lg:justify-between gap-3">
-        <div>
-          <p className="text-eyebrow uppercase text-ink-500">{def.eyebrow}</p>
-          <h1 className="font-display text-xl sm:text-display-sm text-ink-900">{def.title}</h1>
-        </div>
-        <div className="flex flex-wrap items-end gap-2">
-          {activeTab === 'overview' && (
-            <div className="min-w-[180px]">
-              <ShopPicker value={shopId} onChange={setShopId} label="Branch view" />
-            </div>
-          )}
-          {canExpenseWrite && (
-            <Button variant="outline" onClick={() => setAddExpenseOpen(true)}>
-              <Plus className="h-4 w-4" /> Add expense
-            </Button>
-          )}
-          {canExport && (
-            <Button variant="outline" onClick={() => void handleTallyExport()}>
-              <Download className="h-4 w-4" /> Tally export
-            </Button>
-          )}
-        </div>
-      </header>
+    <div className="space-y-5">
+      <PageHeader
+        eyebrow={def.eyebrow}
+        title={def.title}
+        actions={
+          <>
+            {activeTab === 'overview' && (
+              <div className="min-w-[200px]">
+                <ShopPicker value={shopId} onChange={setShopId} label="Branch view" />
+              </div>
+            )}
+            {canExpenseWrite && (
+              <Button variant="outline" onClick={() => setAddExpenseOpen(true)}>
+                <Plus className="h-4 w-4" /> Add expense
+              </Button>
+            )}
+            {canExport && (
+              <Button variant="outline" onClick={() => void handleTallyExport()}>
+                <Download className="h-4 w-4" /> Tally export
+              </Button>
+            )}
+          </>
+        }
+        bare
+      />
 
-      {/* Tab strip */}
       <FinanceTabs
         tabs={TAB_DEFS.map((t) => ({ to: tabLink(t.key), label: t.label, end: false }))}
       />

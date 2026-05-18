@@ -9,6 +9,9 @@ import { ExternalLink, Plus, Trash2, RotateCcw, CloudUpload } from 'lucide-react
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { PageHeader } from '@/components/ui/PageHeader';
+import { TabStrip, type TabStripItem } from '@/components/ui/TabStrip';
+import { Badge } from '@/components/ui/badge';
 import { useAppDispatch, useAppSelector } from '@/app/hooks';
 import {
   addCollection,
@@ -84,71 +87,55 @@ export function WebsiteAdminPage(): JSX.Element {
     }
   }
 
+  const websiteTabs: TabStripItem<TabKey>[] = TABS.map((t) => ({ id: t.key, label: t.label }));
   return (
-    <div className="space-y-4 sm:space-y-6">
-      <header className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-3">
-        <div>
-          <p className="text-eyebrow uppercase text-ink-500">Business website</p>
-          <h1 className="font-display text-xl sm:text-display-sm text-ink-900">Pages & content</h1>
-          <p className="text-sm text-ink-500 mt-1">
+    <div className="space-y-5">
+      <PageHeader
+        eyebrow="Module 05 · Business website"
+        title="Pages & content"
+        description={
+          <>
             Edits stay local until you click <span className="font-medium text-ink-800">Publish</span>.
             {isLoading && ' Loading saved content…'}
-          </p>
-        </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <Button
-            variant="ghost"
-            onClick={() => {
-              if (confirm('Discard local edits and reload the published version?')) {
-                if (serverData?.content) dispatch(setContent(serverData.content));
-                else dispatch(resetContent());
-                setIsDirty(false);
-                toast.message('Reverted to published');
-              }
-            }}
-          >
-            <RotateCcw className="h-4 w-4" />
-            Revert
-          </Button>
-          <Button variant="outline" asChild>
-            <a href="/store" target="_blank" rel="noreferrer">
-              View live site
-              <ExternalLink className="h-4 w-4" />
-            </a>
-          </Button>
-          <Button
-            onClick={handlePublish}
-            disabled={isPublishing || !isDirty}
-            aria-disabled={isPublishing || !isDirty}
-          >
-            <CloudUpload className="h-4 w-4" />
-            {isPublishing ? 'Publishing…' : isDirty ? 'Publish' : 'Published'}
-          </Button>
-        </div>
-      </header>
-
-      {/* Tabs */}
-      <nav className="border-b border-ink-100 -mx-3 sm:-mx-4 lg:-mx-6 px-3 sm:px-4 lg:px-6 overflow-x-auto" aria-label="Sections">
-        <ul className="flex items-center gap-1 min-w-max">
-          {TABS.map((t) => (
-            <li key={t.key}>
-              <button
-                type="button"
-                onClick={() => setTab(t.key)}
-                className={
-                  'px-4 h-10 text-sm transition-colors border-b-2 -mb-px ' +
-                  (tab === t.key
-                    ? 'text-ink-900 border-brand-500'
-                    : 'text-ink-600 border-transparent hover:text-ink-900')
+          </>
+        }
+        actions={
+          <>
+            {isDirty && <Badge tone="warning">Unsaved changes</Badge>}
+            <Button
+              variant="ghost"
+              onClick={() => {
+                if (confirm('Discard local edits and reload the published version?')) {
+                  if (serverData?.content) dispatch(setContent(serverData.content));
+                  else dispatch(resetContent());
+                  setIsDirty(false);
+                  toast.message('Reverted to published');
                 }
-                aria-current={tab === t.key}
-              >
-                {t.label}
-              </button>
-            </li>
-          ))}
-        </ul>
-      </nav>
+              }}
+            >
+              <RotateCcw className="h-4 w-4" />
+              Revert
+            </Button>
+            <Button variant="outline" asChild>
+              <a href="/store" target="_blank" rel="noreferrer">
+                View live site
+                <ExternalLink className="h-4 w-4" />
+              </a>
+            </Button>
+            <Button
+              onClick={handlePublish}
+              disabled={isPublishing || !isDirty}
+              aria-disabled={isPublishing || !isDirty}
+            >
+              <CloudUpload className="h-4 w-4" />
+              {isPublishing ? 'Publishing…' : isDirty ? 'Publish' : 'Published'}
+            </Button>
+          </>
+        }
+        bare
+      />
+
+      <TabStrip<TabKey> items={websiteTabs} value={tab} onChange={setTab} />
 
       <div className="grid grid-cols-1 lg:grid-cols-[1fr_360px] gap-4 lg:gap-8">
         <div className="space-y-4 sm:space-y-6 lg:max-w-2xl">

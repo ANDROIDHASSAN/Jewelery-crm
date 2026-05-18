@@ -1,5 +1,6 @@
 // Inventory service — Prisma operations stay tenant-scoped automatically via the extension.
 
+import { Prisma } from '@prisma/client';
 import { prisma } from '../../lib/prisma.js';
 import { NotFoundError, BusinessRuleError } from '../../lib/errors.js';
 import { readGoldRatePaise } from '../../lib/redis.js';
@@ -33,10 +34,13 @@ export async function getItem(id: string) {
 }
 
 export async function createItem(input: ItemInput, performedByUserId?: string) {
-  const item = await prisma.item.create({ data: input });
+  const tenantId = getTenantId();
+  if (!tenantId) throw new Error('tenantId missing');
+  const item = await prisma.item.create({ data: { ...input, tenantId } });
   // Audit + PURCHASE movement on first insert.
   await prisma.itemMovement.create({
     data: {
+      tenantId,
       itemId: item.id,
       toShopId: item.shopId,
       type: 'PURCHASE',
@@ -57,6 +61,8 @@ export async function updateItem(id: string, patch: Partial<ItemInput>, performe
 }
 
 export async function deleteItem(id: string, performedByUserId?: string) {
+  const tenantId = getTenantId();
+  if (!tenantId) throw new Error('tenantId missing');
   const before = await prisma.item.findUnique({ where: { id } });
   if (!before) throw new NotFoundError();
   if (before.status === 'SOLD') {
@@ -67,6 +73,7 @@ export async function deleteItem(id: string, performedByUserId?: string) {
   const after = await prisma.item.update({ where: { id }, data: { status: 'MELTED' } });
   await prisma.itemMovement.create({
     data: {
+      tenantId,
       itemId: id,
       fromShopId: before.shopId,
       type: 'WASTAGE',
@@ -78,6 +85,8 @@ export async function deleteItem(id: string, performedByUserId?: string) {
 }
 
 export async function transferItem(id: string, toShopId: string, reason: string, performedByUserId?: string) {
+  const tenantId = getTenantId();
+  if (!tenantId) throw new Error('tenantId missing');
   const item = await prisma.item.findUnique({ where: { id } });
   if (!item) throw new NotFoundError();
   if (item.status !== 'IN_STOCK') throw new BusinessRuleError('ITEM_NOT_IN_STOCK', 'Item is not in stock');
@@ -85,6 +94,7 @@ export async function transferItem(id: string, toShopId: string, reason: string,
     prisma.item.update({ where: { id }, data: { status: 'IN_TRANSIT', shopId: toShopId } }),
     prisma.itemMovement.create({
       data: {
+        tenantId,
         itemId: id,
         fromShopId: item.shopId,
         toShopId,
@@ -99,6 +109,8 @@ export async function transferItem(id: string, toShopId: string, reason: string,
 }
 
 export async function recordWastage(id: string, reason: string, performedByUserId?: string) {
+  const tenantId = getTenantId();
+  if (!tenantId) throw new Error('tenantId missing');
   const item = await prisma.item.findUnique({ where: { id } });
   if (!item) throw new NotFoundError();
   if (item.status !== 'IN_STOCK') throw new BusinessRuleError('ITEM_NOT_IN_STOCK', 'Item is not in stock');
@@ -106,6 +118,7 @@ export async function recordWastage(id: string, reason: string, performedByUserI
     prisma.item.update({ where: { id }, data: { status: 'MELTED' } }),
     prisma.itemMovement.create({
       data: {
+        tenantId,
         itemId: id,
         fromShopId: item.shopId,
         type: 'WASTAGE',
@@ -208,7 +221,9 @@ export async function listVendors() {
 }
 
 export async function createVendor(input: VendorInput) {
-  const vendor = await prisma.vendor.create({ data: input });
+  const tenantId = getTenantId();
+  if (!tenantId) throw new Error('tenantId missing');
+  const vendor = await prisma.vendor.create({ data: { ...input, tenantId } });
   void writeAudit('Vendor', vendor.id, 'CREATE', null, vendor);
   return vendor;
 }
@@ -251,9 +266,12 @@ export async function listPurchaseOrders() {
 }
 
 export async function createPurchaseOrder(input: PurchaseOrderCreate) {
+  const tenantId = getTenantId();
+  if (!tenantId) throw new Error('tenantId missing');
   const totalPaise = input.items.reduce((s, i) => s + i.costPaise, 0);
   const po = await prisma.purchaseOrder.create({
     data: {
+      tenantId,
       vendorId: input.vendorId,
       totalPaise,
       items: { create: input.items },
@@ -362,8 +380,14 @@ async function writeAudit(
         entityType,
         entityId,
         action,
-        beforeJson: before === null || before === undefined ? null : (before as object),
-        afterJson: after === null || after === undefined ? null : (after as object),
+        beforeJson:
+          before === null || before === undefined
+            ? Prisma.DbNull
+            : (before as Prisma.InputJsonValue),
+        afterJson:
+          after === null || after === undefined
+            ? Prisma.DbNull
+            : (after as Prisma.InputJsonValue),
       },
     });
   } catch {

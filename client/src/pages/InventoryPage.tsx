@@ -44,7 +44,11 @@ import { Badge } from '@/components/ui/badge';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetBody } from '@/components/ui/sheet';
 import { BarcodePreview } from '@/components/ui/BarcodePreview';
-import { cn } from '@/lib/cn';
+import { PageHeader } from '@/components/ui/PageHeader';
+import { TabStrip, type TabStripItem } from '@/components/ui/TabStrip';
+import { SectionCard } from '@/components/ui/SectionCard';
+import { Toolbar, StatPill } from '@/components/ui/Toolbar';
+import { TableSkeleton } from '@/components/ui/Skeleton';
 
 type Tab =
   | 'items'
@@ -71,39 +75,17 @@ const TABS: Array<{ id: Tab; label: string; icon: typeof Boxes }> = [
 
 export function InventoryPage(): JSX.Element {
   const [tab, setTab] = useState<Tab>('items');
+  const tabItems: TabStripItem<Tab>[] = TABS.map((t) => ({ id: t.id, label: t.label, icon: t.icon }));
   return (
-    <div className="space-y-4">
-      <header className="flex items-end justify-between flex-wrap gap-y-3">
-        <div>
-          <p className="text-eyebrow uppercase text-ink-500">Stock & inventory</p>
-          <h1 className="font-display text-xl sm:text-display-sm text-ink-900">Module 01 · Stock & inventory</h1>
-          <p className="mt-1 text-sm text-ink-500 max-w-xl">
-            Live valuation, multi-store sync, vendors, POs, transfers and wastage — all auditable.
-          </p>
-        </div>
-      </header>
+    <div className="space-y-5">
+      <PageHeader
+        eyebrow="Module 01"
+        title="Stock & inventory"
+        description="Live valuation, multi-store sync, vendors, POs, transfers and wastage — all auditable."
+        bare
+      />
 
-      <nav className="flex gap-1 border-b border-ink-100 -mb-px overflow-x-auto -mx-3 sm:-mx-4 lg:-mx-6 px-3 sm:px-4 lg:px-6">
-        {TABS.map((t) => {
-          const Icon = t.icon;
-          const active = tab === t.id;
-          return (
-            <button
-              key={t.id}
-              onClick={() => setTab(t.id)}
-              className={cn(
-                'inline-flex items-center gap-1.5 px-3 h-9 text-sm border-b-2 transition-colors whitespace-nowrap shrink-0',
-                active
-                  ? 'border-brand-500 text-ink-900 font-medium'
-                  : 'border-transparent text-ink-500 hover:text-ink-700',
-              )}
-            >
-              <Icon className="h-3.5 w-3.5" />
-              {t.label}
-            </button>
-          );
-        })}
-      </nav>
+      <TabStrip<Tab> items={tabItems} value={tab} onChange={setTab} />
 
       {tab === 'items' && <ItemsTab />}
       {tab === 'transfers' && <MovementsTab type="TRANSFER" emptyLabel="No transfers yet." />}
@@ -210,16 +192,21 @@ function ItemsTab(): JSX.Element {
 
   return (
     <>
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
-        <p className="text-sm text-ink-500">
-          {data ? `${data.data.length} item${data.data.length === 1 ? '' : 's'} in view` : '…'}
-        </p>
-        <Button onClick={() => setAddOpen(true)} className="self-start sm:self-auto">
-          <Plus className="h-4 w-4" /> Add item
-        </Button>
-      </div>
+      <Toolbar
+        end={
+          <Button onClick={() => setAddOpen(true)}>
+            <Plus className="h-4 w-4" /> Add item
+          </Button>
+        }
+      >
+        {data && (
+          <StatPill>
+            {data.data.length} item{data.data.length === 1 ? '' : 's'}
+          </StatPill>
+        )}
+      </Toolbar>
 
-      {isLoading && <p className="text-sm text-ink-500">Loading…</p>}
+      {isLoading && <TableSkeleton rows={8} columns={8} />}
       {!isLoading && (!data || data.data.length === 0) && (
         <EmptyState
           eyebrow="No items yet"
@@ -392,53 +379,64 @@ function ValuationTab(): JSX.Element {
   const catName = (id: string): string =>
     catRes?.data.find((c) => c.id === id)?.name ?? id.slice(-6);
 
-  if (isLoading) return <p className="text-sm text-ink-500">Loading…</p>;
+  if (isLoading) {
+    return (
+      <div className="space-y-4">
+        <div className="rounded-md border border-ink-100 bg-ink-0 p-6 h-24" />
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div className="rounded-md border border-ink-100 bg-ink-0 p-5 h-60" />
+          <div className="rounded-md border border-ink-100 bg-ink-0 p-5 h-60" />
+        </div>
+      </div>
+    );
+  }
   if (!v) return <p className="text-sm text-ink-500">No valuation data yet.</p>;
 
   return (
     <div className="space-y-4">
-      <div className="rounded-md border border-ink-100 bg-ink-0 p-4 sm:p-5 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-        <div>
-          <p className="text-eyebrow uppercase text-ink-500">Total stock value</p>
-          <p className="font-mono text-2xl sm:text-3xl text-ink-900 mt-1">
-            <Money paise={v.totalPaise} />
-          </p>
+      <section className="relative overflow-hidden rounded-md border border-brand-200/60 bg-gradient-to-br from-brand-50/60 via-ink-0 to-ink-0 p-5 sm:p-6">
+        <div aria-hidden className="absolute inset-0 bg-hairlines opacity-30 pointer-events-none" />
+        <div className="relative flex flex-col sm:flex-row sm:items-end sm:justify-between gap-3">
+          <div>
+            <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-brand-700">Total stock value</p>
+            <p className="font-mono text-3xl sm:text-4xl text-ink-900 mt-2 tabular-nums font-semibold">
+              <Money paise={v.totalPaise} />
+            </p>
+          </div>
+          <div className="sm:text-right text-sm">
+            <p className="text-ink-800 font-medium">{v.itemCount} items in stock</p>
+            <p className="text-xs text-ink-500 mt-1 font-mono">
+              As of {new Date(v.asOf).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })} · MCX
+            </p>
+          </div>
         </div>
-        <div className="sm:text-right">
-          <p className="text-sm text-ink-700">{v.itemCount} items in stock</p>
-          <p className="text-xs text-ink-400 mt-1">
-            As of {new Date(v.asOf).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })} · MCX
-          </p>
-        </div>
-      </div>
+      </section>
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        <div className="rounded-md border border-ink-100 bg-ink-0 p-5">
-          <p className="text-eyebrow uppercase text-ink-500">By shop</p>
-          <ul className="mt-3 space-y-2 text-sm">
+        <SectionCard eyebrow="By shop" title="Distribution across locations">
+          <ul className="space-y-2 text-sm -mt-1">
             {v.byShop.length === 0 && <li className="text-ink-500">—</li>}
             {v.byShop.map((s) => (
-              <li key={s.shopId} className="flex items-center justify-between border-b border-ink-100 pb-2 last:border-0">
-                <span className="text-ink-800">{shopName(s.shopId)}</span>
-                <span className="text-xs text-ink-500">{s.itemCount} items</span>
-                <Money paise={s.totalPaise} className="font-mono tabular-nums" />
+              <li key={s.shopId} className="flex items-center justify-between border-b border-ink-50 pb-2 last:border-0">
+                <span className="text-ink-800 font-medium">{shopName(s.shopId)}</span>
+                <span className="text-xs text-ink-500 font-mono">{s.itemCount} items</span>
+                <Money paise={s.totalPaise} className="font-mono tabular-nums text-ink-900" />
               </li>
             ))}
           </ul>
-        </div>
-        <div className="rounded-md border border-ink-100 bg-ink-0 p-5">
-          <p className="text-eyebrow uppercase text-ink-500">By category</p>
-          <ul className="mt-3 space-y-2 text-sm">
+        </SectionCard>
+        <SectionCard eyebrow="By category" title="Breakdown by metal & form">
+          <ul className="space-y-2 text-sm -mt-1">
             {v.byCategory.length === 0 && <li className="text-ink-500">—</li>}
             {v.byCategory.map((c) => (
-              <li key={c.categoryId} className="flex items-center justify-between border-b border-ink-100 pb-2 last:border-0">
-                <span className="text-ink-800">{catName(c.categoryId)}</span>
-                <span className="text-xs text-ink-500">{c.itemCount} items</span>
-                <Money paise={c.totalPaise} className="font-mono tabular-nums" />
+              <li key={c.categoryId} className="flex items-center justify-between border-b border-ink-50 pb-2 last:border-0">
+                <span className="text-ink-800 font-medium">{catName(c.categoryId)}</span>
+                <span className="text-xs text-ink-500 font-mono">{c.itemCount} items</span>
+                <Money paise={c.totalPaise} className="font-mono tabular-nums text-ink-900" />
               </li>
             ))}
           </ul>
-        </div>
+        </SectionCard>
       </div>
     </div>
   );

@@ -26,6 +26,7 @@ const DEFAULT_MAKING_BPS = 1200;
 // ------------------------------------------------------------------
 
 export async function openRegister(input: { shopId: string; openingFloatPaise: number; notes?: string | null }, openedByUserId: string) {
+  const tenantId = tenantIdOrThrow();
   // DB partial-unique guards "one OPEN per shop" — pre-check for a clean 409.
   const existing = await prisma.registerSession.findFirst({
     where: { shopId: input.shopId, status: 'OPEN' },
@@ -38,6 +39,7 @@ export async function openRegister(input: { shopId: string; openingFloatPaise: n
   return prisma.$transaction(async (tx) => {
     const session = await tx.registerSession.create({
       data: {
+        tenantId,
         shopId: input.shopId,
         openedByUserId,
         openingFloatPaise: input.openingFloatPaise,
@@ -47,6 +49,7 @@ export async function openRegister(input: { shopId: string; openingFloatPaise: n
     // Mirror float as a cash movement so the audit trail is clean.
     await tx.cashMovement.create({
       data: {
+        tenantId,
         shopId: input.shopId,
         registerSessionId: session.id,
         type: 'OPENING_FLOAT',
@@ -138,8 +141,10 @@ export async function recordCashMovement(input: {
     select: { id: true },
   });
   if (!session) throw new BadRequestError('Open the register before recording cash movements');
+  const tenantId = tenantIdOrThrow();
   return prisma.cashMovement.create({
     data: {
+      tenantId,
       shopId: input.shopId,
       registerSessionId: session.id,
       type: input.type,
@@ -160,8 +165,10 @@ export async function parkBill(input: {
   customerPhone?: string | null;
   draft: Record<string, unknown>;
 }, parkedByUserId: string) {
+  const tenantId = tenantIdOrThrow();
   return prisma.parkedBill.create({
     data: {
+      tenantId,
       shopId: input.shopId,
       customerLabel: input.customerLabel,
       customerPhone: input.customerPhone ?? null,
@@ -240,9 +247,11 @@ export async function createEstimate(input: {
   const estimateNumber = `EST-${new Date().getFullYear()}-${String(count + 1).padStart(5, '0')}`;
 
   const validUntil = new Date(Date.now() + input.validDays * 86_400_000);
+  const tenantId = tenantIdOrThrow();
 
   return prisma.estimate.create({
     data: {
+      tenantId,
       shopId: input.shopId,
       estimateNumber,
       customerId: input.customerId ?? null,
@@ -285,10 +294,12 @@ export async function createRepair(input: {
   promisedAt?: Date | null;
   notes?: string | null;
 }, intakeUserId: string) {
+  const tenantId = tenantIdOrThrow();
   const count = await prisma.repair.count({ where: { shopId: input.shopId } });
   const ticketNumber = `RPR-${new Date().getFullYear()}-${String(count + 1).padStart(5, '0')}`;
   return prisma.repair.create({
     data: {
+      tenantId,
       shopId: input.shopId,
       ticketNumber,
       customerId: input.customerId ?? null,
@@ -354,8 +365,10 @@ export async function createAdvance(input: {
   }
   const count = await prisma.advance.count({ where: { shopId: input.shopId } });
   const receiptNumber = `ADV-${new Date().getFullYear()}-${String(count + 1).padStart(5, '0')}`;
+  const tenantId = tenantIdOrThrow();
   return prisma.advance.create({
     data: {
+      tenantId,
       shopId: input.shopId,
       receiptNumber,
       customerId: input.customerId,

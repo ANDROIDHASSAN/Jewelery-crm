@@ -1,0 +1,178 @@
+- generic [ref=e3]:
+  - banner [ref=e4]:
+    - generic [ref=e6]:
+      - generic [ref=e7]:
+        - text: Today's rate ·
+        - generic [ref=e8]: 24K ₹7,000/g
+        - text: ·
+        - generic [ref=e9]: 22K ₹6,420/g
+        - text: ·
+        - generic [ref=e10]: 18K ₹5,255/g · Silver ₹84.50/g
+      - generic [ref=e11]:
+        - link "2 stores" [ref=e12] [cursor=pointer]:
+          - /url: /store/locations
+          - img [ref=e13]
+          - text: 2 stores
+        - link "Track order" [ref=e16] [cursor=pointer]:
+          - /url: /store/track
+        - link "Help" [ref=e17] [cursor=pointer]:
+          - /url: /store/help
+    - generic [ref=e19]:
+      - link "Anant Jewellers — home" [ref=e20] [cursor=pointer]:
+        - /url: /store
+        - img [ref=e21]
+        - generic [ref=e22]:
+          - generic [ref=e23]: Anant Jewellers
+          - generic [ref=e24]: Haryana · Since 1972
+      - navigation "Primary" [ref=e25]:
+        - link "Bridal" [ref=e26] [cursor=pointer]:
+          - /url: /store/collections/bridal
+        - link "Daily wear" [ref=e27] [cursor=pointer]:
+          - /url: /store/collections/daily-wear
+        - link "Festive" [ref=e28] [cursor=pointer]:
+          - /url: /store/collections/festive
+        - link "Diamond" [ref=e29] [cursor=pointer]:
+          - /url: /store/collections/diamond
+        - link "Silver" [ref=e30] [cursor=pointer]:
+          - /url: /store/collections/silver
+        - link "Stores" [ref=e31] [cursor=pointer]:
+          - /url: /store/locations
+      - generic [ref=e32]:
+        - button "Search" [ref=e33] [cursor=pointer]:
+          - img [ref=e34]
+        - link "Wishlist" [ref=e37] [cursor=pointer]:
+          - /url: /store/wishlist
+          - img [ref=e38]
+        - link "Sign in" [ref=e40] [cursor=pointer]:
+          - /url: /store/account
+          - img [ref=e41]
+        - link "Cart" [ref=e44] [cursor=pointer]:
+          - /url: /store/cart
+          - img [ref=e45]
+  - main [ref=e48]:
+    - generic [ref=e49]:
+      - generic [ref=e50]:
+        - img [ref=e52]
+        - paragraph [ref=e55]: Order placed
+        - heading "Thank you." [level=1] [ref=e56]
+        - paragraph [ref=e57]: Your order has been received. We'll WhatsApp the rate lock and a tracking link to your phone within the next hour.
+      - generic [ref=e59]:
+        - generic [ref=e60]:
+          - paragraph [ref=e61]: Order id
+          - paragraph [ref=e62]: ZL-23DEF4
+          - paragraph [ref=e63]: Save this — you'll need it to track. We'll also include it on WhatsApp.
+        - generic [ref=e64]:
+          - paragraph [ref=e65]: Arrives by
+          - paragraph [ref=e66]: 5 business days
+          - paragraph [ref=e67]:
+            - img [ref=e68]
+            - text: Hand-finished in Haryana · shipped India-wide
+      - generic [ref=e70]:
+        - link "Track your order" [ref=e71] [cursor=pointer]:
+          - /url: /store/track/cmsabc123def4
+          - text: Track your order
+          - img [ref=e72]
+        - link "Continue shopping" [ref=e74] [cursor=pointer]:
+          - /url: /store
+      - paragraph [ref=e75]:
+        - img [ref=e76]
+        - text: Questions? WhatsApp us — we reply within 30 minutes during shop hours.
+  - contentinfo [ref=e78]:
+    - generic [ref=e80]:
+      - generic [ref=e81]:
+        - paragraph [ref=e82]: Stay in the loop
+        - heading "New collections, in your inbox." [level=2] [ref=e83]
+        - paragraph [ref=e84]: Quiet, once a month. Unsubscribe anytime.
+      - generic [ref=e85]:
+        - generic [ref=e86]: Email
+        - textbox "Email" [ref=e87]:
+          - /placeholder: you@email.com
+        - button "Subscribe" [ref=e88] [cursor=pointer]:
+          - generic [ref=e89]: Subscribe
+          - img [ref=e90]
+    - generic [ref=e92]:
+      - generic [ref=e93]:
+        - link "Anant Jewellers" [ref=e94] [cursor=pointer]:
+          - /url: /store
+          - img [ref=e95]
+          - text: Anant Jewellers
+        - paragraph [ref=e96]: Family jewellers since 1972. Hallmarked gold. Transparent pricing. Hand-crafted in Haryana.
+        - list [ref=e97]:
+          - listitem [ref=e98]:
+            - img [ref=e99]
+            - text: MG Road, Gurugram, Haryana 122001
+          - listitem [ref=e102]:
+            - img [ref=e103]
+            - text: +91 124 444 0011
+          - listitem [ref=e105]:
+            - img [ref=e106]
+            - text: hello@anantjewellers.in
+        - generic [ref=e109]:
+          - link "Instagram" [ref=e110] [cursor=pointer]:
+            - /url: "#"
+            - img [ref=e111]
+          - link "Facebook" [ref=e114] [cursor=pointer]:
+            - /url: "#"
+            - img [ref=e115]
+          - link "YouTube" [ref=e117] [cursor=pointer]:
+            - /url: "#"
+            - img [ref=e118]
+      - generic [ref=e121]:
+        - paragraph [ref=e122]: Shop
+        - list [ref=e123]:
+          - listitem [ref=e124]:
+            - link "Bridal" [ref=e125] [cursor=pointer]:
+              - /url: /store/collections/bridal
+          - listitem [ref=e126]:
+            - link "Daily wear" [ref=e127] [cursor=pointer]:
+              - /url: /store/collections/daily-wear
+          - listitem [ref=e128]:
+            - link "Festive" [ref=e129] [cursor=pointer]:
+              - /url: /store/collections/festive
+          - listitem [ref=e130]:
+            - link "Diamond" [ref=e131] [cursor=pointer]:
+              - /url: /store/collections/diamond
+          - listitem [ref=e132]:
+            - link "Silver" [ref=e133] [cursor=pointer]:
+              - /url: /store/collections/silver
+      - generic [ref=e134]:
+        - paragraph [ref=e135]: Visit
+        - list [ref=e136]:
+          - listitem [ref=e137]:
+            - link "Stores" [ref=e138] [cursor=pointer]:
+              - /url: /store/locations
+          - listitem [ref=e139]:
+            - link "Our story" [ref=e140] [cursor=pointer]:
+              - /url: /store/story
+          - listitem [ref=e141]:
+            - link "Workshop tours" [ref=e142] [cursor=pointer]:
+              - /url: /store/workshop
+          - listitem [ref=e143]:
+            - link "Contact" [ref=e144] [cursor=pointer]:
+              - /url: /store/contact
+      - generic [ref=e145]:
+        - paragraph [ref=e146]: Help
+        - list [ref=e147]:
+          - listitem [ref=e148]:
+            - link "Track order" [ref=e149] [cursor=pointer]:
+              - /url: /store/track
+          - listitem [ref=e150]:
+            - link "Shipping & returns" [ref=e151] [cursor=pointer]:
+              - /url: /store/help
+          - listitem [ref=e152]:
+            - link "Care guide" [ref=e153] [cursor=pointer]:
+              - /url: /store/care
+          - listitem [ref=e154]:
+            - link "Hallmark guide" [ref=e155] [cursor=pointer]:
+              - /url: /store/hallmark
+    - generic [ref=e157]:
+      - paragraph [ref=e158]: "© 2026 Anant Jewellers · BIS Hallmark #IND-916 · GSTIN 27ABCDE1234F1Z5"
+      - generic [ref=e159]:
+        - link "Privacy" [ref=e160] [cursor=pointer]:
+          - /url: /store/privacy
+        - link "Terms" [ref=e161] [cursor=pointer]:
+          - /url: /store/terms
+        - generic [ref=e162]: Powered by Zelora
+  - link "Chat on WhatsApp" [ref=e163] [cursor=pointer]:
+    - /url: https://wa.me/919876543210
+    - img [ref=e164]
