@@ -169,7 +169,9 @@ function CheckoutDialog({ open, onClose }: { open: boolean; onClose: () => void 
   const [identifyCustomer] = useIdentifyCustomerMutation();
   const shop = useShopActions();
   const [name, setName] = useState(account.name);
-  const [phone, setPhone] = useState(account.phone || '+91 ');
+  // Phone is stored as the local 10-digit portion only; the +91 prefix is a
+  // fixed UI adornment. Strip the +91 from a previously-saved account phone.
+  const [phone, setPhone] = useState(() => (account.phone || '').replace(/\D/g, '').replace(/^91/, '').slice(0, 10));
 
   const total = cart.reduce((s, l) => s + l.pricePaise * l.qty, 0);
   const gst = Math.round((total * 300) / 10_000);
@@ -178,9 +180,8 @@ function CheckoutDialog({ open, onClose }: { open: boolean; onClose: () => void 
   const handleSubmit = async (e: React.FormEvent): Promise<void> => {
     e.preventDefault();
     if (name.trim().length < 2) return void toast.error('Please enter your name');
-    const digits = phone.replace(/\D/g, '');
-    const local = digits.startsWith('91') ? digits.slice(2) : digits;
-    if (!/^[6-9]\d{9}$/.test(local)) return void toast.error('Please enter a valid Indian phone number');
+    if (!/^[6-9]\d{9}$/.test(phone)) return void toast.error('Please enter a valid 10-digit Indian phone number');
+    const local = phone;
     // Refetch the catalog before mapping slugs → product IDs. The product list
     // is cached (keepUnusedDataFor: 5 min); after a re-seed the cached IDs go
     // stale and the server rejects them with PRODUCT_UNAVAILABLE. Pull fresh
@@ -284,15 +285,22 @@ function CheckoutDialog({ open, onClose }: { open: boolean; onClose: () => void 
 
               <label className="block">
                 <span className="text-[11px] uppercase tracking-wider text-ink-500">Phone</span>
-                <input
-                  type="tel"
-                  value={phone}
-                  onChange={(e) => setPhone(e.target.value)}
-                  required
-                  inputMode="tel"
-                  className="mt-1 w-full h-11 px-3 rounded-lg border border-ink-200 focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500 text-sm font-mono"
-                  placeholder="+91 98XXX XXXXX"
-                />
+                <div className="mt-1 flex items-stretch w-full h-11 rounded-lg border border-ink-200 focus-within:border-brand-500 focus-within:ring-1 focus-within:ring-brand-500 overflow-hidden">
+                  <span className="flex items-center px-3 bg-ink-50 text-ink-600 text-sm font-mono border-r border-ink-200 select-none">
+                    +91
+                  </span>
+                  <input
+                    type="tel"
+                    value={phone}
+                    onChange={(e) => setPhone(e.target.value.replace(/\D/g, '').slice(0, 10))}
+                    required
+                    inputMode="numeric"
+                    maxLength={10}
+                    pattern="[6-9][0-9]{9}"
+                    className="flex-1 px-3 text-sm font-mono focus:outline-none"
+                    placeholder="98XXX XXXXX"
+                  />
+                </div>
               </label>
             </div>
 
