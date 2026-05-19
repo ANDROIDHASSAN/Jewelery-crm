@@ -10,8 +10,10 @@ import { useShopActions } from '@/features/storefront/useShopActions';
 import {
   useGetPublicProductsQuery,
   useCreatePublicOrderMutation,
+  useVerifyRazorpayPaymentMutation,
 } from '@/features/storefront/storefrontApi';
 import { useIdentifyCustomerMutation } from '@/features/storefront/customerApi';
+import { openRazorpayCheckout } from '@/lib/razorpay';
 
 export function CartPage(): JSX.Element {
   const cart = useAppSelector((s) => s.shop.cart);
@@ -166,12 +168,16 @@ function CheckoutDialog({ open, onClose }: { open: boolean; onClose: () => void 
   const navigate = useNavigate();
   const { data: products, refetch: refetchProducts } = useGetPublicProductsQuery();
   const [createOrder, { isLoading }] = useCreatePublicOrderMutation();
+  const [verifyRazorpay] = useVerifyRazorpayPaymentMutation();
   const [identifyCustomer] = useIdentifyCustomerMutation();
   const shop = useShopActions();
   const [name, setName] = useState(account.name);
   // Phone is stored as the local 10-digit portion only; the +91 prefix is a
   // fixed UI adornment. Strip the +91 from a previously-saved account phone.
   const [phone, setPhone] = useState(() => (account.phone || '').replace(/\D/g, '').replace(/^91/, '').slice(0, 10));
+  // Pay-online vs Cash-on-delivery. Most small jewellers want both surfaces.
+  // Default to online (prepaid) — that's what cart checkout typically means.
+  const [paymentMethod, setPaymentMethod] = useState<'razorpay' | 'cod'>('razorpay');
 
   const total = cart.reduce((s, l) => s + l.pricePaise * l.qty, 0);
   const gst = Math.round((total * 300) / 10_000);
@@ -209,8 +215,42 @@ function CheckoutDialog({ open, onClose }: { open: boolean; onClose: () => void 
       const res = await createOrder({
         customer: { name: name.trim(), phone: normalizedPhone },
         items,
-        paymentMethod: 'cod',
+        paymentMethod,
       }).unwrap();
+
+      // Razorpay flow: open the checkout modal immediately, then verify.
+      // If the user dismisses the modal the order stays PENDING (admin can
+      // chase, or we expire it on a cron); we surface that as a soft warning.
+      if (paymentMethod === 'razorpay' && res.razorpay) {
+        try {
+          const checkoutResult = await openRazorpayCheckout({
+            keyId: res.razorpay.keyId,
+            orderId: res.razorpay.orderId,
+            amountPaise: res.razorpay.amountPaise,
+            brandName: 'Zelora',
+            description: `Order ZL-${res.id.slice(-6).toUpperCase()}`,
+            customer: { name: name.trim(), phone: normalizedPhone },
+            simulated: res.razorpay.simulated,
+          });
+          await verifyRazorpay({
+            orderId: res.id,
+            razorpayOrderId: checkoutResult.razorpayOrderId,
+            razorpayPaymentId: checkoutResult.razorpayPaymentId,
+            razorpaySignature: checkoutResult.razorpaySignature,
+          }).unwrap();
+        } catch (e) {
+          const msg = e instanceof Error ? e.message : String(e);
+          if (msg === 'CHECKOUT_DISMISSED') {
+            toast.message('Payment cancelled', {
+              description: 'Your order is held for 30 min — finish payment from the Track page.',
+            });
+            navigate(`/store/track?id=${res.id.slice(-6).toUpperCase()}&phone=${encodeURIComponent(normalizedPhone)}`);
+            return;
+          }
+          throw e;
+        }
+      }
+
       toast.success(`Order placed! ZL-${res.id.slice(-6).toUpperCase()}`, { duration: 4000 });
       // Persist phone + name in the account so the Track page can auto-fill
       // them on repeat visits and "My Orders" works after a session restore.
@@ -302,6 +342,36 @@ function CheckoutDialog({ open, onClose }: { open: boolean; onClose: () => void 
                   />
                 </div>
               </label>
+
+              <fieldset className="block">
+                <legend className="text-[11px] uppercase tracking-wider text-ink-500">Payment</legend>
+                <div className="mt-1 grid grid-cols-2 gap-2">
+                  <label className={`cursor-pointer flex flex-col gap-0.5 px-3 py-2.5 rounded-lg border text-sm transition-colors ${paymentMethod === 'razorpay' ? 'border-brand-500 bg-brand-50/40 text-ink-900' : 'border-ink-200 text-ink-600 hover:border-ink-300'}`}>
+                    <input
+                      type="radio"
+                      name="paymentMethod"
+                      value="razorpay"
+                      checked={paymentMethod === 'razorpay'}
+                      onChange={() => setPaymentMethod('razorpay')}
+                      className="sr-only"
+                    />
+                    <span className="font-medium">Pay online</span>
+                    <span className="text-[11px] text-ink-500">UPI · Card · Net-banking</span>
+                  </label>
+                  <label className={`cursor-pointer flex flex-col gap-0.5 px-3 py-2.5 rounded-lg border text-sm transition-colors ${paymentMethod === 'cod' ? 'border-brand-500 bg-brand-50/40 text-ink-900' : 'border-ink-200 text-ink-600 hover:border-ink-300'}`}>
+                    <input
+                      type="radio"
+                      name="paymentMethod"
+                      value="cod"
+                      checked={paymentMethod === 'cod'}
+                      onChange={() => setPaymentMethod('cod')}
+                      className="sr-only"
+                    />
+                    <span className="font-medium">Cash on delivery</span>
+                    <span className="text-[11px] text-ink-500">Pay when it arrives</span>
+                  </label>
+                </div>
+              </fieldset>
             </div>
 
             <div className="flex gap-2 pt-1">
@@ -318,12 +388,14 @@ function CheckoutDialog({ open, onClose }: { open: boolean; onClose: () => void 
                 disabled={isLoading}
                 className="flex-[2] h-11 rounded-full bg-brand-400 text-ink-900 text-sm font-medium hover:bg-brand-300 disabled:opacity-60 transition-colors"
               >
-                {isLoading ? 'Reserving…' : 'Confirm reservation'}
+                {isLoading ? (paymentMethod === 'razorpay' ? 'Opening payment…' : 'Placing order…') : (paymentMethod === 'razorpay' ? 'Pay & place order' : 'Place order (COD)')}
               </button>
             </div>
 
             <p className="text-[11px] text-ink-500 text-center leading-relaxed">
-              Pay cash on delivery, or via UPI when the courier arrives. Estimated arrival: 5 business days, tracked on WhatsApp.
+              {paymentMethod === 'razorpay'
+                ? 'Pay securely via Razorpay. Order is confirmed the moment payment succeeds.'
+                : 'Pay cash on delivery, or via UPI when the courier arrives. Estimated arrival: 5 business days, tracked on WhatsApp.'}
             </p>
           </form>
         </Dialog.Content>

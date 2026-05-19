@@ -128,8 +128,10 @@ export function StorefrontFooter(): JSX.Element {
         />
       </div>
 
-      {/* Compliance microbar */}
-      <div className="border-t border-ink-100 bg-ink-25">
+      {/* Compliance microbar — pb-* on the wrapper extends the bg-ink-25
+          strip past the text so the fixed WhatsApp orb (bottom-right) sits
+          over a clear zone of the same colour at scroll-bottom on mobile. */}
+      <div className="border-t border-ink-100 bg-ink-25 pb-16 sm:pb-20 lg:pb-0">
         <div className="max-w-[1280px] mx-auto px-4 sm:px-6 py-5 text-xs text-ink-500 flex flex-col md:flex-row md:items-center md:justify-between gap-3">
           <p>© {new Date().getFullYear()} {brand.name} · BIS Hallmark #IND-916 · GSTIN 27ABCDE1234F1Z5</p>
           <div className="flex items-center gap-4">

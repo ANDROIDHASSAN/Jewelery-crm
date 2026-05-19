@@ -9,6 +9,14 @@ import { runWithTenant } from '../../lib/async-context.js';
 import { resolveCanonicalTenantId } from '../../lib/canonical-tenant.js';
 import { readGoldRatePaise } from '../../lib/redis.js';
 import { bustKey } from '../../lib/cache.js';
+import {
+  createRazorpayOrder,
+  isRazorpayConfigured,
+  verifyCheckoutSignature,
+} from '../../lib/razorpay.js';
+import { env } from '../../env.js';
+import { enqueueWhatsApp } from '../../lib/queue.js';
+import { createShiprocketAwb, isShiprocketConfigured } from '../../lib/shiprocket.js';
 
 export const websiteRouter: Router = Router();
 
@@ -126,6 +134,19 @@ const OrderItemPublicSchema = z.object({
   productId: z.string().min(1),
   qty: z.number().int().positive().max(99),
 });
+// Shipping address. Optional in v1 — reserve-at-store and walk-in COD don't
+// need it. Required when paymentMethod=razorpay and shippingPaise > 0 (i.e.
+// real online courier order).
+const ShippingAddressSchema = z.object({
+  name: z.string().min(2).max(120),
+  phone: IndianPhoneSchema,
+  line1: z.string().min(3).max(200),
+  line2: z.string().max(200).optional().default(''),
+  city: z.string().min(2).max(80),
+  state: z.string().min(2).max(80),
+  pincode: z.string().regex(/^\d{6}$/, 'Indian PIN code is 6 digits'),
+});
+
 const OrderCreatePublicSchema = z.object({
   customer: z.object({
     name: z.string().min(2).max(120),
@@ -134,6 +155,7 @@ const OrderCreatePublicSchema = z.object({
   items: z.array(OrderItemPublicSchema).min(1).max(50),
   paymentMethod: z.enum(['reserve-at-store', 'razorpay', 'cod']).default('reserve-at-store'),
   shippingPaise: z.number().int().min(0).default(0),
+  shippingAddress: ShippingAddressSchema.optional(),
 });
 
 websiteRouter.post('/orders', async (req, res, next) => {
@@ -207,7 +229,19 @@ websiteRouter.post('/orders', async (req, res, next) => {
           taxPaise,
           totalPaise,
           paymentMethod: body.paymentMethod,
+          // Reserve-at-store and COD start unpaid; Razorpay flows through the
+          // verify endpoint to transition to PAID.
+          paymentStatus: 'PENDING',
           expectedDeliveryAt,
+          // Snapshot the shipping address onto the order so a later customer
+          // profile edit doesn't rewrite shipping history.
+          shippingName: body.shippingAddress?.name ?? null,
+          shippingPhone: body.shippingAddress?.phone ?? null,
+          shippingLine1: body.shippingAddress?.line1 ?? null,
+          shippingLine2: body.shippingAddress?.line2 || null,
+          shippingCity: body.shippingAddress?.city ?? null,
+          shippingState: body.shippingAddress?.state ?? null,
+          shippingPincode: body.shippingAddress?.pincode ?? null,
           items: {
             create: body.items.map((i) => ({
               productId: i.productId,
@@ -219,9 +253,90 @@ websiteRouter.post('/orders', async (req, res, next) => {
             create: [{ tenantId, status: 'PENDING', note: 'Order placed', actorName: 'System' }],
           },
         },
-        select: { id: true, totalPaise: true, expectedDeliveryAt: true },
+        select: {
+          id: true,
+          totalPaise: true,
+          expectedDeliveryAt: true,
+          paymentMethod: true,
+          shippingPincode: true,
+        },
       });
     });
+
+    // If the customer chose Razorpay, create the Razorpay Order up front so
+    // the client can immediately hand the order_id to Razorpay Checkout. The
+    // Order row is already PENDING; we'll flip paymentStatus to PAID once
+    // either /payment/verify or the webhook fires.
+    let razorpayPayload: {
+      keyId: string;
+      orderId: string;
+      amountPaise: number;
+      currency: 'INR';
+      simulated: boolean;
+    } | null = null;
+    if (body.paymentMethod === 'razorpay') {
+      const rzpOrder = await createRazorpayOrder({
+        amountPaise: order.totalPaise,
+        receipt: order.id,
+        notes: {
+          tenantId,
+          customerName: body.customer.name,
+          customerPhone: body.customer.phone,
+        },
+      });
+      await rawPrisma.order.update({
+        where: { id: order.id },
+        data: { razorpayOrderId: rzpOrder.id },
+      });
+      razorpayPayload = {
+        // Public key id is safe to expose; the secret stays server-side.
+        keyId: env.RAZORPAY_KEY_ID || 'rzp_test_simulated',
+        orderId: rzpOrder.id,
+        amountPaise: rzpOrder.amount,
+        currency: 'INR',
+        simulated: rzpOrder.simulated,
+      };
+    }
+
+    // Enqueue order-confirmation WhatsApp. Worker handles delivery, retries,
+    // and SMS fallback — never block the response on it.
+    void enqueueWhatsApp({
+      tenantId,
+      to: body.customer.phone,
+      templateName: env.WHATSAPP_TEMPLATE_RECEIPT,
+      variables: {
+        name: body.customer.name,
+        order_id: `ZL-${order.id.slice(-6).toUpperCase()}`,
+        total: `₹${(order.totalPaise / 100).toLocaleString('en-IN')}`,
+        eta: order.expectedDeliveryAt?.toLocaleDateString('en-IN') ?? 'shortly',
+      },
+      customerId: undefined,
+    }).catch(() => undefined);
+
+    // If shipping is required AND Shiprocket is configured, fire-and-forget
+    // an AWB creation. The worker writes shiprocketAwb + shiprocketTrackingUrl
+    // back to the order. Customers see "Booking courier…" until that lands.
+    if (body.shippingAddress && body.shippingPaise > 0 && isShiprocketConfigured()) {
+      setImmediate(() => {
+        void createShiprocketAwb({
+          orderId: order.id,
+          tenantId,
+          customerName: body.customer.name,
+          customerPhone: body.customer.phone,
+          shipping: body.shippingAddress!,
+          items: body.items.map((i) => ({
+            name: nameById.get(i.productId) ?? 'Jewellery piece',
+            sku: i.productId,
+            qty: i.qty,
+            pricePaise: priceByProductId.get(i.productId) ?? 0,
+          })),
+          subtotalPaise,
+          shippingPaise: body.shippingPaise,
+          taxPaise,
+          totalPaise,
+        }).catch(() => undefined);
+      });
+    }
 
     // Fire-and-forget the Lead mirror AFTER the response is queued. Saves one
     // remote round trip on the user-facing path. A failure here was already
@@ -252,8 +367,87 @@ websiteRouter.post('/orders', async (req, res, next) => {
         id: order.id,
         totalPaise: order.totalPaise,
         expectedDeliveryAt: order.expectedDeliveryAt?.toISOString() ?? null,
+        // razorpay block is present only for razorpay-method orders. The
+        // client opens the Razorpay Checkout widget with these fields,
+        // then calls /orders/:id/payment/verify with the result.
+        razorpay: razorpayPayload,
       },
     });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Razorpay checkout success → verify signature → mark paid. The client calls
+// this from the Razorpay handler.success callback. Idempotent: if the order is
+// already PAID (e.g. the webhook beat us) we return the current state without
+// rewriting.
+const RazorpayVerifyBodySchema = z.object({
+  razorpayOrderId: z.string().min(1),
+  razorpayPaymentId: z.string().min(1),
+  razorpaySignature: z.string().min(1),
+});
+
+websiteRouter.post('/orders/:id/payment/verify', async (req, res, next) => {
+  res.setHeader('Cache-Control', 'private, no-store');
+  try {
+    const orderId = z.string().min(1).parse(req.params.id);
+    const body = RazorpayVerifyBodySchema.parse(req.body);
+
+    const order = await rawPrisma.order.findUnique({
+      where: { id: orderId },
+      select: { id: true, tenantId: true, paymentStatus: true, razorpayOrderId: true, totalPaise: true, customer: { select: { phone: true, name: true } } },
+    });
+    if (!order) {
+      res.status(404).json({ error: { code: 'ORDER_NOT_FOUND', message: 'Order not found' } });
+      return;
+    }
+    if (order.razorpayOrderId !== body.razorpayOrderId) {
+      res.status(400).json({ error: { code: 'ORDER_MISMATCH', message: 'razorpayOrderId does not match this order' } });
+      return;
+    }
+    if (order.paymentStatus === 'PAID') {
+      // Idempotent — webhook may have arrived first.
+      res.json({ data: { id: order.id, paymentStatus: 'PAID', alreadyPaid: true } });
+      return;
+    }
+
+    const valid = verifyCheckoutSignature({
+      razorpayOrderId: body.razorpayOrderId,
+      razorpayPaymentId: body.razorpayPaymentId,
+      razorpaySignature: body.razorpaySignature,
+    });
+    if (!valid) {
+      res.status(400).json({ error: { code: 'INVALID_SIGNATURE', message: 'Signature verification failed' } });
+      return;
+    }
+
+    await runWithTenant({ tenantId: order.tenantId }, async () => {
+      await rawPrisma.order.update({
+        where: { id: order.id },
+        data: {
+          paymentStatus: 'PAID',
+          paidAt: new Date(),
+          razorpayPaymentId: body.razorpayPaymentId,
+          razorpaySignature: body.razorpaySignature,
+          status: 'CONFIRMED',
+          events: {
+            create: [{
+              tenantId: order.tenantId,
+              status: 'CONFIRMED',
+              note: `Payment captured via Razorpay (${body.razorpayPaymentId})`,
+              actorName: 'System',
+            }],
+          },
+        },
+      });
+    });
+
+    void bustKey(order.tenantId, 'orders:live-count');
+    void bustKey(order.tenantId, 'orders:list:ALL');
+    void bustKey(order.tenantId, 'orders:list:PENDING');
+
+    res.json({ data: { id: order.id, paymentStatus: 'PAID', alreadyPaid: false } });
   } catch (err) {
     next(err);
   }

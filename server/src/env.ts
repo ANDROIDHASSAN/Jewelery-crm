@@ -37,9 +37,20 @@ const EnvSchema = z.object({
 
   RAZORPAY_KEY_ID: z.string().optional().default(''),
   RAZORPAY_KEY_SECRET: z.string().optional().default(''),
+  // Configured separately in the Razorpay dashboard at Settings > Webhooks.
+  // Different from the key secret. Empty disables webhook ingestion (the
+  // route returns 503 with a clear message so misconfigs surface fast).
+  RAZORPAY_WEBHOOK_SECRET: z.string().optional().default(''),
 
   SHIPROCKET_EMAIL: z.string().optional().default(''),
   SHIPROCKET_PASSWORD: z.string().optional().default(''),
+  // Shiprocket pickup location nickname registered in the Shiprocket dashboard
+  // (Settings > Pickup Addresses). Required when creating real shipments.
+  SHIPROCKET_PICKUP_LOCATION: z.string().optional().default('Primary'),
+  // Optional webhook signature secret if you enabled signed Shiprocket
+  // webhooks. If empty the webhook route trusts the source (acceptable for
+  // small merchants behind a firewall; tighten before public exposure).
+  SHIPROCKET_WEBHOOK_SECRET: z.string().optional().default(''),
 
   S3_BUCKET: z.string().optional().default('goldos-dev'),
   S3_ACCESS_KEY: z.string().optional().default(''),

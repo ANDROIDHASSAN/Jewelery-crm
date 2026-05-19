@@ -160,16 +160,66 @@ export const storefrontApi = baseApi.injectEndpoints({
       transformResponse: (raw: { data: never }) => raw.data,
     }),
     createPublicOrder: build.mutation<
-      { id: string; totalPaise: number; expectedDeliveryAt: string | null },
+      {
+        id: string;
+        totalPaise: number;
+        expectedDeliveryAt: string | null;
+        razorpay: {
+          keyId: string;
+          orderId: string;
+          amountPaise: number;
+          currency: 'INR';
+          simulated: boolean;
+        } | null;
+      },
       {
         customer: { name: string; phone: string };
         items: Array<{ productId: string; qty: number }>;
         paymentMethod?: 'reserve-at-store' | 'razorpay' | 'cod';
+        shippingPaise?: number;
+        shippingAddress?: {
+          name: string;
+          phone: string;
+          line1: string;
+          line2?: string;
+          city: string;
+          state: string;
+          pincode: string;
+        };
       }
     >({
       query: (body) => ({ url: '/website/orders', method: 'POST', body }),
-      transformResponse: (raw: { data: { id: string; totalPaise: number; expectedDeliveryAt: string | null } }) => raw.data,
+      transformResponse: (raw: {
+        data: {
+          id: string;
+          totalPaise: number;
+          expectedDeliveryAt: string | null;
+          razorpay: {
+            keyId: string;
+            orderId: string;
+            amountPaise: number;
+            currency: 'INR';
+            simulated: boolean;
+          } | null;
+        };
+      }) => raw.data,
       invalidatesTags: [{ type: 'Order', id: 'LIST' }],
+    }),
+    verifyRazorpayPayment: build.mutation<
+      { id: string; paymentStatus: 'PAID'; alreadyPaid: boolean },
+      {
+        orderId: string;
+        razorpayOrderId: string;
+        razorpayPaymentId: string;
+        razorpaySignature: string;
+      }
+    >({
+      query: ({ orderId, ...body }) => ({
+        url: `/website/orders/${orderId}/payment/verify`,
+        method: 'POST',
+        body,
+      }),
+      transformResponse: (raw: { data: { id: string; paymentStatus: 'PAID'; alreadyPaid: boolean } }) => raw.data,
     }),
     // Public lead/enquiry submission. Reservations from the storefront PDP land here as Leads.
     createEnquiry: build.mutation<
@@ -192,6 +242,7 @@ export const {
   useGetPublicCollectionsQuery,
   useCreateEnquiryMutation,
   useCreatePublicOrderMutation,
+  useVerifyRazorpayPaymentMutation,
   useLazyLookupOrderQuery,
   useLookupOrderQuery,
   useListOrdersByPhoneQuery,

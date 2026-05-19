@@ -35,6 +35,7 @@ import { ecommerceRouter } from './modules/ecommerce/ecommerce.routes.js';
 import { analyticsRouter } from './modules/analytics/analytics.routes.js';
 import { websiteRouter } from './modules/website/website.routes.js';
 import { storefrontRouter } from './modules/storefront/storefront.routes.js';
+import { webhooksRouter } from './modules/webhooks/webhooks.routes.js';
 
 export function createApp(): express.Express {
   const app = express();
@@ -46,6 +47,13 @@ export function createApp(): express.Express {
   app.use(securityHeaders);
 
   app.use(compression());
+
+  // Webhook routes need the raw request body to verify HMAC signatures —
+  // mount the raw-body parser BEFORE express.json so the JSON middleware
+  // doesn't consume the stream. The handlers JSON.parse manually after
+  // signature verification passes.
+  app.use('/api/v1/webhooks', express.raw({ type: 'application/json', limit: '512kb' }), webhooksRouter);
+
   app.use(express.json({ limit: '1mb' }));
   app.use(cookieParser());
   const origins = env.CORS_ORIGIN.split(',').map((s) => s.trim()).filter(Boolean);

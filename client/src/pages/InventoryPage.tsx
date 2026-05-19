@@ -49,6 +49,7 @@ import { TabStrip, type TabStripItem } from '@/components/ui/TabStrip';
 import { SectionCard } from '@/components/ui/SectionCard';
 import { Toolbar, StatPill } from '@/components/ui/Toolbar';
 import { TableSkeleton } from '@/components/ui/Skeleton';
+import { cn } from '@/lib/cn';
 
 type Tab =
   | 'items'
@@ -590,35 +591,39 @@ function PurchaseOrdersTab(): JSX.Element {
   const { data: catsRes } = useGetCategoriesQuery();
   const [receivePO, { isLoading: receiving }] = useReceivePurchaseOrderMutation();
   const [createOpen, setCreateOpen] = useState(false);
+  // When multi-shop, we open a Sheet so the user can pick the destination
+  // visually. Single-shop tenants auto-receive into their only shop and
+  // never see this UI. (Previously this used `window.prompt` which is
+  // unstylable and a UX dead-end on tablets.)
+  const [receiveTargetPo, setReceiveTargetPo] = useState<string | null>(null);
   const rows = data?.data ?? [];
   const shops = shopsRes?.data ?? [];
   const cats = catsRes?.data ?? [];
 
-  async function handleReceive(poId: string): Promise<void> {
-    if (shops.length === 0 || cats.length === 0) {
-      toast.error('Add a shop and a category first');
-      return;
-    }
-    // Single-shop tenants auto-receive into that shop; otherwise prompt.
-    let shopId = shops[0]!.id;
-    if (shops.length > 1) {
-      const pick = window.prompt(
-        `Receive into which shop?\n${shops.map((s, i) => `${i + 1}. ${s.name}`).join('\n')}\n\nEnter number:`,
-        '1',
-      );
-      const idx = Number(pick) - 1;
-      if (!Number.isFinite(idx) || idx < 0 || idx >= shops.length) return;
-      shopId = shops[idx]!.id;
-    }
+  async function performReceive(poId: string, shopId: string): Promise<void> {
     try {
       await receivePO({ id: poId, shopId, categoryId: cats[0]!.id }).unwrap();
       toast.success('PO received — items added to stock');
+      setReceiveTargetPo(null);
     } catch (err) {
       const message =
         (err as { data?: { error?: { message?: string } } }).data?.error?.message ??
         'Could not receive PO';
       toast.error(message);
     }
+  }
+
+  async function handleReceive(poId: string): Promise<void> {
+    if (shops.length === 0 || cats.length === 0) {
+      toast.error('Add a shop and a category first');
+      return;
+    }
+    if (shops.length === 1) {
+      await performReceive(poId, shops[0]!.id);
+      return;
+    }
+    // Multi-shop → open picker.
+    setReceiveTargetPo(poId);
   }
 
   return (
@@ -685,7 +690,78 @@ function PurchaseOrdersTab(): JSX.Element {
         )}
       </div>
       <CreatePODialog open={createOpen} onClose={() => setCreateOpen(false)} />
+      <ReceivePoShopPicker
+        open={!!receiveTargetPo}
+        onClose={() => setReceiveTargetPo(null)}
+        shops={shops}
+        receiving={receiving}
+        onPick={(shopId) => {
+          if (receiveTargetPo) void performReceive(receiveTargetPo, shopId);
+        }}
+      />
     </>
+  );
+}
+
+// Sheet-based destination-shop picker for "Receive PO" in multi-shop tenants.
+// Replaces the old window.prompt — keyboard-friendly, themed, tablet-friendly,
+// shows shop status (open/closed) so the user picks the right destination.
+function ReceivePoShopPicker({
+  open,
+  onClose,
+  shops,
+  receiving,
+  onPick,
+}: {
+  open: boolean;
+  onClose: () => void;
+  shops: { id: string; name: string; isActive: boolean }[];
+  receiving: boolean;
+  onPick: (shopId: string) => void;
+}): JSX.Element {
+  return (
+    <Sheet open={open} onOpenChange={(o) => !o && onClose()}>
+      <SheetContent>
+        <SheetHeader>
+          <SheetTitle>Receive into which shop?</SheetTitle>
+        </SheetHeader>
+        <SheetBody>
+          <p className="text-sm text-ink-500 mb-4">
+            The PO lines will land in this shop&apos;s stock as new items.
+          </p>
+          <ul className="space-y-1.5">
+            {shops.map((s) => (
+              <li key={s.id}>
+                <button
+                  type="button"
+                  disabled={receiving}
+                  onClick={() => onPick(s.id)}
+                  className="w-full text-left flex items-center justify-between gap-3 rounded-md border border-ink-100 px-3 h-12 hover:border-brand-300 hover:bg-brand-50/40 transition-colors duration-fast disabled:opacity-50"
+                >
+                  <span className="flex items-center gap-2.5 min-w-0">
+                    <span
+                      className={cn(
+                        'h-2 w-2 rounded-full shrink-0',
+                        s.isActive ? 'bg-success-500' : 'bg-ink-300',
+                      )}
+                    />
+                    <span className="text-sm font-medium text-ink-900 truncate">{s.name}</span>
+                  </span>
+                  <Badge tone={s.isActive ? 'success' : 'neutral'}>
+                    {s.isActive ? 'open' : 'closed'}
+                  </Badge>
+                </button>
+              </li>
+            ))}
+          </ul>
+          <div className="mt-5 flex justify-end">
+            <Button variant="outline" onClick={onClose} disabled={receiving}>
+              Cancel
+            </Button>
+          </div>
+        </SheetBody>
+      </SheetContent>
+    </Sheet>
   );
 }
 

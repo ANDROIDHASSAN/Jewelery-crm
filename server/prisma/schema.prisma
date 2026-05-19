@@ -491,6 +491,7 @@ enum PaymentStatus {
   PAID
   PARTIAL
   REFUNDED
+  FAILED
 }
 
 model Customer {
@@ -1061,8 +1062,31 @@ model Order {
   taxPaise        Int         @default(0)
   totalPaise      Int
   paymentMethod   String
+  // Payment state machine, separate from fulfilment `status`. PENDING until
+  // we see a captured Razorpay payment (or, for COD, until cash is collected
+  // on delivery and an admin clicks "mark paid"). PAID transitions are
+  // idempotent — the webhook + the success-redirect both attempt it.
+  paymentStatus   PaymentStatus @default(PENDING)
   razorpayOrderId String?
+  razorpayPaymentId String?
+  razorpaySignature String?
+  // Captured timestamp from the webhook. Used by the Finance dashboard to
+  // separate "placed" from "money in".
+  paidAt          DateTime?
   shiprocketAwb   String?
+  // Stored AWB tracking URL so the customer track page can deep-link to the
+  // courier's own page rather than rebuilding it from the AWB number.
+  shiprocketTrackingUrl String?
+  // Snapshot of the shipping address captured at checkout. Storefront does
+  // not have a separate Address model in v1 — addresses live on the order so
+  // a later customer profile edit doesn't rewrite history.
+  shippingName    String?
+  shippingPhone   String?
+  shippingLine1   String?
+  shippingLine2   String?
+  shippingCity    String?
+  shippingState   String?
+  shippingPincode String?
   expectedDeliveryAt DateTime?
   // Free-form reason captured when the order moves to CANCELLED or RETURNED.
   // Surfaced verbatim on the customer track page so the customer sees the
@@ -1077,6 +1101,8 @@ model Order {
 
   @@index([tenantId])
   @@index([tenantId, status])
+  @@index([tenantId, paymentStatus])
+  @@index([razorpayOrderId])
   // Orders list endpoint (/ecommerce/orders) is the heaviest read on the
   // admin side — it polls every 10s and orders by createdAt DESC. A
   // descending (tenantId, createdAt) index lets Postgres serve that page

@@ -527,8 +527,12 @@ export function DashboardPage(): JSX.Element {
           title="Recent POS bills"
           icon={<Receipt className="h-4 w-4 text-brand-500" />}
           action={
-            <Link to="/pos" className="text-ink-500 hover:text-ink-900 inline-flex items-center gap-1 font-medium">
-              Open POS <ArrowRight className="h-3 w-3" />
+            // Admin users land on the counter monitor (read-only across every
+            // shop). The cashier billing surface lives on the pos.<host>
+            // subdomain and requires pos.access — not appropriate to deep-
+            // link from the owner / accountant dashboard.
+            <Link to="/admin/counter" className="text-ink-500 hover:text-ink-900 inline-flex items-center gap-1 font-medium">
+              Counter monitor <ArrowRight className="h-3 w-3" />
             </Link>
           }
           bareBody
@@ -773,7 +777,7 @@ export function DashboardPage(): JSX.Element {
       {/* ---- 10. Quick links footer ---- */}
       <section className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3">
         <QuickLink to="/admin/inventory" icon={Package} label="Open inventory" desc="Stock & SKUs" />
-        <QuickLink to="/pos" icon={Receipt} label="Open POS" desc="Billing counter" />
+        <QuickLink to="/admin/counter" icon={Receipt} label="Counter monitor" desc="Offline shops · read-only" />
         <QuickLink to="/admin/crm" icon={Users} label="Open CRM" desc="Leads & broadcasts" />
         <QuickLink to="/admin/website" icon={ShoppingBag} label="Edit storefront" desc="Website CMS" />
       </section>
