@@ -6,18 +6,26 @@ import { toast } from 'sonner';
 import { Money } from '@/components/ui/money';
 import { cn } from '@/lib/cn';
 import { useAppDispatch, useAppSelector } from '@/app/hooks';
-import { addToCart, toggleWishlist } from '@/features/storefront/shopSlice';
+import { signOut, upsertAddress } from '@/features/storefront/shopSlice';
+import { useShopActions } from '@/features/storefront/useShopActions';
+import { useAuthGate } from '@/features/storefront/AuthSheet';
 import {
   useCreatePublicOrderMutation,
   useGetPublicProductsQuery,
   useGetPublicCollectionsQuery,
+  useGetPublicGoldRateQuery,
+  useGetProductReviewsQuery,
+  useVerifyRazorpayPaymentMutation,
   type PublicProduct,
 } from '@/features/storefront/storefrontApi';
+import { openRazorpayCheckout } from '@/lib/razorpay';
+import { StarRating } from './OrderReviewSheet';
 
-// Per-day 22K rate. Lives here for the demo; the storefront content blob also
-// surfaces a *display string* (rates.g22) edited from the CMS. Numeric pricing
-// uses this single source so the breakdown stays internally consistent.
-const RATE_PER_GRAM_22K_PAISE = 6420_00;
+// Fallback 22K rate used only when the live /website/gold-rate feed hasn't
+// hydrated yet (e.g. cold-start, first paint). The header + PDP both prefer
+// the polled live feed via useGetPublicGoldRateQuery so the page stays in
+// sync with the worker's 5-minute MCX refresh.
+const FALLBACK_RATE_PER_GRAM_22K_PAISE = 6420_00;
 const GST_BPS = 300;
 
 const SIZES = ['2.4', '2.6', '2.8'];
@@ -29,10 +37,16 @@ export function ProductDetailPage(): JSX.Element {
   const [qty, setQty] = useState(1);
   const [openSection, setOpenSection] = useState<string | null>('details');
   const [reserveOpen, setReserveOpen] = useState(false);
-  const dispatch = useAppDispatch();
+  const shop = useShopActions();
   const wishlisted = useAppSelector((s) => s.shop.wishlist.some((w) => w.slug === slug));
+  const { requireAuth } = useAuthGate();
   const { data: products, isLoading } = useGetPublicProductsQuery();
   const { data: categories = [] } = useGetPublicCollectionsQuery();
+  // Live gold/silver rate — same poll cadence as the header ticker so the
+  // PDP, header announcement bar, and breakdown row stay in lockstep.
+  const { data: liveRate } = useGetPublicGoldRateQuery(undefined, {
+    pollingInterval: 5 * 60 * 1000,
+  });
   const contentLocations = useAppSelector((s) => s.storefrontContent.locations);
 
   const product: PublicProduct | undefined = products?.find((p) => p.slug === slug);
@@ -64,12 +78,58 @@ export function ProductDetailPage(): JSX.Element {
   const weightG = product.weightMg / 1000;
   const purityK = product.purityCaratX100 / 100;
   const purity = `${purityK}K · BIS Hallmarked`;
-  // gold value = weight (mg) × rate-per-mg × (actual purity / 24K reference)
-  const gold = Math.round((product.weightMg * RATE_PER_GRAM_22K_PAISE * product.purityCaratX100) / (1000 * 2400));
+
+  // Resolve a per-gram rate from the live feed. Strategy:
+  //   1. If the feed has an entry matching this piece's exact purity
+  //      (silver → purity=0, 14K → 1400, 18K → 1800, 22K → 2200, 24K → 2400),
+  //      use that rate directly — most accurate path.
+  //   2. Otherwise scale the 22K rate by the piece's purity ratio (legacy
+  //      fallback formula). Keeps the breakdown working for any future
+  //      non-standard purity grades the feed doesn't carry yet.
+  //   3. If the feed hasn't hydrated at all (cold start) use the hardcoded
+  //      fallback so the page never renders ₹0.
+  const findRate = (p: number): number | undefined =>
+    liveRate?.rates.find((r) => r.purity === p)?.ratePerGramPaise;
+  const live22 = findRate(2200);
+  const exactRate = findRate(product.purityCaratX100);
+  const ratePerGramPaise =
+    exactRate ?? live22 ?? FALLBACK_RATE_PER_GRAM_22K_PAISE;
+  // The per-gram rate displayed in the pill + breakdown — always the rate
+  // we actually multiplied by, so the label and the maths agree.
+  const displayRatePerGramPaise = exactRate ?? ratePerGramPaise;
+  const goldValuePaise = exactRate
+    ? Math.round((product.weightMg * exactRate) / 1000)
+    : Math.round(
+        (product.weightMg * ratePerGramPaise * product.purityCaratX100) /
+          (1000 * 2200),
+      );
+  const gold = goldValuePaise;
   const making = Math.round((gold * product.makingChargeBps) / 10000);
   const subtotal = gold + making + product.stoneChargePaise;
   const gst = Math.round((subtotal * GST_BPS) / 10000);
   const total = subtotal + gst;
+
+  // Human label for the pill — "22K", "18K", "Silver", or the exact carat
+  // for anything odd. Matches the header ticker's vocabulary.
+  const purityLabelShort =
+    product.purityCaratX100 < 1000 ? 'Silver' : `${purityK}K`;
+  // "Updated 4:12 PM IST" — null until the live feed lands, in which case
+  // we hide the "Updated …" portion rather than showing a fake time.
+  const rateUpdatedLabel = liveRate
+    ? new Date(liveRate.asOf).toLocaleTimeString('en-IN', {
+        hour: 'numeric',
+        minute: '2-digit',
+        hour12: true,
+        timeZone: 'Asia/Kolkata',
+      })
+    : null;
+  // Stale flag from the worker — if MCX hasn't responded in a while the
+  // server still returns the last-known rate but marks it stale. Surface
+  // that to the customer so they know what they're seeing.
+  const rateIsStale =
+    liveRate?.rates.find((r) => r.purity === product.purityCaratX100)?.stale ??
+    liveRate?.rates.find((r) => r.purity === 2200)?.stale ??
+    false;
 
   return (
     <div className="max-w-[1280px] mx-auto px-4 sm:px-6 py-8 sm:py-10 md:py-14 pb-28 lg:pb-14">
@@ -122,18 +182,43 @@ export function ProductDetailPage(): JSX.Element {
             <span className="text-xs text-ink-500">Incl. of all taxes</span>
           </div>
 
-          {/* Today's rate pill */}
-          <div className="inline-flex flex-wrap items-center gap-x-1.5 gap-y-1 px-3 py-1.5 rounded-full bg-brand-50 text-brand-800 text-xs font-mono tabular-nums">
-            <span className="h-1.5 w-1.5 rounded-full bg-brand-500" />
-            <span>Today&apos;s 22K rate · ₹{(RATE_PER_GRAM_22K_PAISE / 100).toLocaleString('en-IN')}/g</span>
-            <span className="text-brand-700/70 hidden sm:inline">· Updated 11:02 AM</span>
+          {/* Today's rate pill — driven by the live /website/gold-rate feed.
+              Falls back to "loading" copy while the first poll resolves so
+              the page never shows a fake timestamp. */}
+          <div
+            className={cn(
+              'inline-flex flex-wrap items-center gap-x-1.5 gap-y-1 px-3 py-1.5 rounded-full text-xs font-mono tabular-nums',
+              rateIsStale
+                ? 'bg-warning-50 text-warning-800'
+                : 'bg-brand-50 text-brand-800',
+            )}
+          >
+            <span
+              className={cn(
+                'h-1.5 w-1.5 rounded-full',
+                rateIsStale ? 'bg-warning-500' : 'bg-brand-500',
+              )}
+            />
+            <span>
+              Today&apos;s {purityLabelShort} rate · ₹
+              {(displayRatePerGramPaise / 100).toLocaleString('en-IN')}/g
+            </span>
+            {rateUpdatedLabel && (
+              <span className="text-brand-700/70 hidden sm:inline">
+                · {rateIsStale ? 'Last known' : 'Updated'} {rateUpdatedLabel}
+              </span>
+            )}
           </div>
 
           {/* Transparent price breakdown — Bluestone-grade. */}
           <div className="rounded-md border border-ink-100 bg-ink-25 p-4 sm:p-5 space-y-2.5 text-sm">
             <p className="text-eyebrow uppercase text-ink-500">Price breakdown</p>
             <Row
-              label={`Gold value · ${weightG.toFixed(2)} g × ₹${(RATE_PER_GRAM_22K_PAISE / 100).toLocaleString('en-IN')}/g × 22/24`}
+              label={
+                exactRate
+                  ? `Gold value · ${weightG.toFixed(2)} g × ₹${(displayRatePerGramPaise / 100).toLocaleString('en-IN')}/g`
+                  : `Gold value · ${weightG.toFixed(2)} g × ₹${(ratePerGramPaise / 100).toLocaleString('en-IN')}/g (22K) × ${purityK}/22`
+              }
               value={<Money paise={gold} />}
             />
             <Row label="Making charges" value={<Money paise={making} />} />
@@ -190,9 +275,14 @@ export function ProductDetailPage(): JSX.Element {
                 // line items (basePricePaise + stoneChargePaise) so the
                 // checkout total matches what gets stored. Cart adds GST.
                 const unitPaise = product.basePricePaise + product.stoneChargePaise;
-                dispatch(
-                  addToCart({
+                const doAdd = (): void => {
+                  // Goes through useShopActions so signed-in users persist
+                  // the cart row to /website/cart/items in addition to the
+                  // local Redux state. Anonymous shoppers still only get the
+                  // local update — the next sign-in's mergeCart picks them up.
+                  shop.addToCart({
                     slug,
+                    productId: product.id,
                     name: product.name,
                     weight: `${weightG.toFixed(2)} g · ${purity}`,
                     priceLabel: `₹${(unitPaise / 100).toLocaleString('en-IN')}`,
@@ -200,9 +290,18 @@ export function ProductDetailPage(): JSX.Element {
                     size,
                     img: product.images[0] ?? '',
                     qty,
-                  }),
-                );
-                toast.success(`${product.name} added to bag`);
+                  });
+                  toast.success(`${product.name} added to bag`);
+                };
+                // Amazon-style: anonymous → sign-in wall, then resume the
+                // add-to-cart automatically. Already signed in → fires
+                // synchronously and proceeds with no friction.
+                requireAuth({
+                  intent: 'add-to-cart',
+                  interest: `${product.name}${category ? ` (${category.name})` : ''}`,
+                  mergeCart: [{ productId: product.id, qty }],
+                  resume: doAdd,
+                });
               }}
               className="flex-1 min-w-[140px] h-12 px-5 sm:px-7 rounded-full bg-ink-900 text-ink-0 text-sm font-medium hover:bg-ink-700 transition-colors duration-fast"
             >
@@ -210,7 +309,13 @@ export function ProductDetailPage(): JSX.Element {
             </button>
             <button
               type="button"
-              onClick={() => setReserveOpen(true)}
+              onClick={() => {
+                requireAuth({
+                  intent: 'buy-now',
+                  interest: `${product.name}${category ? ` (${category.name})` : ''}`,
+                  resume: () => setReserveOpen(true),
+                });
+              }}
               className="flex-1 min-w-[140px] h-12 px-5 sm:px-7 rounded-full bg-brand-400 text-ink-900 text-sm font-medium hover:bg-brand-300 transition-colors duration-fast"
             >
               Buy now
@@ -218,20 +323,34 @@ export function ProductDetailPage(): JSX.Element {
             <button
               type="button"
               onClick={() => {
-                {
-                  const unitPaise = product.basePricePaise + product.stoneChargePaise;
-                  dispatch(
-                    toggleWishlist({
-                      slug,
-                      name: product.name,
-                      weight: `${weightG.toFixed(2)} g · ${purity}`,
-                      priceLabel: `₹${(unitPaise / 100).toLocaleString('en-IN')}`,
-                      pricePaise: unitPaise,
-                      img: product.images[0] ?? '',
-                    }),
-                  );
+                const unitPaise = product.basePricePaise + product.stoneChargePaise;
+                const doToggle = (): void => {
+                  // shop.toggleWishlist mirrors to /website/wishlist/items
+                  // when signed in. Server is also a toggle, so add/remove
+                  // direction is resolved server-side from current state.
+                  shop.toggleWishlist({
+                    slug,
+                    productId: product.id,
+                    name: product.name,
+                    weight: `${weightG.toFixed(2)} g · ${purity}`,
+                    priceLabel: `₹${(unitPaise / 100).toLocaleString('en-IN')}`,
+                    pricePaise: unitPaise,
+                    img: product.images[0] ?? '',
+                  });
+                  toast.success(wishlisted ? 'Removed from wishlist' : 'Saved to wishlist');
+                };
+                // Removing from wishlist doesn't need auth (only signed-in
+                // users have wishlist items in the first place). Adding does.
+                if (wishlisted) {
+                  doToggle();
+                  return;
                 }
-                toast.success(wishlisted ? 'Removed from wishlist' : 'Saved to wishlist');
+                requireAuth({
+                  intent: 'wishlist',
+                  interest: `${product.name}${category ? ` (${category.name})` : ''}`,
+                  mergeWishlist: [{ productId: product.id }],
+                  resume: doToggle,
+                });
               }}
               className={cn(
                 'h-12 px-5 rounded-full border text-sm transition-colors duration-fast inline-flex items-center justify-center gap-2',
@@ -329,6 +448,11 @@ export function ProductDetailPage(): JSX.Element {
         </section>
       </div>
 
+      {/* Reviews — pulled from OrderReview rows on orders that included
+          this product. Hidden entirely until the product has at least one
+          review so an empty section doesn't add noise to a fresh PDP. */}
+      <ProductReviews slug={slug} />
+
       {/* Related */}
       <section className="mt-16 sm:mt-20 md:mt-28">
         <div className="flex items-end justify-between mb-6 sm:mb-8 gap-4">
@@ -370,7 +494,13 @@ export function ProductDetailPage(): JSX.Element {
         </div>
         <button
           type="button"
-          onClick={() => setReserveOpen(true)}
+          onClick={() =>
+            requireAuth({
+              intent: 'buy-now',
+              interest: `${product.name}${category ? ` (${category.name})` : ''}`,
+              resume: () => setReserveOpen(true),
+            })
+          }
           className="flex-1 max-w-[220px] h-11 px-5 rounded-full bg-brand-400 text-ink-900 text-sm font-medium"
         >
           Buy now
@@ -391,6 +521,133 @@ export function ProductDetailPage(): JSX.Element {
   );
 }
 
+// Public reviews for a product. Renders nothing when the product has no
+// reviews yet — a quiet PDP beats a "Be the first to review!" plea. Fetches
+// summary + recent reviews in a single round trip via /products/:slug/reviews.
+function ProductReviews({ slug }: { slug: string }): JSX.Element | null {
+  const { data, isLoading } = useGetProductReviewsQuery({ slug, limit: 12 });
+
+  // Keep the page short while the query resolves rather than reserving
+  // vertical space with a skeleton — reviews are below-the-fold and unlikely
+  // to be scrolled to before the data lands.
+  if (isLoading || !data || data.summary.count === 0) return null;
+
+  const { summary, reviews } = data;
+  const maxBar = Math.max(1, ...Object.values(summary.distribution));
+
+  return (
+    <section className="mt-16 sm:mt-20 md:mt-24 border-t border-ink-100 pt-12 sm:pt-16">
+      <header className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-3 mb-8 sm:mb-10">
+        <div>
+          <p className="text-eyebrow uppercase text-ink-500">Reviews</p>
+          <h2 className="font-display text-2xl sm:text-[28px] md:text-[36px] leading-tight text-ink-900 mt-1.5">
+            What our customers say
+          </h2>
+        </div>
+        <p className="text-xs text-ink-500 max-w-xs sm:text-right">
+          Reviews come from customers who&apos;ve received this piece — only delivered orders can be reviewed.
+        </p>
+      </header>
+
+      <div className="grid grid-cols-1 md:grid-cols-[280px_1fr] gap-8 md:gap-12">
+        {/* Summary card — avg + stars + per-bucket distribution. */}
+        <aside className="rounded-lg border border-brand-200/60 bg-gradient-to-br from-brand-50/60 via-ink-0 to-ink-0 p-5 sm:p-6 h-fit">
+          <div className="flex items-baseline gap-2">
+            <span className="font-display text-4xl sm:text-5xl text-ink-900 tabular-nums leading-none">
+              {summary.avg.toFixed(1)}
+            </span>
+            <span className="text-sm text-ink-500">/ 5</span>
+          </div>
+          <div className="mt-2.5">
+            <StarRating rating={Math.round(summary.avg)} size="md" />
+          </div>
+          <p className="text-xs text-ink-600 mt-2.5">
+            From {summary.count} review{summary.count === 1 ? '' : 's'}
+          </p>
+          <hr className="my-5 border-ink-100" />
+          <ul className="space-y-1.5">
+            {([5, 4, 3, 2, 1] as const).map((star) => {
+              const count = summary.distribution[String(star) as '1' | '2' | '3' | '4' | '5'] ?? 0;
+              const pct = (count / maxBar) * 100;
+              return (
+                <li key={star} className="flex items-center gap-2.5 text-xs">
+                  <span className="text-ink-500 font-mono w-3 tabular-nums">{star}</span>
+                  <span className="text-brand-500">★</span>
+                  <span className="flex-1 h-1.5 rounded-full bg-ink-50 overflow-hidden">
+                    <span
+                      className="block h-full rounded-full bg-brand-300 transition-all duration-slow"
+                      style={{ width: `${Math.max(pct, count > 0 ? 4 : 0)}%` }}
+                    />
+                  </span>
+                  <span className="text-ink-500 font-mono tabular-nums w-8 text-right">{count}</span>
+                </li>
+              );
+            })}
+          </ul>
+        </aside>
+
+        {/* Review list. */}
+        <ol className="space-y-6 sm:space-y-8">
+          {reviews.map((r) => {
+            const when = new Date(r.createdAt).toLocaleDateString('en-IN', {
+              day: 'numeric',
+              month: 'short',
+              year: 'numeric',
+            });
+            return (
+              <li
+                key={r.id}
+                className="border-b border-ink-100 last:border-b-0 pb-6 sm:pb-8 last:pb-0"
+              >
+                <div className="flex items-center justify-between gap-3 mb-2.5">
+                  <div className="flex items-center gap-2.5 min-w-0">
+                    <StarRating rating={r.rating} />
+                    {r.title && (
+                      <span className="text-sm font-medium text-ink-900 truncate">
+                        {r.title}
+                      </span>
+                    )}
+                  </div>
+                  <span className="text-[11px] text-ink-500 font-mono tabular-nums whitespace-nowrap shrink-0">
+                    {when}
+                  </span>
+                </div>
+                <p className="text-sm text-ink-700 leading-relaxed whitespace-pre-line">
+                  {r.body}
+                </p>
+                {r.photos.length > 0 && (
+                  <ul className="mt-3 flex flex-wrap gap-2">
+                    {r.photos.slice(0, 4).map((src, i) => (
+                      <li key={i}>
+                        <img
+                          src={src}
+                          alt=""
+                          className="h-16 w-16 sm:h-20 sm:w-20 rounded-md object-cover ring-1 ring-ink-100"
+                          loading="lazy"
+                        />
+                      </li>
+                    ))}
+                  </ul>
+                )}
+                <p className="mt-3 text-[11px] text-ink-500 flex items-center gap-1.5">
+                  <span className="font-medium text-ink-700">{r.author.name}</span>
+                  {r.author.phoneMasked && (
+                    <span className="font-mono text-ink-400">· {r.author.phoneMasked}</span>
+                  )}
+                  <span className="text-success-700 inline-flex items-center gap-1 ml-1">
+                    <span className="h-1 w-1 rounded-full bg-success-500" />
+                    Verified buyer
+                  </span>
+                </p>
+              </li>
+            );
+          })}
+        </ol>
+      </div>
+    </section>
+  );
+}
+
 interface ReserveModalProps {
   open: boolean;
   onClose: () => void;
@@ -403,31 +660,149 @@ interface ReserveModalProps {
 }
 
 function ReserveModal({ open, onClose, productId, productName, purity, size, qty, totalPaise }: ReserveModalProps): JSX.Element {
-  const [name, setName] = useState('');
+  // Prefill from the signed-in account + default saved address. By the time
+  // ReserveModal opens the visitor has already passed the AuthGate, so the
+  // contact fields are known; the address book may or may not have an entry.
+  const account = useAppSelector((s) => s.shop.account);
+  const savedAddresses = useAppSelector((s) => s.shop.addresses);
+  const defaultAddr = savedAddresses.find((a) => a.isDefault) ?? savedAddresses[0];
+  const accountPhoneLocal = account.phone.startsWith('+91') ? account.phone.slice(3) : account.phone;
+
+  const [name, setName] = useState(account.name);
   // Phone is stored as the local 10-digit portion only; the +91 prefix is a
   // fixed UI adornment so users can't accidentally edit or duplicate it.
-  const [phone, setPhone] = useState('');
+  const [phone, setPhone] = useState(accountPhoneLocal);
+  const [email, setEmail] = useState(account.email);
+  const [line1, setLine1] = useState(defaultAddr?.line1 ?? '');
+  const [line2, setLine2] = useState(defaultAddr?.line2 ?? '');
+  const [city, setCity] = useState(defaultAddr?.city ?? '');
+  const [stateName, setStateName] = useState(defaultAddr?.state ?? 'Haryana');
+  const [pincode, setPincode] = useState(defaultAddr?.pincode ?? '');
   const [notes, setNotes] = useState('');
+  const [saveAddress, setSaveAddress] = useState(true);
+  // Payment method — three options. 'cod' is the default low-friction path;
+  // 'razorpay' opens the hosted Razorpay checkout for UPI/card/netbanking;
+  // 'reserve-at-store' is the in-store walk-in option (no money moves now).
+  const [paymentMethod, setPaymentMethod] = useState<'cod' | 'razorpay' | 'reserve-at-store'>('cod');
+  const dispatch = useAppDispatch();
   const [createOrder, { isLoading: submitting }] = useCreatePublicOrderMutation();
+  const [verifyPayment] = useVerifyRazorpayPaymentMutation();
 
   const handleSubmit = async (e: React.FormEvent): Promise<void> => {
     e.preventDefault();
-    if (!name.trim()) {
+    // When the visitor is signed in we ALWAYS attach the order to their
+    // signed-in Customer row — local form state is ignored for name/phone/
+    // email. This guarantees /store/account's order list (joined on the same
+    // customer) sees the new order. The editable inputs only matter for the
+    // (currently unreachable) guest-checkout path.
+    const customerName = account.signedIn ? account.name : name.trim();
+    const customerPhoneE164 = account.signedIn
+      ? account.phone
+      : `+91${phone}`;
+    const customerEmail = account.signedIn ? account.email : email.trim();
+
+    if (!customerName) {
       toast.error('Please enter your name');
       return;
     }
-    if (!/^[6-9]\d{9}$/.test(phone)) {
+    if (!/^\+91[6-9]\d{9}$/.test(customerPhoneE164)) {
       toast.error('Please enter a valid 10-digit Indian phone number');
       return;
     }
-    const e164 = `+91${phone}`;
+    if (line1.trim().length < 3) {
+      toast.error('Please enter your full street address');
+      return;
+    }
+    if (!city.trim() || !stateName.trim()) {
+      toast.error('Please enter city and state');
+      return;
+    }
+    if (!/^[1-9]\d{5}$/.test(pincode)) {
+      toast.error('Please enter a valid 6-digit PIN code');
+      return;
+    }
+    const shippingAddress = {
+      name: customerName,
+      phone: customerPhoneE164,
+      line1: line1.trim(),
+      line2: line2.trim() || undefined,
+      city: city.trim(),
+      state: stateName.trim(),
+      pincode,
+    };
 
     try {
       const res = await createOrder({
-        customer: { name: name.trim(), phone: e164 },
+        customer: {
+          name: customerName,
+          phone: customerPhoneE164,
+          email: customerEmail || undefined,
+        },
         items: [{ productId, qty }],
-        paymentMethod: 'cod',
+        paymentMethod,
+        shippingAddress,
+        notes: notes.trim() || undefined,
+        saveAddress,
       }).unwrap();
+
+      // Optimistic local address-book update so the next Buy-now opens
+      // pre-filled without waiting for a re-identify round trip.
+      if (saveAddress) {
+        dispatch(
+          upsertAddress({
+            id: `local-${Date.now()}`,
+            label: null,
+            name: shippingAddress.name,
+            phone: shippingAddress.phone,
+            line1: shippingAddress.line1,
+            line2: shippingAddress.line2 ?? null,
+            city: shippingAddress.city,
+            state: shippingAddress.state,
+            pincode: shippingAddress.pincode,
+            isDefault: true,
+          }),
+        );
+      }
+
+      // Online payment branch — server returns a Razorpay order payload; we
+      // open the hosted checkout, then call /payment/verify so the Order
+      // row flips to paymentStatus=PAID. If the user dismisses the modal
+      // the Order stays PENDING (admin can retry collection or cancel).
+      if (paymentMethod === 'razorpay' && res.razorpay) {
+        try {
+          const checkout = await openRazorpayCheckout({
+            keyId: res.razorpay.keyId,
+            orderId: res.razorpay.orderId,
+            amountPaise: res.razorpay.amountPaise,
+            brandName: 'Zelora',
+            description: `${productName} · ZL-${res.id.slice(-6).toUpperCase()}`,
+            customer: {
+              name: customerName,
+              phone: customerPhoneE164,
+              email: customerEmail || undefined,
+            },
+            simulated: res.razorpay.simulated,
+          });
+          await verifyPayment({
+            orderId: res.id,
+            razorpayOrderId: checkout.razorpayOrderId,
+            razorpayPaymentId: checkout.razorpayPaymentId,
+            razorpaySignature: checkout.razorpaySignature,
+          }).unwrap();
+        } catch (err) {
+          const dismissed =
+            err instanceof Error && err.message === 'CHECKOUT_DISMISSED';
+          toast.error(
+            dismissed
+              ? 'Payment cancelled. Your order is on hold — finish payment from My Orders.'
+              : 'Payment failed. Try again or pick Cash on delivery.',
+          );
+          // Order row exists in PENDING state — we don't close the modal so
+          // the user can switch payment method without re-typing the form.
+          return;
+        }
+      }
+
       const id = res.id.slice(-6).toUpperCase();
       const eta = res.expectedDeliveryAt
         ? new Date(res.expectedDeliveryAt).toLocaleDateString('en-IN', {
@@ -436,15 +811,19 @@ function ReserveModal({ open, onClose, productId, productName, purity, size, qty
             month: 'short',
           })
         : null;
+      const successDesc =
+        paymentMethod === 'razorpay'
+          ? `${productName} · payment received${eta ? ` · arrives by ${eta}` : ''}.`
+          : paymentMethod === 'reserve-at-store'
+            ? `${productName} reserved. Drop in to the showroom to confirm and pay.`
+            : eta
+              ? `${productName} arrives by ${eta}. Pay cash (or UPI) when the courier hands it over.`
+              : `We'll WhatsApp tracking once the courier picks up.`;
       toast.success(`Order placed! Confirmation ZL-${id}`, {
-        description: eta
-          ? `${productName} arrives by ${eta}. We'll WhatsApp tracking once the courier picks up.`
-          : `We'll WhatsApp tracking once the courier picks up.`,
+        description: successDesc,
         duration: 9000,
       });
       onClose();
-      setName('');
-      setPhone('');
       setNotes('');
     } catch (err) {
       const message =
@@ -458,7 +837,7 @@ function ReserveModal({ open, onClose, productId, productName, purity, size, qty
     <Dialog.Root open={open} onOpenChange={(next) => { if (!next) onClose(); }}>
       <Dialog.Portal>
         <Dialog.Overlay className="fixed inset-0 z-50 bg-ink-900/40 data-[state=open]:animate-in data-[state=open]:fade-in-0" />
-        <Dialog.Content className="fixed left-1/2 top-1/2 z-50 -translate-x-1/2 -translate-y-1/2 w-[calc(100vw-2rem)] sm:w-[92vw] max-w-md max-h-[90vh] overflow-y-auto bg-ink-0 rounded-lg shadow-xl border border-ink-100 data-[state=open]:animate-in data-[state=open]:zoom-in-95">
+        <Dialog.Content className="fixed left-1/2 top-1/2 z-50 -translate-x-1/2 -translate-y-1/2 w-[calc(100vw-2rem)] sm:w-[92vw] max-w-lg max-h-[92vh] overflow-y-auto bg-ink-0 rounded-lg shadow-xl border border-ink-100 data-[state=open]:animate-in data-[state=open]:zoom-in-95">
           <form onSubmit={handleSubmit} className="p-5 sm:p-6 space-y-5">
             <div className="flex items-start justify-between gap-4">
               <div>
@@ -472,51 +851,217 @@ function ReserveModal({ open, onClose, productId, productName, purity, size, qty
               </Dialog.Close>
             </div>
 
-            <div className="space-y-3">
+            {account.signedIn ? (
+              // Signed-in contact summary — read-only by design. Editing here
+              // would let the user submit a phone different from account.phone,
+              // which would attach the order to a different Customer row and
+              // make it invisible on /store/account. "Not you?" signs out so a
+              // shared device can hand over to a different shopper cleanly.
+              <fieldset className="space-y-2">
+                <legend className="text-eyebrow uppercase text-ink-500 mb-1">Contact</legend>
+                <div className="rounded-lg border border-ink-100 bg-ink-25 px-4 py-3 text-sm">
+                  <p className="text-ink-900 font-medium truncate">{account.name}</p>
+                  <p className="text-ink-600 mt-0.5 font-mono tabular-nums text-xs">
+                    {account.phone}
+                    {account.email ? <span className="font-sans"> · {account.email}</span> : null}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    dispatch(signOut());
+                    onClose();
+                    toast.success('Signed out. Sign in again to continue.');
+                  }}
+                  className="text-[11px] text-ink-500 underline decoration-ink-200 underline-offset-2 hover:text-ink-700"
+                >
+                  Not you? Sign out
+                </button>
+              </fieldset>
+            ) : (
+              <fieldset className="space-y-3">
+                <legend className="text-eyebrow uppercase text-ink-500 mb-1">Contact</legend>
+                <label className="block">
+                  <span className="text-[11px] uppercase tracking-wider text-ink-500">Full name</span>
+                  <input
+                    type="text"
+                    value={name}
+                    onChange={(e) => setName(e.target.value)}
+                    required
+                    className="mt-1 w-full h-11 px-3 rounded-lg border border-ink-200 focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500 text-sm"
+                    placeholder="Full name"
+                  />
+                </label>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <label className="block">
+                    <span className="text-[11px] uppercase tracking-wider text-ink-500">Phone</span>
+                    <div className="mt-1 flex items-stretch w-full h-11 rounded-lg border border-ink-200 focus-within:border-brand-500 focus-within:ring-1 focus-within:ring-brand-500 overflow-hidden">
+                      <span className="flex items-center px-3 bg-ink-50 text-ink-600 text-sm font-mono border-r border-ink-200 select-none">
+                        +91
+                      </span>
+                      <input
+                        type="tel"
+                        value={phone}
+                        onChange={(e) => setPhone(e.target.value.replace(/\D/g, '').slice(0, 10))}
+                        required
+                        inputMode="numeric"
+                        maxLength={10}
+                        pattern="[6-9][0-9]{9}"
+                        className="flex-1 px-3 text-sm font-mono focus:outline-none"
+                        placeholder="98XXX XXXXX"
+                      />
+                    </div>
+                  </label>
+                  <label className="block">
+                    <span className="text-[11px] uppercase tracking-wider text-ink-500">Email (for invoice)</span>
+                    <input
+                      type="email"
+                      value={email}
+                      onChange={(e) => setEmail(e.target.value)}
+                      className="mt-1 w-full h-11 px-3 rounded-lg border border-ink-200 focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500 text-sm"
+                      placeholder="you@example.com"
+                    />
+                  </label>
+                </div>
+              </fieldset>
+            )}
+
+            <fieldset className="space-y-3">
+              <legend className="text-eyebrow uppercase text-ink-500 mb-1">Shipping address</legend>
               <label className="block">
-                <span className="text-[11px] uppercase tracking-wider text-ink-500">Your name</span>
+                <span className="text-[11px] uppercase tracking-wider text-ink-500">Address line 1</span>
                 <input
                   type="text"
-                  value={name}
-                  onChange={(e) => setName(e.target.value)}
+                  value={line1}
+                  onChange={(e) => setLine1(e.target.value)}
                   required
-                  autoFocus
                   className="mt-1 w-full h-11 px-3 rounded-lg border border-ink-200 focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500 text-sm"
-                  placeholder="Full name"
+                  placeholder="House / flat no., street"
                 />
               </label>
-
               <label className="block">
-                <span className="text-[11px] uppercase tracking-wider text-ink-500">Phone</span>
-                <div className="mt-1 flex items-stretch w-full h-11 rounded-lg border border-ink-200 focus-within:border-brand-500 focus-within:ring-1 focus-within:ring-brand-500 overflow-hidden">
-                  <span className="flex items-center px-3 bg-ink-50 text-ink-600 text-sm font-mono border-r border-ink-200 select-none">
-                    +91
-                  </span>
+                <span className="text-[11px] uppercase tracking-wider text-ink-500">Address line 2 (optional)</span>
+                <input
+                  type="text"
+                  value={line2}
+                  onChange={(e) => setLine2(e.target.value)}
+                  className="mt-1 w-full h-11 px-3 rounded-lg border border-ink-200 focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500 text-sm"
+                  placeholder="Landmark, area, society"
+                />
+              </label>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <label className="block">
+                  <span className="text-[11px] uppercase tracking-wider text-ink-500">City</span>
                   <input
-                    type="tel"
-                    value={phone}
-                    onChange={(e) => setPhone(e.target.value.replace(/\D/g, '').slice(0, 10))}
+                    type="text"
+                    value={city}
+                    onChange={(e) => setCity(e.target.value)}
+                    required
+                    className="mt-1 w-full h-11 px-3 rounded-lg border border-ink-200 focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500 text-sm"
+                    placeholder="Gurugram"
+                  />
+                </label>
+                <label className="block">
+                  <span className="text-[11px] uppercase tracking-wider text-ink-500">State</span>
+                  <input
+                    type="text"
+                    value={stateName}
+                    onChange={(e) => setStateName(e.target.value)}
+                    required
+                    className="mt-1 w-full h-11 px-3 rounded-lg border border-ink-200 focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500 text-sm"
+                    placeholder="Haryana"
+                  />
+                </label>
+                <label className="block">
+                  <span className="text-[11px] uppercase tracking-wider text-ink-500">PIN code</span>
+                  <input
+                    type="text"
+                    value={pincode}
+                    onChange={(e) => setPincode(e.target.value.replace(/\D/g, '').slice(0, 6))}
                     required
                     inputMode="numeric"
-                    maxLength={10}
-                    pattern="[6-9][0-9]{9}"
-                    className="flex-1 px-3 text-sm font-mono focus:outline-none"
-                    placeholder="98XXX XXXXX"
+                    maxLength={6}
+                    pattern="[1-9][0-9]{5}"
+                    className="mt-1 w-full h-11 px-3 rounded-lg border border-ink-200 focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500 text-sm font-mono tabular-nums"
+                    placeholder="122001"
                   />
-                </div>
-              </label>
-
-              <label className="block">
-                <span className="text-[11px] uppercase tracking-wider text-ink-500">Notes (optional)</span>
-                <textarea
-                  value={notes}
-                  onChange={(e) => setNotes(e.target.value)}
-                  rows={2}
-                  className="mt-1 w-full px-3 py-2 rounded-lg border border-ink-200 focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500 text-sm resize-none"
-                  placeholder="Size confirmation, engraving requests, etc."
+                </label>
+              </div>
+              <label className="flex items-center gap-2 text-xs text-ink-600 pt-1">
+                <input
+                  type="checkbox"
+                  checked={saveAddress}
+                  onChange={(e) => setSaveAddress(e.target.checked)}
+                  className="h-3.5 w-3.5 rounded border-ink-300 text-brand-500 focus:ring-brand-400"
                 />
+                Save this address for next time
               </label>
-            </div>
+            </fieldset>
+
+            <fieldset className="space-y-2">
+              <legend className="text-eyebrow uppercase text-ink-500 mb-1">Payment method</legend>
+              {/* Three radio cards. COD default — lowest friction for the
+                  Indian jewellery shopper who's still wary of paying online
+                  for high-value pieces. Online (Razorpay) opens the hosted
+                  checkout for UPI/card/netbanking. Reserve-at-store puts a
+                  hold on the piece and the customer pays in person. */}
+              {([
+                {
+                  value: 'cod' as const,
+                  title: 'Cash on delivery',
+                  sub: 'Pay cash or UPI when the courier hands you the piece.',
+                },
+                {
+                  value: 'razorpay' as const,
+                  title: 'Pay now — UPI / Card / Netbanking',
+                  sub: 'Secure Razorpay checkout. Order ships the same day on prepaid.',
+                },
+                {
+                  value: 'reserve-at-store' as const,
+                  title: 'Reserve & pay at store',
+                  sub: "We'll hold the piece for 48h. Pay at the showroom counter.",
+                },
+              ]).map((opt) => {
+                const selected = paymentMethod === opt.value;
+                return (
+                  <label
+                    key={opt.value}
+                    className={`flex items-start gap-3 rounded-lg border px-3 py-2.5 cursor-pointer transition-colors ${
+                      selected
+                        ? 'border-brand-500 bg-brand-50/40'
+                        : 'border-ink-200 hover:border-ink-300'
+                    }`}
+                  >
+                    <input
+                      type="radio"
+                      name="paymentMethod"
+                      value={opt.value}
+                      checked={selected}
+                      onChange={() => setPaymentMethod(opt.value)}
+                      className="mt-0.5 h-3.5 w-3.5 border-ink-300 text-brand-500 focus:ring-brand-400"
+                    />
+                    <span className="min-w-0">
+                      <span className="block text-sm text-ink-900 font-medium">{opt.title}</span>
+                      <span className="block text-[11px] text-ink-500 leading-relaxed mt-0.5">
+                        {opt.sub}
+                      </span>
+                    </span>
+                  </label>
+                );
+              })}
+            </fieldset>
+
+            <label className="block">
+              <span className="text-[11px] uppercase tracking-wider text-ink-500">Notes (optional)</span>
+              <textarea
+                value={notes}
+                onChange={(e) => setNotes(e.target.value)}
+                rows={2}
+                className="mt-1 w-full px-3 py-2 rounded-lg border border-ink-200 focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500 text-sm resize-none"
+                placeholder="Size confirmation, engraving requests, gift wrap, etc."
+              />
+            </label>
 
             <div className="flex gap-2 pt-1">
               <button
@@ -532,12 +1077,24 @@ function ReserveModal({ open, onClose, productId, productName, purity, size, qty
                 disabled={submitting}
                 className="flex-[2] h-11 rounded-full bg-brand-400 text-ink-900 text-sm font-medium hover:bg-brand-300 disabled:opacity-60 transition-colors duration-fast"
               >
-                {submitting ? 'Placing order…' : 'Place order'}
+                {submitting
+                  ? paymentMethod === 'razorpay'
+                    ? 'Opening payment…'
+                    : 'Placing order…'
+                  : paymentMethod === 'razorpay'
+                    ? 'Pay & place order'
+                    : paymentMethod === 'reserve-at-store'
+                      ? 'Reserve at store'
+                      : 'Place order'}
               </button>
             </div>
 
             <p className="text-[11px] text-ink-500 text-center leading-relaxed">
-              Pay cash on delivery (or UPI when the courier arrives). Estimated arrival in 5 business days. We&apos;ll WhatsApp tracking as soon as the courier picks up.
+              {paymentMethod === 'razorpay'
+                ? `Secure payment via Razorpay. We'll WhatsApp tracking to ${account.signedIn ? account.phone : phone ? `+91 ${phone}` : 'your phone'} once the courier picks up.`
+                : paymentMethod === 'reserve-at-store'
+                  ? `We'll hold this piece for 48 hours. Visit the showroom to confirm and pay.`
+                  : `Pay cash on delivery (or UPI when the courier arrives). Estimated arrival in 5 business days. We'll WhatsApp tracking to ${account.signedIn ? account.phone : phone ? `+91 ${phone}` : 'your phone'} once the courier picks up.`}
             </p>
           </form>
         </Dialog.Content>

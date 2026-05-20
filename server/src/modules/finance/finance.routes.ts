@@ -699,7 +699,16 @@ financeRouter.get(
   requirePermission('finance.ledger_export'),
   async (req, res, next) => {
     try {
-      const q = z.object({ from: z.coerce.date(), to: z.coerce.date() }).parse(req.query);
+      const q = z.object({
+        from: z.coerce.date(),
+        to: z.coerce.date(),
+        // Tally XML is the native interchange format — CAs paste it into
+        // Tally's Import Data → Vouchers screen and every row lands as a
+        // proper voucher with debits/credits already balanced. CSV (the
+        // legacy default) requires manual ledger mapping in Tally and is
+        // kept only for jewellers whose CA insists on it.
+        format: z.enum(['csv', 'xml']).optional().default('csv'),
+      }).parse(req.query);
       const [bills, expenses, vendorPayments] = await Promise.all([
         prisma.bill.findMany({
           where: { createdAt: { gte: q.from, lte: q.to } },
@@ -771,6 +780,17 @@ financeRouter.get(
         rows.push([date, 'Payment', voucher, 'Bank / Cash', '', r(v.amountPaise), v.notes ?? '']);
       }
 
+      if (q.format === 'xml') {
+        const xml = buildTallyXml({ bills, expenses, vendorPayments });
+        res.setHeader('Content-Type', 'application/xml; charset=utf-8');
+        res.setHeader(
+          'Content-Disposition',
+          `attachment; filename="tally-${q.from.toISOString().slice(0, 10)}-to-${q.to.toISOString().slice(0, 10)}.xml"`,
+        );
+        res.send(xml);
+        return;
+      }
+
       const csv = rows
         .map((r2) => r2.map((cell) => `"${String(cell).replace(/"/g, '""')}"`).join(','))
         .join('\r\n');
@@ -785,6 +805,143 @@ financeRouter.get(
     }
   },
 );
+
+// Tally XML voucher import format. Mirrors the structure Tally accepts under
+// Gateway of Tally → Import Data → Vouchers. One <VOUCHER> per Sale/Payment.
+//
+// Each voucher has two <ALLLEDGERENTRIES.LIST> blocks: one credit (the
+// party / sales account) and one debit (cash/bank or expense). Tally is
+// double-entry, so the sum of all entries within a voucher must net to zero;
+// we balance with explicit GST sub-entries on sales vouchers.
+//
+// Reference: Tally.ERP 9 / Tally Prime XML schema (TDL).
+function buildTallyXml(args: {
+  bills: Array<{ billNumber: string; createdAt: Date; totalPaise: number; cgstPaise: number; sgstPaise: number; igstPaise: number }>;
+  expenses: Array<{ id: string; category: string; amountPaise: number; paidAt: Date; notes: string | null; classification: string }>;
+  vendorPayments: Array<{ id: string; amountPaise: number; paidAt: Date; notes: string | null; vendor: { name: string } }>;
+}): string {
+  const rupees = (paise: number): string => (paise / 100).toFixed(2);
+  // Tally expects YYYYMMDD with no separators.
+  const ymd = (d: Date): string => d.toISOString().slice(0, 10).replace(/-/g, '');
+  // Tally XML is finicky about <, >, & — escape conservatively.
+  const xe = (s: string): string =>
+    s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&apos;');
+
+  const vouchers: string[] = [];
+
+  // Sales — credit Sales A/c + GST ledgers, debit Cash/Bank.
+  for (const b of args.bills) {
+    const date = ymd(b.createdAt);
+    const taxablePaise = b.totalPaise - b.cgstPaise - b.sgstPaise - b.igstPaise;
+    const entries: string[] = [];
+    entries.push(`<ALLLEDGERENTRIES.LIST>
+        <LEDGERNAME>${xe('Sales A/c')}</LEDGERNAME>
+        <ISDEEMEDPOSITIVE>No</ISDEEMEDPOSITIVE>
+        <AMOUNT>-${rupees(taxablePaise)}</AMOUNT>
+      </ALLLEDGERENTRIES.LIST>`);
+    if (b.cgstPaise > 0) {
+      entries.push(`<ALLLEDGERENTRIES.LIST>
+        <LEDGERNAME>${xe('CGST Payable')}</LEDGERNAME>
+        <ISDEEMEDPOSITIVE>No</ISDEEMEDPOSITIVE>
+        <AMOUNT>-${rupees(b.cgstPaise)}</AMOUNT>
+      </ALLLEDGERENTRIES.LIST>`);
+    }
+    if (b.sgstPaise > 0) {
+      entries.push(`<ALLLEDGERENTRIES.LIST>
+        <LEDGERNAME>${xe('SGST Payable')}</LEDGERNAME>
+        <ISDEEMEDPOSITIVE>No</ISDEEMEDPOSITIVE>
+        <AMOUNT>-${rupees(b.sgstPaise)}</AMOUNT>
+      </ALLLEDGERENTRIES.LIST>`);
+    }
+    if (b.igstPaise > 0) {
+      entries.push(`<ALLLEDGERENTRIES.LIST>
+        <LEDGERNAME>${xe('IGST Payable')}</LEDGERNAME>
+        <ISDEEMEDPOSITIVE>No</ISDEEMEDPOSITIVE>
+        <AMOUNT>-${rupees(b.igstPaise)}</AMOUNT>
+      </ALLLEDGERENTRIES.LIST>`);
+    }
+    entries.push(`<ALLLEDGERENTRIES.LIST>
+        <LEDGERNAME>${xe('Cash')}</LEDGERNAME>
+        <ISDEEMEDPOSITIVE>Yes</ISDEEMEDPOSITIVE>
+        <AMOUNT>${rupees(b.totalPaise)}</AMOUNT>
+      </ALLLEDGERENTRIES.LIST>`);
+
+    vouchers.push(`<VOUCHER VCHTYPE="Sales" ACTION="Create">
+      <DATE>${date}</DATE>
+      <VOUCHERTYPENAME>Sales</VOUCHERTYPENAME>
+      <VOUCHERNUMBER>${xe(b.billNumber)}</VOUCHERNUMBER>
+      <REFERENCE>${xe(b.billNumber)}</REFERENCE>
+      <NARRATION>${xe(`Jewellery sale ${b.billNumber}`)}</NARRATION>
+      <PARTYLEDGERNAME>${xe('Cash')}</PARTYLEDGERNAME>
+      <ISINVOICE>Yes</ISINVOICE>
+      ${entries.join('\n      ')}
+    </VOUCHER>`);
+  }
+
+  // Expenses — debit the category ledger, credit Bank/Cash.
+  for (const e of args.expenses) {
+    const date = ymd(e.paidAt);
+    const ledger = e.classification === 'CAPITAL' ? `${e.category} (Fixed Asset)` : e.category;
+    vouchers.push(`<VOUCHER VCHTYPE="Payment" ACTION="Create">
+      <DATE>${date}</DATE>
+      <VOUCHERTYPENAME>Payment</VOUCHERTYPENAME>
+      <VOUCHERNUMBER>EXP-${xe(e.id.slice(-6))}</VOUCHERNUMBER>
+      <NARRATION>${xe(e.notes ?? e.category)}</NARRATION>
+      <PARTYLEDGERNAME>${xe(ledger)}</PARTYLEDGERNAME>
+      <ALLLEDGERENTRIES.LIST>
+        <LEDGERNAME>${xe(ledger)}</LEDGERNAME>
+        <ISDEEMEDPOSITIVE>Yes</ISDEEMEDPOSITIVE>
+        <AMOUNT>${rupees(e.amountPaise)}</AMOUNT>
+      </ALLLEDGERENTRIES.LIST>
+      <ALLLEDGERENTRIES.LIST>
+        <LEDGERNAME>${xe('Cash')}</LEDGERNAME>
+        <ISDEEMEDPOSITIVE>No</ISDEEMEDPOSITIVE>
+        <AMOUNT>-${rupees(e.amountPaise)}</AMOUNT>
+      </ALLLEDGERENTRIES.LIST>
+    </VOUCHER>`);
+  }
+
+  // Vendor payments — debit Vendor ledger (each vendor is its own ledger
+  // account in Tally), credit Cash/Bank.
+  for (const v of args.vendorPayments) {
+    const date = ymd(v.paidAt);
+    vouchers.push(`<VOUCHER VCHTYPE="Payment" ACTION="Create">
+      <DATE>${date}</DATE>
+      <VOUCHERTYPENAME>Payment</VOUCHERTYPENAME>
+      <VOUCHERNUMBER>VP-${xe(v.id.slice(-6))}</VOUCHERNUMBER>
+      <NARRATION>${xe(v.notes ?? `Payment to ${v.vendor.name}`)}</NARRATION>
+      <PARTYLEDGERNAME>${xe(v.vendor.name)}</PARTYLEDGERNAME>
+      <ALLLEDGERENTRIES.LIST>
+        <LEDGERNAME>${xe(v.vendor.name)}</LEDGERNAME>
+        <ISDEEMEDPOSITIVE>Yes</ISDEEMEDPOSITIVE>
+        <AMOUNT>${rupees(v.amountPaise)}</AMOUNT>
+      </ALLLEDGERENTRIES.LIST>
+      <ALLLEDGERENTRIES.LIST>
+        <LEDGERNAME>${xe('Cash')}</LEDGERNAME>
+        <ISDEEMEDPOSITIVE>No</ISDEEMEDPOSITIVE>
+        <AMOUNT>-${rupees(v.amountPaise)}</AMOUNT>
+      </ALLLEDGERENTRIES.LIST>
+    </VOUCHER>`);
+  }
+
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<ENVELOPE>
+  <HEADER><TALLYREQUEST>Import Data</TALLYREQUEST></HEADER>
+  <BODY>
+    <IMPORTDATA>
+      <REQUESTDESC>
+        <REPORTNAME>Vouchers</REPORTNAME>
+        <STATICVARIABLES>
+          <SVCURRENTCOMPANY>Zelora Jeweller</SVCURRENTCOMPANY>
+        </STATICVARIABLES>
+      </REQUESTDESC>
+      <REQUESTDATA>
+        ${vouchers.map((v) => `<TALLYMESSAGE>${v}</TALLYMESSAGE>`).join('\n        ')}
+      </REQUESTDATA>
+    </IMPORTDATA>
+  </BODY>
+</ENVELOPE>`;
+}
 
 // =====================================================================
 // 6. GST REPORTS

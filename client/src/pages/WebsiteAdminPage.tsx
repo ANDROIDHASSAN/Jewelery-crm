@@ -5,23 +5,30 @@
 
 import { useEffect, useState } from 'react';
 import { toast } from 'sonner';
-import { ExternalLink, Plus, Trash2, RotateCcw, CloudUpload } from 'lucide-react';
+import { ExternalLink, Plus, Trash2, RotateCcw, CloudUpload, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { TabStrip, type TabStripItem } from '@/components/ui/TabStrip';
 import { Badge } from '@/components/ui/badge';
+import { cn } from '@/lib/cn';
 import { useAppDispatch, useAppSelector } from '@/app/hooks';
 import {
   addCollection,
+  addFilterGroup,
   addLocation,
+  clearFiltersOverride,
   removeCollection,
+  removeFilterGroup,
   removeLocation,
   resetContent,
   setContent,
+  setDefaultFilterKeys,
+  setFiltersForCollection,
   updateBrand,
   updateCollection,
+  updateFilterGroup,
   updateHero,
   updateLocation,
   updateRates,
@@ -34,13 +41,23 @@ import {
   useUpdateStorefrontMutation,
 } from '@/features/storefront/storefrontApi';
 
-type TabKey = 'brand' | 'hero' | 'rates' | 'collections' | 'story' | 'testimonial' | 'locations' | 'contact';
+type TabKey =
+  | 'brand'
+  | 'hero'
+  | 'rates'
+  | 'collections'
+  | 'story'
+  | 'testimonial'
+  | 'locations'
+  | 'contact'
+  | 'filters';
 
 const TABS: Array<{ key: TabKey; label: string }> = [
   { key: 'brand', label: 'Brand' },
   { key: 'hero', label: 'Hero' },
   { key: 'rates', label: 'Gold rates' },
   { key: 'collections', label: 'Collections' },
+  { key: 'filters', label: 'Filters' },
   { key: 'story', label: 'Story' },
   { key: 'testimonial', label: 'Testimonial' },
   { key: 'locations', label: 'Stores' },
@@ -641,6 +658,37 @@ export function WebsiteAdminPage(): JSX.Element {
               </p>
             </Card>
           )}
+
+          {tab === 'filters' && (
+            <FiltersTab
+              filters={content.filters}
+              collections={content.collections}
+              onAddGroup={(g) => {
+                dispatch(addFilterGroup(g));
+                notify();
+              }}
+              onUpdateGroup={(key, patch) => {
+                dispatch(updateFilterGroup({ key, patch }));
+                notify();
+              }}
+              onRemoveGroup={(key) => {
+                dispatch(removeFilterGroup(key));
+                notify();
+              }}
+              onSetForCollection={(slug, keys) => {
+                dispatch(setFiltersForCollection({ slug, groupKeys: keys }));
+                notify();
+              }}
+              onClearOverride={(slug) => {
+                dispatch(clearFiltersOverride(slug));
+                notify();
+              }}
+              onSetDefaultKeys={(keys) => {
+                dispatch(setDefaultFilterKeys(keys));
+                notify();
+              }}
+            />
+          )}
         </div>
 
         {/* Live preview panel */}
@@ -715,6 +763,296 @@ function Field({
       <Label className="text-xs text-ink-600">{label}</Label>
       {children}
       {hint && <p className="text-xs text-ink-500">{hint}</p>}
+    </div>
+  );
+}
+
+// -----------------------------------------------------------------------------
+// Filters tab
+//
+// Admin UI for the storefront filter config (sidebar facets on collection
+// pages). Two parts:
+//   1. Master groups — add/edit/remove filter groups with their option labels.
+//      Removing a group strips it from every per-collection list automatically
+//      (see the reducer).
+//   2. Per-collection visibility — pick which groups show on each collection
+//      slug. Empty list = hide all filters on that page. "Reset" clears the
+//      override so the page falls back to `defaultGroupKeys`.
+// -----------------------------------------------------------------------------
+
+function FiltersTab({
+  filters,
+  collections,
+  onAddGroup,
+  onUpdateGroup,
+  onRemoveGroup,
+  onSetForCollection,
+  onClearOverride,
+  onSetDefaultKeys,
+}: {
+  filters: import('@/features/storefront/storefrontContentSlice').StorefrontFiltersConfig;
+  collections: import('@/features/storefront/storefrontContentSlice').CollectionTile[];
+  onAddGroup: (g: { key: string; label: string; options: string[] }) => void;
+  onUpdateGroup: (key: string, patch: Partial<{ label: string; options: string[] }>) => void;
+  onRemoveGroup: (key: string) => void;
+  onSetForCollection: (slug: string, groupKeys: string[]) => void;
+  onClearOverride: (slug: string) => void;
+  onSetDefaultKeys: (keys: string[]) => void;
+}): JSX.Element {
+  const [newLabel, setNewLabel] = useState('');
+  const slugify = (s: string): string =>
+    s
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/(^-|-$)/g, '');
+
+  // Pseudo-collections (priced/purity buckets) that exist as collection pages
+  // but aren't real categories in the DB. List them so admin can override
+  // filter visibility for these slugs too.
+  const PSEUDO_SLUGS = ['22k', '18k', 'silver', 'gifting', 'under-50k'];
+  const allSlugs = Array.from(
+    new Set([...collections.map((c) => c.slug), ...PSEUDO_SLUGS]),
+  );
+
+  return (
+    <>
+      <Card
+        title="Default visibility"
+        desc="Filters shown on a collection that doesn't have its own override below."
+      >
+        <FilterGroupCheckboxes
+          allGroups={filters.groups}
+          enabled={filters.defaultGroupKeys}
+          onChange={onSetDefaultKeys}
+        />
+      </Card>
+
+      <Card
+        title="Filter groups"
+        desc="Each group becomes one section in the storefront sidebar. Removing a group hides it everywhere."
+        action={
+          <div className="flex items-center gap-2">
+            <Input
+              value={newLabel}
+              placeholder="New group label (e.g. Stone)"
+              onChange={(e) => setNewLabel(e.target.value)}
+              className="h-9 w-56"
+            />
+            <Button
+              size="sm"
+              variant="secondary"
+              disabled={!newLabel.trim()}
+              onClick={() => {
+                const label = newLabel.trim();
+                const key = slugify(label);
+                if (!label || !key) return;
+                onAddGroup({ key, label, options: [] });
+                setNewLabel('');
+              }}
+            >
+              <Plus className="h-3.5 w-3.5" /> Add group
+            </Button>
+          </div>
+        }
+      >
+        {filters.groups.length === 0 ? (
+          <p className="text-sm text-ink-500">
+            No filter groups yet. Add one above to start showing filters on the storefront.
+          </p>
+        ) : (
+          <ul className="space-y-3">
+            {filters.groups.map((g) => (
+              <FilterGroupEditor
+                key={g.key}
+                group={g}
+                onLabelChange={(label) => onUpdateGroup(g.key, { label })}
+                onOptionsChange={(options) => onUpdateGroup(g.key, { options })}
+                onRemove={() => {
+                  if (confirm(`Remove the "${g.label}" filter from every collection?`)) {
+                    onRemoveGroup(g.key);
+                  }
+                }}
+              />
+            ))}
+          </ul>
+        )}
+      </Card>
+
+      <Card
+        title="Per-collection overrides"
+        desc="Hide or show specific filter groups on individual collection pages."
+      >
+        <ul className="space-y-3">
+          {allSlugs.map((slug) => {
+            const override = filters.perCollection[slug];
+            const effective = override ?? filters.defaultGroupKeys;
+            const using = override === undefined ? 'default' : 'override';
+            return (
+              <li
+                key={slug}
+                className="rounded-md border border-ink-100 bg-ink-25 p-3 space-y-2"
+              >
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <span className="font-mono text-xs text-ink-700">/{slug}</span>
+                    <Badge tone={using === 'default' ? 'neutral' : 'info'}>
+                      {using === 'default' ? 'Uses default' : 'Custom'}
+                    </Badge>
+                  </div>
+                  {using === 'override' && (
+                    <button
+                      type="button"
+                      onClick={() => onClearOverride(slug)}
+                      className="text-xs text-ink-600 hover:text-ink-900 inline-flex items-center gap-1"
+                    >
+                      <RotateCcw className="h-3 w-3" /> Reset to default
+                    </button>
+                  )}
+                </div>
+                <FilterGroupCheckboxes
+                  allGroups={filters.groups}
+                  enabled={effective}
+                  onChange={(keys) => onSetForCollection(slug, keys)}
+                />
+              </li>
+            );
+          })}
+        </ul>
+      </Card>
+    </>
+  );
+}
+
+function FilterGroupEditor({
+  group,
+  onLabelChange,
+  onOptionsChange,
+  onRemove,
+}: {
+  group: { key: string; label: string; options: string[] };
+  onLabelChange: (label: string) => void;
+  onOptionsChange: (options: string[]) => void;
+  onRemove: () => void;
+}): JSX.Element {
+  const [newOption, setNewOption] = useState('');
+  return (
+    <li className="rounded-md border border-ink-100 bg-ink-25 p-3 space-y-3">
+      <div className="flex items-center gap-2">
+        <Input
+          value={group.label}
+          onChange={(e) => onLabelChange(e.target.value)}
+          className="h-8 flex-1"
+        />
+        <span className="font-mono text-[11px] text-ink-500 px-2">key: {group.key}</span>
+        <button
+          type="button"
+          onClick={onRemove}
+          className="h-8 w-8 inline-flex items-center justify-center rounded text-ink-500 hover:text-rose-700 hover:bg-rose-50"
+          aria-label={`Remove ${group.label}`}
+        >
+          <Trash2 className="h-4 w-4" />
+        </button>
+      </div>
+      <div>
+        <p className="text-[11px] text-ink-500 mb-1">Options</p>
+        {group.options.length === 0 && (
+          <p className="text-xs text-ink-500 italic mb-2">No options yet.</p>
+        )}
+        <ul className="flex flex-wrap gap-1.5 mb-2">
+          {group.options.map((opt) => (
+            <li
+              key={opt}
+              className="inline-flex items-center gap-1 px-2 py-1 rounded-md bg-ink-0 border border-ink-200 text-xs text-ink-700"
+            >
+              <span>{opt}</span>
+              <button
+                type="button"
+                onClick={() => onOptionsChange(group.options.filter((o) => o !== opt))}
+                className="text-ink-400 hover:text-rose-700"
+                aria-label={`Remove ${opt}`}
+              >
+                <X className="h-3 w-3" />
+              </button>
+            </li>
+          ))}
+        </ul>
+        <div className="flex items-center gap-2">
+          <Input
+            value={newOption}
+            onChange={(e) => setNewOption(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && newOption.trim()) {
+                e.preventDefault();
+                if (!group.options.includes(newOption.trim())) {
+                  onOptionsChange([...group.options, newOption.trim()]);
+                }
+                setNewOption('');
+              }
+            }}
+            placeholder="Add option (Enter to confirm)"
+            className="h-8 flex-1"
+          />
+          <Button
+            size="sm"
+            variant="secondary"
+            disabled={!newOption.trim()}
+            onClick={() => {
+              const v = newOption.trim();
+              if (!v || group.options.includes(v)) return;
+              onOptionsChange([...group.options, v]);
+              setNewOption('');
+            }}
+          >
+            Add
+          </Button>
+        </div>
+      </div>
+    </li>
+  );
+}
+
+function FilterGroupCheckboxes({
+  allGroups,
+  enabled,
+  onChange,
+}: {
+  allGroups: Array<{ key: string; label: string }>;
+  enabled: string[];
+  onChange: (keys: string[]) => void;
+}): JSX.Element {
+  if (allGroups.length === 0) {
+    return <p className="text-xs text-ink-500">No groups to choose from yet.</p>;
+  }
+  return (
+    <div className="flex flex-wrap gap-2">
+      {allGroups.map((g) => {
+        const isOn = enabled.includes(g.key);
+        return (
+          <button
+            key={g.key}
+            type="button"
+            onClick={() =>
+              onChange(isOn ? enabled.filter((k) => k !== g.key) : [...enabled, g.key])
+            }
+            className={cn(
+              'inline-flex items-center gap-1.5 h-8 px-3 rounded-full border text-xs transition-colors',
+              isOn
+                ? 'border-brand-400 bg-brand-50 text-brand-800'
+                : 'border-ink-200 bg-ink-0 text-ink-700 hover:border-ink-300',
+            )}
+            aria-pressed={isOn}
+          >
+            <span
+              className={cn(
+                'h-1.5 w-1.5 rounded-full',
+                isOn ? 'bg-brand-500' : 'bg-ink-300',
+              )}
+              aria-hidden
+            />
+            {g.label}
+          </button>
+        );
+      })}
     </div>
   );
 }

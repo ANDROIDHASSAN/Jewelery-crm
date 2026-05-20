@@ -21,6 +21,30 @@ export interface CollectionTile {
   img: string;
 }
 
+/**
+ * Storefront filter facet shown on collection / search pages. Each group has a
+ * stable `key` (so per-collection visibility lists can reference it) and a list
+ * of human-readable options. The matching predicate lives in CollectionPage —
+ * keys here must stay in sync with the FILTER_PREDICATES map there.
+ */
+export interface FilterGroup {
+  key: string;
+  label: string;
+  options: string[];
+}
+
+export interface StorefrontFiltersConfig {
+  /** Master list of filter groups available across the storefront. */
+  groups: FilterGroup[];
+  /**
+   * Which group keys to show on a given collection slug. Missing slug = show
+   * `defaultGroupKeys`. Empty array = hide all filters on that page.
+   */
+  perCollection: Record<string, string[]>;
+  /** Used when no override exists for the current slug. */
+  defaultGroupKeys: string[];
+}
+
 export interface StorefrontContent {
   brand: {
     name: string;
@@ -57,11 +81,12 @@ export interface StorefrontContent {
   };
   locations: StoreLocation[];
   whatsappNumber: string;
+  filters: StorefrontFiltersConfig;
 }
 
 export const DEFAULT_CONTENT: StorefrontContent = {
   brand: {
-    name: 'Anant Jewellers',
+    name: 'Zelora',
     tagline: 'Family jewellers since 1972. Hallmarked gold. Transparent pricing. Hand-crafted in Haryana.',
     logo: '/logo/zelora-mark.png',
   },
@@ -120,15 +145,77 @@ export const DEFAULT_CONTENT: StorefrontContent = {
     },
   ],
   whatsappNumber: '919876543210',
+  filters: {
+    groups: [
+      {
+        key: 'metal',
+        label: 'Metal',
+        options: ['22K Gold', '18K Gold', 'Silver', 'Platinum'],
+      },
+      {
+        key: 'weight',
+        label: 'Weight',
+        options: ['Under 10 g', '10 – 20 g', '20 – 40 g', 'Over 40 g'],
+      },
+      {
+        key: 'price',
+        label: 'Price',
+        options: ['Under ₹50,000', '₹50,000 – ₹1,00,000', 'Over ₹1,00,000'],
+      },
+      {
+        key: 'purity',
+        label: 'Purity',
+        options: ['22K', '18K', '14K'],
+      },
+      {
+        key: 'occasion',
+        label: 'Occasion',
+        options: ['Bridal', 'Daily wear', 'Festive', 'Gifting'],
+      },
+    ],
+    // Per-collection visibility — only the most opinionated overrides are
+    // baked in. Admin can edit/extend from the Website CMS → Filters tab.
+    perCollection: {
+      // Silver collection: hide gold-only options.
+      silver: ['weight', 'price', 'occasion'],
+      // Diamond collection: weight is less meaningful, price + occasion matter.
+      diamond: ['price', 'occasion'],
+      // Pre-filtered purity pages: hide metal filter (already constrained).
+      '22k': ['weight', 'price', 'occasion'],
+      '18k': ['weight', 'price', 'occasion'],
+      // Price-bucketed page: hide the price filter, keep metal/weight.
+      'under-50k': ['metal', 'weight', 'occasion'],
+    },
+    defaultGroupKeys: ['metal', 'weight', 'price'],
+  },
 };
+
+// Initialise state.filters on demand if a legacy payload hydrated without
+// it. Returns the (now-defined) filters object so the caller can mutate it
+// directly under Immer.
+function ensureFilters(state: StorefrontContent): StorefrontFiltersConfig {
+  if (!state.filters) state.filters = DEFAULT_CONTENT.filters;
+  return state.filters!;
+}
 
 const slice = createSlice({
   name: 'storefrontContent',
   initialState: DEFAULT_CONTENT,
   reducers: {
-    /** Replace the whole content blob — used when API hydration completes. */
-    setContent(_state, action: PayloadAction<StorefrontContent>) {
-      return action.payload;
+    /** Replace the whole content blob — used when API hydration completes.
+     *  Falls back to default `filters` when older content blobs are missing it,
+     *  so the storefront doesn't crash on legacy tenants. */
+    setContent(
+      _state,
+      action: PayloadAction<
+        Omit<StorefrontContent, 'filters'> & { filters?: StorefrontFiltersConfig }
+      >,
+    ) {
+      const incoming = action.payload;
+      return {
+        ...incoming,
+        filters: incoming.filters ?? DEFAULT_CONTENT.filters,
+      };
     },
     updateBrand(state, action: PayloadAction<Partial<StorefrontContent['brand']>>) {
       state.brand = { ...state.brand, ...action.payload };
@@ -179,6 +266,52 @@ const slice = createSlice({
     resetContent() {
       return DEFAULT_CONTENT;
     },
+    // --- Filters ---
+    // `state.filters` is typed optional because the API payload can omit it
+    // for older tenants, but at runtime setContent() always backfills with
+    // DEFAULT_CONTENT.filters. ensureFilters() makes that invariant explicit
+    // for TypeScript instead of sprinkling non-null assertions everywhere.
+    addFilterGroup(state, action: PayloadAction<FilterGroup>) {
+      const filters = ensureFilters(state);
+      if (filters.groups.some((g) => g.key === action.payload.key)) return;
+      filters.groups.push(action.payload);
+    },
+    updateFilterGroup(
+      state,
+      action: PayloadAction<{ key: string; patch: Partial<FilterGroup> }>,
+    ) {
+      const filters = ensureFilters(state);
+      const g = filters.groups.find((x) => x.key === action.payload.key);
+      if (g) Object.assign(g, action.payload.patch);
+    },
+    removeFilterGroup(state, action: PayloadAction<string>) {
+      const filters = ensureFilters(state);
+      filters.groups = filters.groups.filter((g) => g.key !== action.payload);
+      // Strip the removed key from every per-collection list and from defaults.
+      for (const slug of Object.keys(filters.perCollection)) {
+        filters.perCollection[slug] = filters.perCollection[slug]!.filter(
+          (k) => k !== action.payload,
+        );
+      }
+      filters.defaultGroupKeys = filters.defaultGroupKeys.filter(
+        (k) => k !== action.payload,
+      );
+    },
+    setFiltersForCollection(
+      state,
+      action: PayloadAction<{ slug: string; groupKeys: string[] }>,
+    ) {
+      const filters = ensureFilters(state);
+      filters.perCollection[action.payload.slug] = action.payload.groupKeys;
+    },
+    clearFiltersOverride(state, action: PayloadAction<string>) {
+      const filters = ensureFilters(state);
+      delete filters.perCollection[action.payload];
+    },
+    setDefaultFilterKeys(state, action: PayloadAction<string[]>) {
+      const filters = ensureFilters(state);
+      filters.defaultGroupKeys = action.payload;
+    },
   },
 });
 
@@ -197,6 +330,12 @@ export const {
   addLocation,
   removeLocation,
   resetContent,
+  addFilterGroup,
+  updateFilterGroup,
+  removeFilterGroup,
+  setFiltersForCollection,
+  clearFiltersOverride,
+  setDefaultFilterKeys,
 } = slice.actions;
 
 export const storefrontContentReducer = slice.reducer;

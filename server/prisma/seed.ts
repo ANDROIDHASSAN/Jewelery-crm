@@ -68,7 +68,7 @@ async function main(): Promise<void> {
 
     const tenant = await tx.tenant.create({
       data: {
-        businessName: 'Anant Jewellers',
+        businessName: 'Zelora',
         gstNumber: '27AAAPL1234C1Z5',
         phone: '+919876543210',
         ownerEmail: 'owner@goldos.dev',
@@ -1021,7 +1021,7 @@ async function main(): Promise<void> {
         tenantId: tenant.id,
         content: {
           brand: {
-            name: 'Anant Jewellers',
+            name: 'Zelora',
             tagline:
               'Family jewellers since 1972. Hallmarked gold. Transparent pricing. Hand-crafted in Haryana.',
             logo: '/logo/zelora-mark.png',

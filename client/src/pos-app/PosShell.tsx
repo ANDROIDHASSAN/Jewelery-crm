@@ -46,6 +46,7 @@ import { GoldRateTicker } from './GoldRateTicker';
 import { PosSidebar, type PosSidebarNavItem } from './PosSidebar';
 import { isPosHost } from '@/app/routes';
 import { useGetGoldRateQuery } from '@/features/pos/posApi';
+import { startBackgroundSync, pendingCount as offlinePendingCount } from '@/features/pos/offline';
 
 export function PosShell(): JSX.Element {
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
@@ -59,6 +60,10 @@ export function PosShell(): JSX.Element {
 
   // Online/offline mirror.
   const [online, setOnline] = useState<boolean>(typeof navigator === 'undefined' ? true : navigator.onLine);
+  // Queued-bill counter — shows next to the offline pill so the cashier
+  // always sees how many bills are pending sync. Refreshed by the
+  // background-sync loop (which already runs ever 5s) plus a focus listener.
+  const [queuedBills, setQueuedBills] = useState<number>(0);
   useEffect(() => {
     function on(): void { setOnline(true); }
     function off(): void { setOnline(false); }
@@ -67,6 +72,23 @@ export function PosShell(): JSX.Element {
     return () => {
       window.removeEventListener('online', on);
       window.removeEventListener('offline', off);
+    };
+  }, []);
+
+  // Start the background sync loop for queued offline bills. The loop pings
+  // /health on a 5s interval and drains Dexie when the server is reachable.
+  // Refresh the queued-count pill every tick so the cashier sees it drain
+  // live.
+  useEffect(() => {
+    const stop = startBackgroundSync();
+    const refresh = async (): Promise<void> => setQueuedBills(await offlinePendingCount());
+    void refresh();
+    const interval = setInterval(() => void refresh(), 5_000);
+    window.addEventListener('focus', refresh);
+    return () => {
+      stop();
+      clearInterval(interval);
+      window.removeEventListener('focus', refresh);
     };
   }, []);
 
@@ -189,7 +211,10 @@ export function PosShell(): JSX.Element {
               )}
             </div>
 
-            {/* Online status pill */}
+            {/* Online status pill + queued-bills indicator. The queued
+                count is the load-bearing UX: a cashier in a basement that
+                drops Wi-Fi for 10 minutes shouldn't lose sight of the bills
+                waiting to sync. */}
             <span
               className={cn(
                 'hidden sm:inline-flex items-center gap-1.5 px-2 py-1 rounded-full text-[11px] font-medium border',
@@ -197,9 +222,17 @@ export function PosShell(): JSX.Element {
                   ? 'border-success-200 bg-success-50 text-success-700'
                   : 'border-warning-200 bg-warning-50 text-warning-700',
               )}
+              title={queuedBills > 0
+                ? `${queuedBills} bill${queuedBills === 1 ? '' : 's'} pending sync`
+                : (online ? 'Connected and synced' : 'No connection — bills are queued locally')}
             >
               {online ? <Wifi className="h-3 w-3" /> : <WifiOff className="h-3 w-3" />}
               {online ? 'Online' : 'Offline'}
+              {queuedBills > 0 && (
+                <span className="ml-1 inline-flex items-center justify-center min-w-[1.25rem] h-[1.25rem] rounded-full bg-warning-200 text-warning-900 text-[10px] font-semibold px-1 tabular-nums">
+                  {queuedBills}
+                </span>
+              )}
             </span>
 
             {/* Live 22K rate condensed pill */}

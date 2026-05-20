@@ -55,6 +55,7 @@ import {
 } from '@/features/pos/posApi';
 import { useGetOpenSessionQuery, useParkBillMutation } from './posFeaturesApi';
 import { OpenRegisterGate } from './OpenRegisterGate';
+import { enqueueOffline, isReallyOnline } from '@/features/pos/offline';
 import type { Item } from '@goldos/shared/types';
 import type { PaymentMode } from '@goldos/shared/constants';
 
@@ -388,24 +389,50 @@ function PosBillingScreen(): JSX.Element {
       );
       return;
     }
+    // Build the bill payload once so we can either send it now or enqueue it
+    // for later, byte-identical. The server is idempotent on idempotencyKey,
+    // so a queued bill that eventually drains will produce one Bill row even
+    // if the cashier re-rings it locally.
+    const billPayload = {
+      shopId,
+      customerId: customer?.id ?? null,
+      lines: lines.map((l) => ({
+        itemId: l.itemId,
+        weightMg: l.weightMg,
+        purityCaratX100: l.purityCaratX100,
+        makingChargeBps: l.makingChargeBps,
+        stoneChargePaise: l.stoneChargePaise,
+      })),
+      discountPaise,
+      oldGoldExchange: exchange,
+      payments: payments
+        .filter((p) => p.amountPaise > 0)
+        .map((p) => ({ mode: p.mode, amountPaise: p.amountPaise, referenceId: p.reference || null })),
+      idempotencyKey,
+    };
+
+    // Offline-first: if we know we have no real connectivity, persist to
+    // IndexedDB and let the background syncer drain when we come back. The
+    // cashier sees a clear "queued" toast and the counter resets so the
+    // next sale isn't blocked.
+    const online = await isReallyOnline();
+    if (!online) {
+      await enqueueOffline(idempotencyKey, billPayload);
+      toast.success(`Bill ${billNumber} saved offline`, {
+        description: 'Will sync the moment connection returns.',
+      });
+      setLines([]);
+      setCustomer(null);
+      setDiscountRupees('');
+      setExchange(null);
+      setLoyaltyApply('');
+      setPayments([newPaymentRow('CASH')]);
+      setIdempotencyKey(freshIdempotencyKey());
+      return;
+    }
+
     try {
-      await createBill({
-        shopId,
-        customerId: customer?.id ?? null,
-        lines: lines.map((l) => ({
-          itemId: l.itemId,
-          weightMg: l.weightMg,
-          purityCaratX100: l.purityCaratX100,
-          makingChargeBps: l.makingChargeBps,
-          stoneChargePaise: l.stoneChargePaise,
-        })) as never,
-        discountPaise,
-        oldGoldExchange: exchange,
-        payments: payments
-          .filter((p) => p.amountPaise > 0)
-          .map((p) => ({ mode: p.mode, amountPaise: p.amountPaise, referenceId: p.reference || null })),
-        idempotencyKey,
-      } as never).unwrap();
+      await createBill(billPayload as never).unwrap();
       toast.success(`Bill ${billNumber} posted`);
       // Reset for next bill.
       setLines([]);
@@ -417,7 +444,25 @@ function PosBillingScreen(): JSX.Element {
       setIdempotencyKey(freshIdempotencyKey());
     } catch (err: unknown) {
       const e = err as { data?: { error?: { message?: string } } };
-      toast.error(e.data?.error?.message ?? 'Bill failed to post');
+      // Network errors land here too (fetch threw). Save offline rather than
+      // lose the sale — a misconfigured Wi-Fi shouldn't cost a real
+      // customer's bill.
+      const message = e.data?.error?.message;
+      if (!message) {
+        await enqueueOffline(idempotencyKey, billPayload);
+        toast.warning(`Bill ${billNumber} saved offline (network blip)`, {
+          description: 'Will sync the moment connection returns.',
+        });
+        setLines([]);
+        setCustomer(null);
+        setDiscountRupees('');
+        setExchange(null);
+        setLoyaltyApply('');
+        setPayments([newPaymentRow('CASH')]);
+        setIdempotencyKey(freshIdempotencyKey());
+        return;
+      }
+      toast.error(message);
     }
   }
 
@@ -1434,10 +1479,6 @@ function QuickAddInventory({ shopId, categories, onClose, onCreate, creating }: 
   async function onPickImage(e: React.ChangeEvent<HTMLInputElement>): Promise<void> {
     const file = e.target.files?.[0];
     if (!file) return;
-    if (!cloudinaryReady) {
-      toast.error('Image upload is disabled — set VITE_CLOUDINARY_CLOUD_NAME and VITE_CLOUDINARY_UPLOAD_PRESET in client/.env');
-      return;
-    }
     setUploading(true);
     setUploadPct(0);
     try {
@@ -1500,8 +1541,8 @@ function QuickAddInventory({ shopId, categories, onClose, onCreate, creating }: 
           <div className="flex items-center justify-between">
             <Label className="text-xs text-ink-600">Product photos</Label>
             {!cloudinaryReady && (
-              <span className="text-[10px] text-warning-700 bg-warning-50 border border-warning-200 px-1.5 py-0.5 rounded">
-                Cloudinary not configured
+              <span className="text-[10px] text-ink-500 bg-ink-25 border border-ink-100 px-1.5 py-0.5 rounded">
+                Local image storage (dev)
               </span>
             )}
           </div>
@@ -1523,14 +1564,12 @@ function QuickAddInventory({ shopId, categories, onClose, onCreate, creating }: 
               <button
                 type="button"
                 onClick={() => fileInputRef.current?.click()}
-                disabled={uploading || !cloudinaryReady}
+                disabled={uploading}
                 className={cn(
                   'aspect-square rounded-md border-2 border-dashed flex flex-col items-center justify-center gap-1 text-xs transition-colors',
                   uploading
                     ? 'border-brand-300 bg-brand-50/40 text-brand-700'
-                    : cloudinaryReady
-                      ? 'border-ink-200 bg-ink-25 text-ink-500 hover:border-brand-400 hover:bg-brand-50/30 hover:text-brand-700'
-                      : 'border-ink-100 bg-ink-25/50 text-ink-300 cursor-not-allowed',
+                    : 'border-ink-200 bg-ink-25 text-ink-500 hover:border-brand-400 hover:bg-brand-50/30 hover:text-brand-700',
                 )}
               >
                 {uploading ? (

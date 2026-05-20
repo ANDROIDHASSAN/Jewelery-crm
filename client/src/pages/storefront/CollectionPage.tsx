@@ -1,13 +1,15 @@
 import { useMemo, useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
-import { ChevronDown, SlidersHorizontal, X } from 'lucide-react';
+import { ChevronDown, Search, SlidersHorizontal, X } from 'lucide-react';
 import { cn } from '@/lib/cn';
+import { useAppSelector } from '@/app/hooks';
 import {
   useGetPublicProductsQuery,
   useGetPublicCollectionsQuery,
   type PublicProduct,
   type PublicCategory,
 } from '@/features/storefront/storefrontApi';
+import type { FilterGroup } from '@/features/storefront/storefrontContentSlice';
 
 const TITLES: Record<string, { title: string; subtitle: string }> = {
   bridal: { title: 'Bridal', subtitle: 'Heirloom pieces for the day that matters. Hand-set, 22K, BIS-hallmarked.' },
@@ -33,23 +35,30 @@ function purityLabel(p: PublicProduct): string {
   return `${p.purityCaratX100 / 100}K`;
 }
 
-// Filter rule sets — each label maps to a predicate.
-const METAL_RULES: Record<string, (p: PublicProduct) => boolean> = {
+// Predicate registry — keyed by the option label inside each FilterGroup
+// (see DEFAULT_CONTENT.filters in storefrontContentSlice). The admin can
+// add/remove option *labels*, but if a label has no matching predicate here
+// the filter is a no-op (all products pass). Add the predicate alongside the
+// option label whenever a new built-in filter ships.
+const FILTER_PREDICATES: Record<string, (p: PublicProduct) => boolean> = {
+  // metal
   '22K Gold': (p) => p.purityCaratX100 === 2200,
   '18K Gold': (p) => p.purityCaratX100 === 1800,
   Silver: (p) => p.purityCaratX100 < 1000,
   Platinum: (p) => p.purityCaratX100 === 9500,
-};
-const WEIGHT_RULES: Record<string, (p: PublicProduct) => boolean> = {
+  // weight
   'Under 10 g': (p) => p.weightMg < 10_000,
   '10 – 20 g': (p) => p.weightMg >= 10_000 && p.weightMg < 20_000,
   '20 – 40 g': (p) => p.weightMg >= 20_000 && p.weightMg < 40_000,
   'Over 40 g': (p) => p.weightMg >= 40_000,
-};
-const PRICE_RULES: Record<string, (p: PublicProduct) => boolean> = {
+  // price
   'Under ₹50,000': (p) => priceOf(p) < 50_00_000,
   '₹50,000 – ₹1,00,000': (p) => priceOf(p) >= 50_00_000 && priceOf(p) < 1_00_00_000,
   'Over ₹1,00,000': (p) => priceOf(p) >= 1_00_00_000,
+  // purity
+  '22K': (p) => p.purityCaratX100 === 2200,
+  '18K': (p) => p.purityCaratX100 === 1800,
+  '14K': (p) => p.purityCaratX100 === 1400,
 };
 
 // Apply collection-slug rules to a product list. Real categories match by
@@ -87,28 +96,59 @@ export function CollectionPage(): JSX.Element {
   const [sort, setSort] = useState<Sort>('Featured');
   const [sortOpen, setSortOpen] = useState(false);
   const [filtersOpen, setFiltersOpen] = useState(false);
-  const [metals, setMetals] = useState<Set<string>>(new Set());
-  const [weights, setWeights] = useState<Set<string>>(new Set());
-  const [prices, setPrices] = useState<Set<string>>(new Set());
+  // One Set of selected options per group key — single source of truth for
+  // both the desktop sidebar and the mobile drawer.
+  const [selections, setSelections] = useState<Record<string, Set<string>>>({});
+  const [q, setQ] = useState('');
 
   const { data: products = [], isLoading: productsLoading } = useGetPublicProductsQuery();
   const { data: categories = [] } = useGetPublicCollectionsQuery();
 
+  // Pull filter config from the CMS. Per-collection override > defaults.
+  const filtersConfig = useAppSelector((s) => s.storefrontContent.filters);
+  const visibleGroups: FilterGroup[] = useMemo(() => {
+    const override = slug ? filtersConfig.perCollection[slug] : undefined;
+    const keys = override ?? filtersConfig.defaultGroupKeys;
+    return keys
+      .map((k: string) => filtersConfig.groups.find((g) => g.key === k))
+      .filter((g): g is FilterGroup => Boolean(g));
+  }, [filtersConfig, slug]);
+
   const filtered = useMemo(() => {
     const bySlug = filterBySlug(products, categories, slug);
-    const passMetals = (p: PublicProduct): boolean =>
-      metals.size === 0 || Array.from(metals).some((m) => METAL_RULES[m]?.(p));
-    const passWeights = (p: PublicProduct): boolean =>
-      weights.size === 0 || Array.from(weights).some((w) => WEIGHT_RULES[w]?.(p));
-    const passPrices = (p: PublicProduct): boolean =>
-      prices.size === 0 || Array.from(prices).some((pr) => PRICE_RULES[pr]?.(p));
-    return bySlug.filter((p) => passMetals(p) && passWeights(p) && passPrices(p));
-  }, [products, categories, slug, metals, weights, prices]);
+    // Token-AND match on name + slug only — descriptionMd is excluded because
+    // every gold-jewellery description repeats "gold/BIS/hallmarked" and would
+    // turn the in-collection search into a no-op (everything matches). Match
+    // strategy mirrors SearchResultsPage so the two surfaces feel consistent.
+    const tokens = q.trim().toLowerCase().split(/\s+/).filter(Boolean);
+    const passQ = (p: PublicProduct): boolean => {
+      if (tokens.length === 0) return true;
+      const haystack = `${p.name.toLowerCase()} ${p.slug.toLowerCase()}`;
+      return tokens.every((t) => haystack.includes(t));
+    };
+    // For each visible group, the product passes if either nothing is selected
+    // in that group OR at least one selected option's predicate matches.
+    // Options without a registered predicate are treated as no-op (always pass)
+    // so admin can add custom-label options without crashing the page.
+    const passGroup = (p: PublicProduct, group: FilterGroup): boolean => {
+      const sel = selections[group.key];
+      if (!sel || sel.size === 0) return true;
+      return Array.from(sel).some((opt) => {
+        const pred = FILTER_PREDICATES[opt];
+        return pred ? pred(p) : true;
+      });
+    };
+    return bySlug.filter(
+      (p) => passQ(p) && visibleGroups.every((g) => passGroup(p, g)),
+    );
+  }, [products, categories, slug, q, selections, visibleGroups]);
 
-  function toggle(set: Set<string>, value: string, setter: (s: Set<string>) => void): void {
-    const next = new Set(set);
-    if (next.has(value)) next.delete(value); else next.add(value);
-    setter(next);
+  function toggleOption(groupKey: string, value: string): void {
+    setSelections((curr) => {
+      const next = new Set(curr[groupKey] ?? []);
+      if (next.has(value)) next.delete(value); else next.add(value);
+      return { ...curr, [groupKey]: next };
+    });
   }
 
   const sorted = useMemo(() => {
@@ -147,20 +187,44 @@ export function CollectionPage(): JSX.Element {
         {meta.subtitle && <p className="mt-3 sm:mt-4 text-sm sm:text-base text-ink-600 leading-relaxed max-w-2xl">{meta.subtitle}</p>}
       </header>
 
-      <div className="sticky top-[64px] sm:top-[88px] z-20 bg-ink-0/85 backdrop-blur-md -mx-4 sm:-mx-6 px-4 sm:px-6 border-y border-ink-100 mb-6 sm:mb-8">
+      <div className="sticky top-[88px] sm:top-[104px] z-10 bg-ink-0 -mx-4 sm:-mx-6 px-4 sm:px-6 border-y border-ink-100 mb-6 sm:mb-8">
         <div className="h-14 flex items-center justify-between gap-4">
           <button
             type="button"
             onClick={() => setFiltersOpen((v) => !v)}
-            className="inline-flex items-center gap-2 text-sm text-ink-700 hover:text-ink-900"
+            className="inline-flex items-center gap-2 text-sm text-ink-700 hover:text-ink-900 shrink-0"
           >
             <SlidersHorizontal className="h-4 w-4" />
             Filters
-            <span className="text-ink-400">·</span>
-            <span className="text-ink-500">{sorted.length} pieces</span>
+            <span className="text-ink-400 hidden sm:inline">·</span>
+            <span className="text-ink-500 hidden sm:inline">{sorted.length} pieces</span>
           </button>
 
-          <div className="relative">
+          {/* Live search across name + slug + description. Works alongside the
+              metal/weight/price checkboxes — they intersect, not replace. */}
+          <div className="relative flex-1 max-w-md mx-2 sm:mx-4">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-ink-400" />
+            <input
+              type="search"
+              value={q}
+              onChange={(e) => setQ(e.target.value)}
+              placeholder="Search this collection…"
+              aria-label="Search pieces"
+              className="w-full h-10 pl-9 pr-8 bg-ink-50 rounded-full border border-ink-200 text-sm text-ink-900 placeholder:text-ink-500 focus:bg-ink-0 focus:border-brand-500 focus:ring-2 focus:ring-brand-200 outline-none transition-colors"
+            />
+            {q && (
+              <button
+                type="button"
+                onClick={() => setQ('')}
+                className="absolute right-2 top-1/2 -translate-y-1/2 h-6 w-6 inline-flex items-center justify-center rounded-full text-ink-500 hover:bg-ink-100"
+                aria-label="Clear search"
+              >
+                <X className="h-3 w-3" />
+              </button>
+            )}
+          </div>
+
+          <div className="relative shrink-0">
             <button
               type="button"
               onClick={() => setSortOpen((v) => !v)}
@@ -202,27 +266,25 @@ export function CollectionPage(): JSX.Element {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-[220px_1fr] gap-8 lg:gap-10">
-        <aside className={cn('space-y-7 text-sm', filtersOpen ? 'block' : 'hidden lg:block')}>
-          <FilterGroup
-            label="Metal"
-            options={Object.keys(METAL_RULES)}
-            selected={metals}
-            onToggle={(v) => toggle(metals, v, setMetals)}
-          />
-          <FilterGroup
-            label="Weight"
-            options={Object.keys(WEIGHT_RULES)}
-            selected={weights}
-            onToggle={(v) => toggle(weights, v, setWeights)}
-          />
-          <FilterGroup
-            label="Price"
-            options={Object.keys(PRICE_RULES)}
-            selected={prices}
-            onToggle={(v) => toggle(prices, v, setPrices)}
-          />
-        </aside>
+      <div
+        className={cn(
+          'grid grid-cols-1 gap-8 lg:gap-10',
+          visibleGroups.length > 0 && 'lg:grid-cols-[220px_1fr]',
+        )}
+      >
+        {visibleGroups.length > 0 && (
+          <aside className={cn('space-y-7 text-sm', filtersOpen ? 'block' : 'hidden lg:block')}>
+            {visibleGroups.map((g) => (
+              <FilterGroupView
+                key={g.key}
+                label={g.label}
+                options={g.options}
+                selected={selections[g.key] ?? EMPTY_SET}
+                onToggle={(v) => toggleOption(g.key, v)}
+              />
+            ))}
+          </aside>
+        )}
 
         <section className="grid grid-cols-2 md:grid-cols-3 gap-x-3 gap-y-8 sm:gap-x-5 sm:gap-y-10 md:gap-x-6">
           {productsLoading && (
@@ -286,24 +348,18 @@ export function CollectionPage(): JSX.Element {
               </button>
             </div>
             <div className="flex-1 overflow-y-auto p-5 space-y-7 text-sm">
-              <FilterGroup
-                label="Metal"
-                options={Object.keys(METAL_RULES)}
-                selected={metals}
-                onToggle={(v) => toggle(metals, v, setMetals)}
-              />
-              <FilterGroup
-                label="Weight"
-                options={Object.keys(WEIGHT_RULES)}
-                selected={weights}
-                onToggle={(v) => toggle(weights, v, setWeights)}
-              />
-              <FilterGroup
-                label="Price"
-                options={Object.keys(PRICE_RULES)}
-                selected={prices}
-                onToggle={(v) => toggle(prices, v, setPrices)}
-              />
+              {visibleGroups.map((g) => (
+                <FilterGroupView
+                  key={g.key}
+                  label={g.label}
+                  options={g.options}
+                  selected={selections[g.key] ?? EMPTY_SET}
+                  onToggle={(v) => toggleOption(g.key, v)}
+                />
+              ))}
+              {visibleGroups.length === 0 && (
+                <p className="text-ink-500">No filters configured for this collection.</p>
+              )}
             </div>
           </div>
         </div>
@@ -312,7 +368,11 @@ export function CollectionPage(): JSX.Element {
   );
 }
 
-function FilterGroup({
+// Stable empty Set so we don't allocate a new Set every render when a group
+// has no selections — keeps FilterGroupView's referential equality clean.
+const EMPTY_SET: Set<string> = new Set();
+
+function FilterGroupView({
   label,
   options,
   selected,

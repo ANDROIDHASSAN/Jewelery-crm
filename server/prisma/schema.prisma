@@ -45,6 +45,7 @@ model Tenant {
   vendors       Vendor[]
   purchaseOrders PurchaseOrder[]
   customers     Customer[]
+  customerAddresses CustomerAddress[]
   bills         Bill[]
   expenses      Expense[]
   goldLoans     GoldLoan[]
@@ -55,6 +56,7 @@ model Tenant {
   orders        Order[]
   cartItems     CartItem[]
   wishlistItems WishlistItem[]
+  orderReviews  OrderReview[]
   auditLogs     AuditLog[]
   storefrontContent StorefrontContent?
   registerSessions  RegisterSession[]
@@ -499,6 +501,7 @@ model Customer {
   tenantId         String
   phone            String
   name             String
+  email            String?
   dob              DateTime?
   anniversary      DateTime?
   tags             String[]
@@ -518,10 +521,46 @@ model Customer {
   advances         Advance[]
   cartItems        CartItem[]
   wishlistItems    WishlistItem[]
+  orderReviews     OrderReview[]
+  addresses        CustomerAddress[]
 
   @@unique([tenantId, phone])
   @@index([tenantId])
   @@index([tenantId, name])
+}
+
+// Saved shipping addresses for a Customer. One Customer can have many; the
+// `isDefault=true` row is the one auto-filled on the next checkout. New
+// addresses are created from the storefront checkout flow (when a visitor
+// types a new address) and from admin POS when the cashier captures one.
+//
+// We snapshot address fields onto the Order itself (Order.shipping*) so a
+// later edit here doesn't rewrite shipping history. This table is purely the
+// "address book" for future reuse.
+model CustomerAddress {
+  id          String   @id @default(cuid())
+  tenantId    String
+  customerId  String
+  // Optional label like "Home" / "Office" — UI nicety, no business logic.
+  label       String?
+  // Receiver name + phone. Often matches the customer but can differ for
+  // gifts ("ship to my mother") so we let the user override per address.
+  name        String
+  phone       String
+  line1       String
+  line2       String?
+  city        String
+  state       String
+  pincode     String
+  isDefault   Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  tenant      Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  customer    Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId])
+  @@index([tenantId, customerId])
 }
 
 model Bill {
@@ -1038,6 +1077,11 @@ model Product {
   makingChargeBps    Int
   basePricePaise     Int
   stoneChargePaise   Int      @default(0)
+  // BIS Hallmark Unique ID (6-char alphanumeric). Mandatory for gold
+  // jewellery sold in India since 2021 under the BIS Act. Nullable for
+  // silver / lab-grown diamond pieces that don't carry HUID.
+  bisHuid            String?
+  hallmarkedAt       DateTime?
   isPublished        Boolean  @default(false)
   createdAt          DateTime @default(now())
 
@@ -1098,6 +1142,10 @@ model Order {
   customer        Customer    @relation(fields: [customerId], references: [id])
   items           OrderItem[]
   events          OrderEvent[]
+  // One review per order. The relation is optional so unreviewed orders
+  // load cleanly with `include: { review: true }`. The UI shows a
+  // "Write a review" CTA on delivered orders where this is null.
+  review          OrderReview?
 
   @@index([tenantId])
   @@index([tenantId, status])
@@ -1189,6 +1237,34 @@ model OrderEvent {
 
   @@index([orderId, createdAt])
   @@index([tenantId, createdAt])
+}
+
+// Customer-authored review of a completed (DELIVERED) order. One review per
+// order — the @@unique on orderId enforces this at the DB level so a double-
+// submit can't create two rows. Rating is 1-5; `body` is required, `title`
+// + `photos` are optional. Photos are Cloudinary URLs (same upload pipeline
+// the admin uses for product images).
+//
+// Tenant isolation: tenantId is denormalised from the Order so a tenant-scoped
+// list query doesn't have to join through Order.
+model OrderReview {
+  id          String   @id @default(cuid())
+  tenantId    String
+  orderId     String   @unique
+  customerId  String
+  rating      Int      // 1..5
+  title       String?
+  body        String
+  photos      String[] @default([])
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  tenant      Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  order       Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  customer    Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, createdAt])
+  @@index([customerId])
 }
 
 // --------------------------------------------------------------------------

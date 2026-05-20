@@ -1126,10 +1126,6 @@ function ImageUploader({
   const cloudinaryReady = isCloudinaryConfigured();
 
   async function uploadFiles(files: File[]): Promise<void> {
-    if (!cloudinaryReady) {
-      toast.error('Cloudinary is not configured — set VITE_CLOUDINARY_CLOUD_NAME and VITE_CLOUDINARY_UPLOAD_PRESET in client/.env');
-      return;
-    }
     const imageFiles = files.filter((f) => f.type.startsWith('image/'));
     if (imageFiles.length === 0) {
       toast.error('Only image files are supported');
@@ -1223,8 +1219,8 @@ function ImageUploader({
         </p>
         <p className="text-xs text-ink-500">PNG, JPG or WebP · up to 8 MB each · multiple allowed</p>
         {!cloudinaryReady && (
-          <p className="mt-1 text-xs text-warning-700">
-            Cloudinary not configured — direct upload disabled. Paste image URLs below instead.
+          <p className="mt-1 text-xs text-ink-500">
+            Using local image storage (dev mode). Configure Cloudinary in client/.env for hosted uploads.
           </p>
         )}
         <input

@@ -132,15 +132,18 @@ export function PosPage(): JSX.Element {
   const [payments, setPayments] = useState<PaymentRow[]>([newPaymentRow('CASH')]);
   const [idempotencyKey, setIdempotencyKey] = useState<string>(() => freshIdempotencyKey());
 
-  // Online/offline mirror.
+  // Online/offline mirror. pendingCount is async (Dexie/IndexedDB), so we
+  // poll into state instead of reading it synchronously.
   const [online, setOnline] = useState<boolean>(navigator.onLine);
-  const [pending, setPending] = useState<number>(() => pendingCount());
+  const [pending, setPending] = useState<number>(0);
   useEffect(() => {
     const onOnline = (): void => setOnline(true);
     const onOffline = (): void => setOnline(false);
     window.addEventListener('online', onOnline);
     window.addEventListener('offline', onOffline);
-    const t = window.setInterval(() => setPending(pendingCount()), 5000);
+    const refresh = async (): Promise<void> => setPending(await pendingCount());
+    void refresh();
+    const t = window.setInterval(() => void refresh(), 5000);
     return () => {
       window.removeEventListener('online', onOnline);
       window.removeEventListener('offline', onOffline);

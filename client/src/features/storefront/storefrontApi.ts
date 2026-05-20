@@ -23,6 +23,10 @@ export interface PublicProduct {
   basePricePaise: number;
   stoneChargePaise: number;
   categoryId: string;
+  /** BIS Hallmark Unique ID (6-char). Null for non-gold pieces. */
+  bisHuid: string | null;
+  /** ISO timestamp of when the piece was hallmarked. */
+  hallmarkedAt: string | null;
   isPublished: boolean;
   createdAt: string;
 }
@@ -42,6 +46,21 @@ export interface PublicGoldRate {
 export interface PublicGoldRateResponse {
   rates: PublicGoldRate[];
   asOf: string;
+}
+
+// Saved shipping address, as returned by /customers/identify. Default-first
+// ordering on the server means index 0 is the one to pre-fill at checkout.
+export interface SavedAddress {
+  id: string;
+  label: string | null;
+  name: string;
+  phone: string;
+  line1: string;
+  line2: string | null;
+  city: string;
+  state: string;
+  pincode: string;
+  isDefault: boolean;
 }
 
 export const storefrontApi = baseApi.injectEndpoints({
@@ -108,6 +127,49 @@ export const storefrontApi = baseApi.injectEndpoints({
       transformResponse: (raw: { data: PublicCategory[] }) => raw.data,
       providesTags: [{ type: 'Category', id: 'PUBLIC' }],
     }),
+    // Public reviews for a product. Returns aggregate (avg, count, per-star
+    // distribution) + a limited list of recent reviews. Author names are
+    // already privacy-redacted server-side (first name + last initial +
+    // masked phone tail).
+    getProductReviews: build.query<
+      {
+        summary: {
+          avg: number;
+          count: number;
+          distribution: Record<'1' | '2' | '3' | '4' | '5', number>;
+        };
+        reviews: Array<{
+          id: string;
+          rating: number;
+          title: string | null;
+          body: string;
+          photos: string[];
+          createdAt: string;
+          author: { name: string; phoneMasked: string | null };
+        }>;
+      },
+      { slug: string; limit?: number }
+    >({
+      query: ({ slug, limit }) => ({
+        url: `/website/products/${slug}/reviews`,
+        params: typeof limit === 'number' ? { limit } : undefined,
+      }),
+      transformResponse: (raw: {
+        data: {
+          summary: { avg: number; count: number; distribution: Record<'1' | '2' | '3' | '4' | '5', number> };
+          reviews: Array<{
+            id: string;
+            rating: number;
+            title: string | null;
+            body: string;
+            photos: string[];
+            createdAt: string;
+            author: { name: string; phoneMasked: string | null };
+          }>;
+        };
+      }) => raw.data,
+      providesTags: (_r, _e, a) => [{ type: 'Order', id: `REVIEWS:${a.slug}` }],
+    }),
     // Public storefront checkout. Server computes prices from the DB, so client cart
     // pricing can't be tampered with. Creates Order + OrderItems + (if needed) Customer.
     lookupOrder: build.query<
@@ -145,6 +207,9 @@ export const storefrontApi = baseApi.injectEndpoints({
       transformResponse: (raw: { data: never }) => raw.data,
     }),
     // List of every order on a phone — drives My Orders on AccountPage.
+    // `review` is the customer's prior review (if any) — null on un-reviewed
+    // orders so the UI can branch between a "Write a review" CTA and a
+    // read-only "Reviewed" pill.
     listOrdersByPhone: build.query<
       Array<{
         id: string;
@@ -152,12 +217,53 @@ export const storefrontApi = baseApi.injectEndpoints({
         totalPaise: number;
         createdAt: string;
         expectedDeliveryAt: string | null;
+        paymentMethod: 'cod' | 'razorpay' | 'reserve-at-store';
+        paymentStatus: 'PENDING' | 'PAID' | 'FAILED';
         items: Array<{ id: string; qty: number; product?: { name: string; images: string[] } }>;
+        review: {
+          id: string;
+          rating: number;
+          title: string | null;
+          body: string;
+          photos: string[];
+          createdAt: string;
+        } | null;
       }>,
-      { phone: string }
+      // `customerId` (when the visitor is signed in) joins on the immutable
+      // Customer PK and is preferred by the server — protects against any
+      // phone-format drift between account.phone and the Customer row the
+      // order is linked to. `phone` stays as a fallback for the public
+      // /store/track lookup which doesn't have customerId in hand.
+      { phone: string; customerId?: string }
     >({
-      query: ({ phone }) => ({ url: '/website/orders/by-phone', params: { phone } }),
+      query: ({ phone, customerId }) => ({
+        url: '/website/orders/by-phone',
+        params: customerId ? { phone, customerId } : { phone },
+      }),
       transformResponse: (raw: { data: never }) => raw.data,
+      providesTags: (result) =>
+        result
+          ? [
+              ...result.map(({ id }) => ({ type: 'Order' as const, id })),
+              { type: 'Order' as const, id: 'BY_PHONE' },
+            ]
+          : [{ type: 'Order' as const, id: 'BY_PHONE' }],
+    }),
+    // Customer-authored review on a delivered order. Phone is the auth —
+    // server verifies it matches the order's customer before accepting.
+    createOrderReview: build.mutation<
+      { id: string; rating: number; title: string | null; body: string; photos: string[]; createdAt: string },
+      { orderId: string; phone: string; rating: number; title?: string; body: string; photos?: string[] }
+    >({
+      query: ({ orderId, ...body }) => ({
+        url: `/website/orders/${orderId}/review`,
+        method: 'POST',
+        body,
+      }),
+      transformResponse: (raw: { data: { id: string; rating: number; title: string | null; body: string; photos: string[]; createdAt: string } }) => raw.data,
+      // Bump the by-phone listing so the "Write review" → "Reviewed" UI
+      // flip happens on the next render without waiting for the 20s poll.
+      invalidatesTags: [{ type: 'Order', id: 'BY_PHONE' }],
     }),
     createPublicOrder: build.mutation<
       {
@@ -173,7 +279,7 @@ export const storefrontApi = baseApi.injectEndpoints({
         } | null;
       },
       {
-        customer: { name: string; phone: string };
+        customer: { name: string; phone: string; email?: string };
         items: Array<{ productId: string; qty: number }>;
         paymentMethod?: 'reserve-at-store' | 'razorpay' | 'cod';
         shippingPaise?: number;
@@ -186,6 +292,8 @@ export const storefrontApi = baseApi.injectEndpoints({
           state: string;
           pincode: string;
         };
+        notes?: string;
+        saveAddress?: boolean;
       }
     >({
       query: (body) => ({ url: '/website/orders', method: 'POST', body }),
@@ -221,6 +329,54 @@ export const storefrontApi = baseApi.injectEndpoints({
       }),
       transformResponse: (raw: { data: { id: string; paymentStatus: 'PAID'; alreadyPaid: boolean } }) => raw.data,
     }),
+    // Sign-in / sign-up for the storefront. Phone is the identity; the server
+    // upserts a Customer and (on new signups or high-intent re-engagement)
+    // creates a Lead so the sales team can call/message the visitor. Returns
+    // the canonical server-side cart + wishlist so the UI hydrates from a
+    // single round-trip after auth.
+    identifyCustomer: build.mutation<
+      {
+        customer: { id: string; name: string; phone: string; email: string | null };
+        isNew: boolean;
+        cart: Array<{
+          productId: string;
+          qty: number;
+          pricePaise: number;
+          product: { name: string; slug: string; images: string[]; weightMg: number; purityCaratX100: number };
+        }>;
+        wishlist: Array<{
+          productId: string;
+          product: {
+            name: string;
+            slug: string;
+            images: string[];
+            weightMg: number;
+            purityCaratX100: number;
+            basePricePaise: number;
+            stoneChargePaise: number;
+          };
+        }>;
+        addresses: Array<SavedAddress>;
+      },
+      {
+        phone: string;
+        name?: string;
+        email?: string;
+        pincode?: string;
+        dob?: string;
+        anniversary?: string;
+        intent?: 'buy-now' | 'add-to-cart' | 'wishlist' | 'checkout' | 'browse';
+        interest?: string;
+        utmSource?: string;
+        utmCampaign?: string;
+        mergeCart?: Array<{ productId: string; qty: number }>;
+        mergeWishlist?: Array<{ productId: string }>;
+      }
+    >({
+      query: (body) => ({ url: '/website/customers/identify', method: 'POST', body }),
+      transformResponse: (raw: { data: never }) => raw.data,
+      invalidatesTags: [{ type: 'Lead', id: 'LIST' }],
+    }),
     // Public lead/enquiry submission. Reservations from the storefront PDP land here as Leads.
     createEnquiry: build.mutation<
       { id: string },
@@ -241,9 +397,12 @@ export const {
   useGetPublicProductsQuery,
   useGetPublicCollectionsQuery,
   useCreateEnquiryMutation,
+  useIdentifyCustomerMutation,
   useCreatePublicOrderMutation,
   useVerifyRazorpayPaymentMutation,
   useLazyLookupOrderQuery,
   useLookupOrderQuery,
   useListOrdersByPhoneQuery,
+  useCreateOrderReviewMutation,
+  useGetProductReviewsQuery,
 } = storefrontApi;

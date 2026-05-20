@@ -77,7 +77,7 @@ export function SettingsPage(): JSX.Element {
         description="Set once, used everywhere — invoices, GST returns, the public storefront, WhatsApp templates."
       >
         <dl className="divide-y divide-ink-100">
-          <Row label="Business name" value="Anant Jewellers" />
+          <Row label="Business name" value="Zelora" />
           <Row label="Plan" value={<Badge tone="brand">Starter · demo</Badge>} />
           <Row label="App brand" value={APP_NAME} />
           <Row label="Sign-in email" value={<span className="font-mono text-xs">{ADMIN_EMAIL}</span>} />

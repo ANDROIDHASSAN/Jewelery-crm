@@ -29,6 +29,19 @@ export function isCloudinaryConfigured(): boolean {
   return Boolean(CLOUD_NAME && UPLOAD_PRESET);
 }
 
+// Read a File as a base64 data URL so we can embed it directly into an
+// entity's images[] when Cloudinary isn't configured. This is the dev
+// fallback path — fine for small catalogs, not recommended for prod (data
+// URLs bloat the DB row + every storefront response).
+function fileToDataUrl(file: File): Promise<string> {
+  return new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = (): void => resolve(String(reader.result));
+    reader.onerror = (): void => reject(new Error('Failed to read file'));
+    reader.readAsDataURL(file);
+  });
+}
+
 export interface CloudinaryUploadResult {
   secureUrl: string;
   publicId: string;
@@ -42,16 +55,29 @@ export async function uploadImageToCloudinary(
   file: File,
   opts: { folder?: string; onProgress?: (pct: number) => void } = {},
 ): Promise<CloudinaryUploadResult> {
-  if (!CLOUD_NAME || !UPLOAD_PRESET) {
-    throw new Error(
-      'Cloudinary is not configured. Set VITE_CLOUDINARY_CLOUD_NAME and VITE_CLOUDINARY_UPLOAD_PRESET in client/.env.',
-    );
-  }
   if (!file.type.startsWith('image/')) {
     throw new Error('Only image files are supported');
   }
   if (file.size > 8 * 1024 * 1024) {
     throw new Error('Image must be under 8 MB');
+  }
+
+  // Dev fallback: when Cloudinary isn't configured, embed the image as a
+  // base64 data URL so the upload widget still "just works" without external
+  // setup. Production should configure Cloudinary so storefront responses
+  // stay slim.
+  if (!CLOUD_NAME || !UPLOAD_PRESET) {
+    opts.onProgress?.(50);
+    const dataUrl = await fileToDataUrl(file);
+    opts.onProgress?.(100);
+    return {
+      secureUrl: dataUrl,
+      publicId: `local/${file.name}`,
+      width: 0,
+      height: 0,
+      bytes: file.size,
+      format: file.type.replace('image/', ''),
+    };
   }
 
   const form = new FormData();

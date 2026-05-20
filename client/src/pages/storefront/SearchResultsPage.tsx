@@ -2,24 +2,52 @@ import { useMemo } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { Search as SearchIcon } from 'lucide-react';
 import { useAppSelector } from '@/app/hooks';
-import { useGetPublicProductsQuery } from '@/features/storefront/storefrontApi';
+import {
+  useGetPublicProductsQuery,
+  useGetPublicCollectionsQuery,
+} from '@/features/storefront/storefrontApi';
 
 export function SearchResultsPage(): JSX.Element {
   const [params] = useSearchParams();
   const q = (params.get('q') ?? '').trim();
   const collections = useAppSelector((s) => s.storefrontContent.collections);
   const { data: products = [], isLoading } = useGetPublicProductsQuery();
+  const { data: categories = [] } = useGetPublicCollectionsQuery();
 
   const productMatches = useMemo(() => {
     if (!q) return [];
-    const needle = q.toLowerCase();
-    return products.filter(
-      (p) =>
-        p.name.toLowerCase().includes(needle) ||
-        p.descriptionMd.toLowerCase().includes(needle) ||
-        p.slug.includes(needle),
-    );
-  }, [q, products]);
+    // Search against name + slug + category-name only — NOT descriptionMd.
+    // Descriptions on a gold-jewellery catalogue contain "gold", "BIS",
+    // "hallmarked" etc. on every row, so substring-matching descriptions
+    // turns a search for "gold" into "return everything". By indexing on
+    // name/slug/category we get tight, expected results.
+    //
+    // Tokenize on whitespace and require EVERY token to be present
+    // somewhere in the haystack — "rose gold ring" should match pieces
+    // tagged rose-gold AND named ring, not just one or the other.
+    const tokens = q.toLowerCase().split(/\s+/).filter(Boolean);
+    if (tokens.length === 0) return [];
+    const categoryNameById = new Map(categories.map((c) => [c.id, c.name.toLowerCase()]));
+    const scored = products
+      .map((p) => {
+        const name = p.name.toLowerCase();
+        const slug = p.slug.toLowerCase();
+        const cat = categoryNameById.get(p.categoryId) ?? '';
+        const haystack = `${name} ${slug} ${cat}`;
+        if (!tokens.every((t) => haystack.includes(t))) return null;
+        // Rank: products where ALL tokens hit the name come first (an exact
+        // intent match), then slug-only, then category-only fallbacks. Within
+        // a tier, name-startsWith beats name-contains.
+        const allInName = tokens.every((t) => name.includes(t));
+        const allInSlug = tokens.every((t) => slug.includes(t));
+        const startsWithFirst = name.startsWith(tokens[0] ?? '');
+        const rank = allInName ? (startsWithFirst ? 0 : 1) : allInSlug ? 2 : 3;
+        return { product: p, rank };
+      })
+      .filter((x): x is { product: typeof products[number]; rank: number } => x !== null)
+      .sort((a, b) => a.rank - b.rank);
+    return scored.map((s) => s.product);
+  }, [q, products, categories]);
 
   const collectionMatches = useMemo(() => {
     if (!q) return [];

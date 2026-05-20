@@ -55,10 +55,28 @@ export interface CustomerAccount {
   customerId?: string;
 }
 
+// Mirror of the server-side CustomerAddress shape — saved at sign-in so the
+// checkout form can pre-fill from the default address without an extra
+// round-trip. Stored in localStorage along with the rest of shop state so
+// the prefill survives page reloads.
+export interface SavedShopAddress {
+  id: string;
+  label: string | null;
+  name: string;
+  phone: string;
+  line1: string;
+  line2: string | null;
+  city: string;
+  state: string;
+  pincode: string;
+  isDefault: boolean;
+}
+
 interface ShopState {
   cart: CartItem[];
   wishlist: WishlistItem[];
   account: CustomerAccount;
+  addresses: SavedShopAddress[];
 }
 
 const STORAGE_KEY = 'zelora.shop';
@@ -67,19 +85,20 @@ const EMPTY_ACCOUNT: CustomerAccount = { name: '', email: '', phone: '', signedI
 
 function readStored(): ShopState {
   if (typeof window === 'undefined') {
-    return { cart: [], wishlist: [], account: EMPTY_ACCOUNT };
+    return { cart: [], wishlist: [], account: EMPTY_ACCOUNT, addresses: [] };
   }
   try {
     const raw = window.localStorage.getItem(STORAGE_KEY);
-    if (!raw) return { cart: [], wishlist: [], account: EMPTY_ACCOUNT };
+    if (!raw) return { cart: [], wishlist: [], account: EMPTY_ACCOUNT, addresses: [] };
     const parsed = JSON.parse(raw) as Partial<ShopState>;
     return {
       cart: Array.isArray(parsed.cart) ? parsed.cart : [],
       wishlist: Array.isArray(parsed.wishlist) ? parsed.wishlist : [],
       account: { ...EMPTY_ACCOUNT, ...(parsed.account ?? {}) },
+      addresses: Array.isArray(parsed.addresses) ? parsed.addresses : [],
     };
   } catch {
-    return { cart: [], wishlist: [], account: EMPTY_ACCOUNT };
+    return { cart: [], wishlist: [], account: EMPTY_ACCOUNT, addresses: [] };
   }
 }
 
@@ -143,11 +162,50 @@ const slice = createSlice({
     },
     signOut(state) {
       state.account = EMPTY_ACCOUNT;
-      // Clear local cart + wishlist on sign-out so a shared device doesn't
-      // leak the previous customer's bag to the next visitor. The persisted
-      // server-side cart stays untouched; signing back in restores it.
+      // Clear local cart + wishlist + addresses on sign-out so a shared device
+      // doesn't leak the previous customer's data to the next visitor. The
+      // persisted server-side cart/address book stays untouched; signing back
+      // in restores it.
       state.cart = [];
       state.wishlist = [];
+      state.addresses = [];
+    },
+
+    // Replaces just the wishlist with the canonical server response. Used
+    // by WishlistPage on mount when the customer is signed in, so the page
+    // always shows what /website/wishlist returns from the DB rather than
+    // whatever happens to live in localStorage. Pure mapping — the shape
+    // mirrors hydrateFromServer's wishlist payload so both can share the
+    // same server-response type.
+    replaceWishlist(
+      state,
+      action: PayloadAction<
+        Array<{
+          productId: string;
+          product: {
+            name: string;
+            slug: string;
+            images: string[];
+            weightMg: number;
+            purityCaratX100: number;
+            basePricePaise: number;
+            stoneChargePaise: number;
+          };
+        }>
+      >,
+    ) {
+      state.wishlist = action.payload.map((w) => {
+        const pricePaise = w.product.basePricePaise + w.product.stoneChargePaise;
+        return {
+          slug: w.product.slug,
+          productId: w.productId,
+          name: w.product.name,
+          weight: `${(w.product.weightMg / 1000).toFixed(2)}g`,
+          priceLabel: `₹${(pricePaise / 100).toLocaleString('en-IN')}`,
+          pricePaise,
+          img: w.product.images[0] ?? '',
+        };
+      });
     },
 
     // Replaces local cart + wishlist + customer identity with the snapshot
@@ -177,9 +235,10 @@ const slice = createSlice({
             stoneChargePaise: number;
           };
         }>;
+        addresses?: SavedShopAddress[];
       }>,
     ) {
-      const { customer, cart, wishlist } = action.payload;
+      const { customer, cart, wishlist, addresses } = action.payload;
       state.account = {
         name: customer.name,
         email: customer.email ?? '',
@@ -209,6 +268,29 @@ const slice = createSlice({
           img: w.product.images[0] ?? '',
         };
       });
+      // Caller passes `addresses` from /customers/identify. Treat undefined as
+      // "not provided" (don't wipe existing list); empty array as "customer
+      // has no saved addresses yet".
+      if (Array.isArray(addresses)) {
+        state.addresses = addresses;
+      }
+    },
+
+    // Optimistic local-only insert after a successful checkout — keeps the
+    // address-book prefill fresh without forcing a re-identify round trip.
+    upsertAddress(state, action: PayloadAction<SavedShopAddress>) {
+      const incoming = action.payload;
+      const existingIdx = state.addresses.findIndex(
+        (a) => a.line1 === incoming.line1 && a.pincode === incoming.pincode,
+      );
+      if (incoming.isDefault) {
+        state.addresses = state.addresses.map((a) => ({ ...a, isDefault: false }));
+      }
+      if (existingIdx >= 0) {
+        state.addresses[existingIdx] = incoming;
+      } else {
+        state.addresses.unshift(incoming);
+      }
     },
   },
 });
@@ -224,6 +306,8 @@ export const {
   updateAccount,
   signOut,
   hydrateFromServer,
+  replaceWishlist,
+  upsertAddress,
 } = slice.actions;
 
 export const shopReducer = slice.reducer;

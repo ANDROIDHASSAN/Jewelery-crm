@@ -16,6 +16,10 @@ function formatLiveRate(paise: number | undefined, fallback: string): string {
 }
 
 const NAV = [
+  // "All" jumps to /store/collections (no slug) which renders the full
+  // catalogue with the same filter sidebar + search input as a single
+  // collection page. Lives at the front so it reads as the entry point.
+  { to: '/store/collections', label: 'All', end: true },
   { to: '/store/collections/bridal', label: 'Bridal' },
   { to: '/store/collections/daily-wear', label: 'Daily wear' },
   { to: '/store/collections/festive', label: 'Festive' },
@@ -151,6 +155,7 @@ export function StorefrontHeader(): JSX.Element {
               <NavLink
                 key={n.to}
                 to={n.to}
+                end={n.end}
                 className={({ isActive }) =>
                   cn(
                     'relative py-2 transition-colors duration-fast',
@@ -286,6 +291,7 @@ export function StorefrontHeader(): JSX.Element {
                 <NavLink
                   key={n.to}
                   to={n.to}
+                  end={n.end}
                   onClick={() => setMobileOpen(false)}
                   className={({ isActive }) =>
                     cn(

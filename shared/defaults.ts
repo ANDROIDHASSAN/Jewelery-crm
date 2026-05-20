@@ -9,7 +9,7 @@
 // `StorefrontContent` should `StorefrontContentSchema.parse(...)` it.
 export const DEFAULT_STOREFRONT_CONTENT = {
   brand: {
-    name: 'Anant Jewellers',
+    name: 'Zelora',
     tagline: 'Family jewellers since 1972. Hallmarked gold. Transparent pricing. Hand-crafted in Haryana.',
     logo: '/logo/zelora-mark.png',
   },

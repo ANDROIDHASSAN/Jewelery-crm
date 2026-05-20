@@ -3,6 +3,7 @@ import { Outlet } from 'react-router-dom';
 import { MessageCircle } from 'lucide-react';
 import { StorefrontHeader } from './StorefrontHeader';
 import { StorefrontFooter } from './StorefrontFooter';
+import { AuthGateProvider } from './AuthSheet';
 import { setContent } from './storefrontContentSlice';
 import { useGetPublicStorefrontQuery } from './storefrontApi';
 import { useAppDispatch, useAppSelector } from '@/app/hooks';
@@ -20,6 +21,7 @@ export function StorefrontLayout(): JSX.Element {
   }, [data, dispatch]);
 
   return (
+    <AuthGateProvider>
     <div className="min-h-screen flex flex-col bg-ink-0">
       <StorefrontHeader />
       {/* pb-* keeps page CTAs (Place order, Move to bag, Refresh now)
@@ -39,5 +41,6 @@ export function StorefrontLayout(): JSX.Element {
         <MessageCircle className="h-5 w-5 sm:h-6 sm:w-6" />
       </a>
     </div>
+    </AuthGateProvider>
   );
 }

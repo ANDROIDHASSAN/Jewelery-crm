@@ -127,6 +127,114 @@ websiteRouter.get('/products', async (req, res, next) => {
   }
 });
 
+// Public per-product reviews. Reviews live on Orders (not directly on Products)
+// so we resolve through OrderItem — any review on an order that included this
+// product counts toward the product's review list. Returns:
+//   - summary: { avg, count, distribution: { 5: n, 4: n, 3: n, 2: n, 1: n } }
+//   - reviews: list of recent reviews with a privacy-redacted customer name
+//
+// Tenant-scoped via the product lookup; the review query is then filtered to
+// the same tenant so a leaked review-id from one tenant can never appear under
+// a slug-collision in another (slugs are unique within a tenant, not globally).
+websiteRouter.get('/products/:slug/reviews', async (req, res, next) => {
+  try {
+    const params = z.object({ slug: z.string().min(1) }).parse(req.params);
+    const limit = z.coerce.number().int().min(1).max(50).default(20).parse(req.query['limit'] ?? 20);
+    const tenantId = await tenantFromQueryOrFirst(req);
+
+    const product = await rawPrisma.product.findFirst({
+      where: { tenantId, slug: params.slug, isPublished: true },
+      select: { id: true },
+    });
+    if (!product) {
+      res.status(404).json({ error: { message: 'Product not found' } });
+      return;
+    }
+
+    // Reviews on every order that included this product. The OrderItem
+    // -> Order -> OrderReview chain is enforced server-side; we only return
+    // reviews whose order is in this tenant (defence-in-depth against
+    // slug-collision edge cases).
+    const reviewRows = await rawPrisma.orderReview.findMany({
+      where: {
+        tenantId,
+        order: {
+          items: { some: { productId: product.id } },
+        },
+      },
+      orderBy: { createdAt: 'desc' },
+      take: limit,
+      select: {
+        id: true,
+        rating: true,
+        title: true,
+        body: true,
+        photos: true,
+        createdAt: true,
+        customer: { select: { name: true, phone: true } },
+      },
+    });
+
+    // Aggregate stats across ALL reviews for this product (not just the
+    // limited slice we return). A separate groupBy keeps the average accurate
+    // even when the listing is paginated.
+    const allRatings = await rawPrisma.orderReview.groupBy({
+      by: ['rating'],
+      where: {
+        tenantId,
+        order: { items: { some: { productId: product.id } } },
+      },
+      _count: { rating: true },
+    });
+    const distribution: Record<1 | 2 | 3 | 4 | 5, number> = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 };
+    let total = 0;
+    let weighted = 0;
+    for (const row of allRatings) {
+      const r = row.rating as 1 | 2 | 3 | 4 | 5;
+      const c = row._count.rating;
+      distribution[r] = c;
+      total += c;
+      weighted += r * c;
+    }
+    const avg = total > 0 ? weighted / total : 0;
+
+    // Privacy: render customer name as "First L." + a masked phone tail so
+    // a casual reader can't read a phone off the public review. The
+    // OrderReviewSheet already promises this to the customer.
+    const reviews = reviewRows.map((r) => {
+      const parts = (r.customer?.name ?? 'Customer').trim().split(/\s+/);
+      const first = parts[0] ?? 'Customer';
+      const lastInitial = parts[1]?.[0] ? `${parts[1][0]}.` : '';
+      const phoneTail = r.customer?.phone ? r.customer.phone.slice(-4) : '';
+      return {
+        id: r.id,
+        rating: r.rating,
+        title: r.title,
+        body: r.body,
+        photos: r.photos,
+        createdAt: r.createdAt,
+        author: {
+          name: lastInitial ? `${first} ${lastInitial}` : first,
+          phoneMasked: phoneTail ? `••• ${phoneTail}` : null,
+        },
+      };
+    });
+
+    res.json({
+      data: {
+        summary: {
+          avg: Math.round(avg * 10) / 10, // one-decimal precision
+          count: total,
+          distribution,
+        },
+        reviews,
+      },
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
 // Public storefront checkout. Creates (or reuses by phone) a Customer, then
 // builds an Order with line items. Admin's EcommerceAdminPage picks it up
 // via the protected /ecommerce/orders endpoint.
@@ -151,11 +259,23 @@ const OrderCreatePublicSchema = z.object({
   customer: z.object({
     name: z.string().min(2).max(120),
     phone: IndianPhoneSchema,
+    // Optional contact extras — captured at checkout when the visitor hasn't
+    // already filled them in via /customers/identify. Server persists them
+    // on the Customer row if (and only if) the column is still empty, so an
+    // admin edit never gets overwritten by a self-service checkout.
+    email: z.string().email().max(180).optional(),
   }),
   items: z.array(OrderItemPublicSchema).min(1).max(50),
   paymentMethod: z.enum(['reserve-at-store', 'razorpay', 'cod']).default('reserve-at-store'),
   shippingPaise: z.number().int().min(0).default(0),
   shippingAddress: ShippingAddressSchema.optional(),
+  // Free-form note from the visitor (engraving requests, size confirmation,
+  // gift wrap instructions). Surfaced to the sales team via the Lead
+  // activity timeline + the admin order detail page.
+  notes: z.string().max(800).optional(),
+  // If true, the shipping address gets saved to the address book so the next
+  // checkout pre-fills it. Defaults to true since that's the expected UX.
+  saveAddress: z.boolean().default(true),
 });
 
 websiteRouter.post('/orders', async (req, res, next) => {
@@ -200,7 +320,7 @@ websiteRouter.post('/orders', async (req, res, next) => {
       // idempotent on (tenantId, phone).
       const existing = await rawPrisma.customer.findFirst({
         where: { tenantId, phone: body.customer.phone },
-        select: { id: true },
+        select: { id: true, email: true },
       });
       const customer =
         existing ??
@@ -209,10 +329,71 @@ websiteRouter.post('/orders', async (req, res, next) => {
             tenantId,
             name: body.customer.name,
             phone: body.customer.phone,
+            email: body.customer.email ?? null,
             tags: ['Storefront'],
           },
-          select: { id: true },
+          select: { id: true, email: true },
         }));
+
+      // Backfill email if the existing customer didn't have one. Never
+      // overwrite a stored email — that belongs to admin edits.
+      if (existing && !existing.email && body.customer.email) {
+        await rawPrisma.customer.update({
+          where: { id: existing.id },
+          data: { email: body.customer.email },
+        });
+      }
+
+      // Save the typed shipping address to the customer's address book so
+      // the next checkout pre-fills it. Idempotent: if an identical address
+      // already exists we just mark it default; otherwise we insert and flip
+      // the previous default off. Address book updates never touch the
+      // Order.shipping* snapshot — that stays frozen at order time.
+      if (body.saveAddress && body.shippingAddress) {
+        const addr = body.shippingAddress;
+        const dupe = await rawPrisma.customerAddress.findFirst({
+          where: {
+            tenantId,
+            customerId: customer.id,
+            line1: addr.line1,
+            pincode: addr.pincode,
+          },
+          select: { id: true },
+        });
+        if (dupe) {
+          await rawPrisma.$transaction([
+            rawPrisma.customerAddress.updateMany({
+              where: { tenantId, customerId: customer.id, isDefault: true, NOT: { id: dupe.id } },
+              data: { isDefault: false },
+            }),
+            rawPrisma.customerAddress.update({
+              where: { id: dupe.id },
+              data: { isDefault: true, name: addr.name, phone: addr.phone, line2: addr.line2 || null, city: addr.city, state: addr.state },
+            }),
+          ]);
+        } else {
+          await rawPrisma.$transaction([
+            rawPrisma.customerAddress.updateMany({
+              where: { tenantId, customerId: customer.id, isDefault: true },
+              data: { isDefault: false },
+            }),
+            rawPrisma.customerAddress.create({
+              data: {
+                tenantId,
+                customerId: customer.id,
+                name: addr.name,
+                phone: addr.phone,
+                line1: addr.line1,
+                line2: addr.line2 || null,
+                city: addr.city,
+                state: addr.state,
+                pincode: addr.pincode,
+                isDefault: true,
+              },
+            }),
+          ]);
+        }
+      }
 
       // Shiprocket-style default arrival SLA: 5 calendar days from order
       // placement. Admin can override per-order from EcommerceAdminPage; when
@@ -250,7 +431,16 @@ websiteRouter.post('/orders', async (req, res, next) => {
             })),
           },
           events: {
-            create: [{ tenantId, status: 'PENDING', note: 'Order placed', actorName: 'System' }],
+            // Surface the customer's free-form note (engraving, size, gift wrap)
+            // on the order timeline so the admin sees it without an extra lookup.
+            create: [
+              {
+                tenantId,
+                status: 'PENDING',
+                note: body.notes ? `Order placed · Note: ${body.notes}` : 'Order placed',
+                actorName: 'System',
+              },
+            ],
           },
         },
         select: {
@@ -500,14 +690,38 @@ websiteRouter.get('/orders/lookup', async (req, res, next) => {
 // All orders for a phone — drives the "My Orders" panel on AccountPage.
 // Returns lightweight payload (no events, no item-image blobs) so the list
 // renders fast even for a phone with 50+ past orders.
+//
+// `customerId` (when supplied by a signed-in client) is preferred over `phone`
+// because it joins on the immutable PK and is therefore immune to phone-format
+// mismatches between the signed-in account and the Customer row the order is
+// linked to. `/store/track` still uses the phone path — visitors there don't
+// have a customerId in hand.
 websiteRouter.get('/orders/by-phone', async (req, res, next) => {
   res.setHeader('Cache-Control', 'private, no-store');
   try {
-    const q = z.object({ phone: z.string().min(10) }).parse(req.query);
+    const q = z
+      .object({
+        phone: z.string().min(10).optional(),
+        customerId: z.string().min(1).optional(),
+      })
+      .refine((v) => v.phone || v.customerId, {
+        message: 'phone or customerId is required',
+      })
+      .parse(req.query);
     const tenantId = await tenantFromQueryOrFirst(req);
-    const normPhone = q.phone.startsWith('+') ? q.phone : `+91${q.phone.replace(/\D/g, '').slice(-10)}`;
+    // Prefer customerId — it survives phone-format drift between account and
+    // order. Fall back to phone for unauthenticated track-order lookups.
+    const where = q.customerId
+      ? { tenantId, customerId: q.customerId }
+      : (() => {
+          const phone = q.phone!;
+          const normPhone = phone.startsWith('+')
+            ? phone
+            : `+91${phone.replace(/\D/g, '').slice(-10)}`;
+          return { tenantId, customer: { phone: normPhone } } as const;
+        })();
     const orders = await rawPrisma.order.findMany({
-      where: { tenantId, customer: { phone: normPhone } },
+      where,
       orderBy: { createdAt: 'desc' },
       take: 50,
       select: {
@@ -516,10 +730,128 @@ websiteRouter.get('/orders/by-phone', async (req, res, next) => {
         totalPaise: true,
         createdAt: true,
         expectedDeliveryAt: true,
+        // Payment surface for the My Orders panel — method ('cod' /
+        // 'razorpay' / 'reserve-at-store') drives the badge label, status
+        // ('PENDING' / 'PAID' / 'FAILED') drives the colour. Customers see
+        // these alongside the fulfilment status so they can tell at a glance
+        // whether they still owe money on a COD shipment.
+        paymentMethod: true,
+        paymentStatus: true,
         items: { select: { id: true, qty: true, product: { select: { name: true, images: true } } } },
+        // Review (if any) — the AccountPage uses this to render either a
+        // "Write a review" CTA (review === null on a DELIVERED order) or a
+        // read-only "Reviewed" pill with the customer's rating.
+        review: {
+          select: { id: true, rating: true, title: true, body: true, photos: true, createdAt: true },
+        },
       },
     });
     res.json({ data: orders });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Customer-authored order review. Phone-authenticated like the rest of the
+// storefront — we verify the phone owns the order before accepting the write.
+// One review per order (enforced by the unique index on orderId); a second
+// POST returns 409. Only DELIVERED orders can be reviewed — anything else
+// returns 422 so the customer isn't reviewing a piece they haven't received.
+websiteRouter.post('/orders/:id/review', async (req, res, next) => {
+  res.setHeader('Cache-Control', 'private, no-store');
+  try {
+    const params = z.object({ id: z.string().min(1) }).parse(req.params);
+    const body = z
+      .object({
+        phone: z.string().min(10),
+        rating: z.number().int().min(1).max(5),
+        title: z.string().trim().max(120).optional(),
+        body: z.string().trim().min(4).max(2000),
+        photos: z.array(z.string().url()).max(6).optional(),
+      })
+      .parse(req.body);
+
+    const tenantId = await tenantFromQueryOrFirst(req);
+    const normPhone = body.phone.startsWith('+')
+      ? body.phone
+      : `+91${body.phone.replace(/\D/g, '').slice(-10)}`;
+
+    const order = await rawPrisma.order.findFirst({
+      where: { id: params.id, tenantId },
+      select: {
+        id: true,
+        status: true,
+        customerId: true,
+        customer: { select: { phone: true } },
+      },
+    });
+    if (!order) {
+      res.status(404).json({ error: { message: 'Order not found' } });
+      return;
+    }
+    if (order.customer?.phone !== normPhone) {
+      // Same shape as /orders/lookup's wrong-phone response — avoid leaking
+      // whether the order exists by collapsing into "not found".
+      res.status(404).json({ error: { message: 'Order not found' } });
+      return;
+    }
+    if (order.status !== 'DELIVERED') {
+      res
+        .status(422)
+        .json({ error: { message: 'Reviews can be added once the order is delivered.' } });
+      return;
+    }
+
+    try {
+      const review = await rawPrisma.orderReview.create({
+        data: {
+          tenantId,
+          orderId: order.id,
+          customerId: order.customerId,
+          rating: body.rating,
+          title: body.title?.trim() ? body.title.trim() : null,
+          body: body.body.trim(),
+          photos: body.photos ?? [],
+        },
+        select: {
+          id: true,
+          rating: true,
+          title: true,
+          body: true,
+          photos: true,
+          createdAt: true,
+        },
+      });
+      // Invalidate the per-phone listing so the UI picks up the new review
+      // on its next 20s poll without a hard refresh. Kept loose-grained — we
+      // don't have a phone-keyed cache entry for this list.
+      void bustKey(tenantId, `orders:by-phone:${normPhone}`);
+      res.status(201).json({ data: review });
+    } catch (e) {
+      // P2002 = unique violation — they tried to review twice. Return the
+      // existing review so the UI can switch to read-only display instead of
+      // surfacing an error toast.
+      const err = e as { code?: string };
+      if (err.code === 'P2002') {
+        const existing = await rawPrisma.orderReview.findUnique({
+          where: { orderId: order.id },
+          select: {
+            id: true,
+            rating: true,
+            title: true,
+            body: true,
+            photos: true,
+            createdAt: true,
+          },
+        });
+        res.status(409).json({
+          error: { message: 'This order has already been reviewed.' },
+          data: existing,
+        });
+        return;
+      }
+      throw e;
+    }
   } catch (err) {
     next(err);
   }
@@ -542,6 +874,22 @@ const CustomerIdentifySchema = z.object({
   phone: IndianPhoneSchema,
   name: z.string().min(2).max(120).optional(),
   email: z.string().email().max(180).optional(),
+  // Optional 6-digit Indian pincode — captured at signup so the storefront
+  // knows where to ship and the sales team knows where the lead lives.
+  // Stored as a tag on the Customer (no dedicated column yet).
+  pincode: z.string().regex(/^[1-9][0-9]{5}$/).optional(),
+  // ISO date strings (YYYY-MM-DD). Optional, saved only on first capture so
+  // we never overwrite a value the admin already corrected.
+  dob: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  anniversary: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  // What action the visitor was trying to take when the auth wall fired.
+  // Drives lead-type derivation: a buy-now signup is hotter than a wishlist one.
+  intent: z.enum(['buy-now', 'add-to-cart', 'wishlist', 'checkout', 'browse']).optional(),
+  // Free-form interest hint, usually the product or collection that triggered
+  // the gate. Stored on the Lead.interest column so sales sees the context.
+  interest: z.string().max(180).optional(),
+  utmSource: z.string().max(64).optional(),
+  utmCampaign: z.string().max(64).optional(),
   // Optional bag merge — if the visitor had localStorage items before signing
   // in, we upsert those into the persisted cart so they don't lose work.
   mergeCart: z
@@ -550,6 +898,27 @@ const CustomerIdentifySchema = z.object({
     .optional(),
   mergeWishlist: z.array(z.object({ productId: z.string().min(1) })).max(50).optional(),
 });
+
+// Map storefront intent → initial Lead status + intent tag for the customer.
+// "buy-now" / "checkout" are explicit purchase signals → INTERESTED so sales
+// sees them at the top of the queue. Add-to-cart and wishlist sit in NEW
+// (warm). Browse-only signups stay NEW (cold). Tag is appended to Customer.tags
+// so the admin CRM can filter by warmth.
+function deriveLeadIntent(intent: string | undefined): {
+  status: 'NEW' | 'INTERESTED';
+  warmthTag: 'Hot' | 'Warm' | 'Cold';
+} {
+  switch (intent) {
+    case 'buy-now':
+    case 'checkout':
+      return { status: 'INTERESTED', warmthTag: 'Hot' };
+    case 'add-to-cart':
+    case 'wishlist':
+      return { status: 'NEW', warmthTag: 'Warm' };
+    default:
+      return { status: 'NEW', warmthTag: 'Cold' };
+  }
+}
 
 websiteRouter.post('/customers/identify', async (req, res, next) => {
   res.setHeader('Cache-Control', 'private, no-store');
@@ -567,24 +936,87 @@ websiteRouter.post('/customers/identify', async (req, res, next) => {
       // NB: the Customer model intentionally stores no email — admin POS
       // bills use phone as the canonical contact. Email coming in on the
       // identify payload is kept client-side only (shopSlice.account.email).
+      const isNew = !existing;
+      const intentMeta = deriveLeadIntent(body.intent);
+      // Build the tag list for new signups: Storefront source + warmth tag
+      // from intent + optional Pin:<6-digit> so the admin CRM can filter by
+      // region without a schema migration.
+      const newCustomerTags = ['Storefront', intentMeta.warmthTag];
+      if (body.pincode) newCustomerTags.push(`Pin:${body.pincode}`);
+
       const customer = existing
-        ? // Lightly patch name if the client passed an updated value and the
-          // existing row's name is generic ("Customer"). Never overwrite an
-          // already-edited name — that would erase admin edits.
-          existing.name && existing.name !== 'Customer'
-          ? existing
-          : await rawPrisma.customer.update({
-              where: { id: existing.id },
-              data: { name: body.name ?? existing.name },
-            })
+        ? // Existing customer — patch any missing profile fields the visitor
+          // just supplied (dob/anniversary), but never overwrite values the
+          // admin has already set. Name only gets touched if the existing one
+          // is the placeholder "Customer".
+          await rawPrisma.customer.update({
+            where: { id: existing.id },
+            data: {
+              name:
+                existing.name && existing.name !== 'Customer'
+                  ? existing.name
+                  : body.name ?? existing.name,
+              dob: existing.dob ?? (body.dob ? new Date(body.dob) : null),
+              anniversary:
+                existing.anniversary ?? (body.anniversary ? new Date(body.anniversary) : null),
+              // Append Pin:<code> tag if missing — non-destructive.
+              tags:
+                body.pincode && !existing.tags.includes(`Pin:${body.pincode}`)
+                  ? [...existing.tags, `Pin:${body.pincode}`]
+                  : existing.tags,
+            },
+          })
         : await rawPrisma.customer.create({
             data: {
               tenantId,
               name: body.name ?? 'Customer',
               phone: body.phone,
-              tags: ['Storefront'],
+              dob: body.dob ? new Date(body.dob) : null,
+              anniversary: body.anniversary ? new Date(body.anniversary) : null,
+              tags: newCustomerTags,
             },
           });
+
+      // Lead creation rules:
+      //   • New customer → always create a Lead so the sales team gets a fresh
+      //     row in their CRM with the signup context (intent + interest).
+      //   • Existing customer + high-intent (buy-now / checkout) → also create
+      //     a Lead so the sales team is alerted that a known customer is hot.
+      //     Add-to-cart / wishlist / browse on an existing customer is silent —
+      //     they already exist in the CRM and we don't want to spam new rows.
+      const shouldCreateLead =
+        isNew || body.intent === 'buy-now' || body.intent === 'checkout';
+      if (shouldCreateLead) {
+        const lead = await rawPrisma.lead.create({
+          data: {
+            tenantId,
+            source: 'storefront',
+            customerId: customer.id,
+            name: customer.name,
+            phone: customer.phone,
+            interest: body.interest ?? null,
+            status: intentMeta.status,
+            utmSource: body.utmSource ?? null,
+            utmCampaign: body.utmCampaign ?? null,
+          },
+        });
+        // Activity row gives the salesperson a one-glance reason this lead
+        // landed: intent + product/collection context. The admin lead-detail
+        // timeline reads from LeadActivity.
+        await rawPrisma.leadActivity.create({
+          data: {
+            leadId: lead.id,
+            type: 'storefront_signup',
+            notes: [
+              body.intent ? `Intent: ${body.intent}` : null,
+              body.interest ? `Viewing: ${body.interest}` : null,
+              isNew ? 'New signup' : 'Returning customer — re-engaged',
+            ]
+              .filter(Boolean)
+              .join(' · '),
+          },
+        });
+      }
 
       // Merge localStorage bag → persisted cart. Server-side product lookup
       // validates the product belongs to this tenant + is published, so we
@@ -626,7 +1058,7 @@ websiteRouter.post('/customers/identify', async (req, res, next) => {
         }
       }
 
-      const [cart, wishlist] = await Promise.all([
+      const [cart, wishlist, addresses] = await Promise.all([
         rawPrisma.cartItem.findMany({
           where: { tenantId, customerId: customer.id },
           orderBy: { addedAt: 'desc' },
@@ -637,8 +1069,14 @@ websiteRouter.post('/customers/identify', async (req, res, next) => {
           orderBy: { addedAt: 'desc' },
           include: { product: { select: hydratedProductSelect() } },
         }),
+        // Saved address book — default first so the client can prefill the
+        // checkout form. Cheap join (indexed on tenantId+customerId).
+        rawPrisma.customerAddress.findMany({
+          where: { tenantId, customerId: customer.id },
+          orderBy: [{ isDefault: 'desc' }, { updatedAt: 'desc' }],
+        }),
       ]);
-      return { customer, cart, wishlist };
+      return { customer, cart, wishlist, addresses, isNew };
     });
 
     res.json({
@@ -651,8 +1089,26 @@ websiteRouter.post('/customers/identify', async (req, res, next) => {
           // shopSlice can keep its locally-typed email without confusion.
           email: null as string | null,
         },
+        // True when this call created a fresh Customer row. The client uses
+        // it to choose between a "Welcome back" toast and a profile-completion
+        // nudge after the auth sheet closes.
+        isNew: result.isNew,
         cart: result.cart.map(serializeCartItem),
         wishlist: result.wishlist.map(serializeWishlistItem),
+        // Saved address book — checkout uses the default to prefill the form
+        // so returning customers don't retype line1/city/state every time.
+        addresses: result.addresses.map((a) => ({
+          id: a.id,
+          label: a.label,
+          name: a.name,
+          phone: a.phone,
+          line1: a.line1,
+          line2: a.line2,
+          city: a.city,
+          state: a.state,
+          pincode: a.pincode,
+          isDefault: a.isDefault,
+        })),
       },
     });
   } catch (err) {

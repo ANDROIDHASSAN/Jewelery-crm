@@ -21,7 +21,7 @@ const REGISTRY: Record<string, PageSpec> = {
   story: {
     eyebrow: 'Since 1972',
     title: 'Three generations, one workshop.',
-    intro: 'Anant Jewellers was founded by Shri Ramesh Lal in a small Gurugram lane in 1972. Today it is run by his grandson, with the same karigars sitting at the same workbenches — only the tools have changed.',
+    intro: 'Zelora was founded by Shri Ramesh Lal in a small Gurugram lane in 1972. Today it is run by his grandson, with the same karigars sitting at the same workbenches — only the tools have changed.',
     sections: [
       { heading: 'Hand-set, always', body: 'Every piece you see leaves our Gurugram workshop having been weighed, stamped, and finished by hand. No outsourced bulk lots, no factory imports.' },
       { heading: 'Transparent pricing', body: 'Gold weight × today\'s MCX rate, plus making charges and GST. Itemised on every bill. We weigh in front of you.' },

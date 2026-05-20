@@ -1,12 +1,67 @@
+import { useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { Heart, X } from 'lucide-react';
 import { toast } from 'sonner';
-import { useAppSelector } from '@/app/hooks';
+import { useAppDispatch, useAppSelector } from '@/app/hooks';
 import { useShopActions } from '@/features/storefront/useShopActions';
+import { replaceWishlist } from '@/features/storefront/shopSlice';
+import { useGetWishlistQuery } from '@/features/storefront/customerApi';
 
 export function WishlistPage(): JSX.Element {
   const wishlist = useAppSelector((s) => s.shop.wishlist);
+  const account = useAppSelector((s) => s.shop.account);
+  const dispatch = useAppDispatch();
   const shop = useShopActions();
+
+  // When the customer is signed in, the wishlist is the canonical
+  // server-side list — fetch it from /website/wishlist and mirror it
+  // into Redux so this page (and the TopBar badge count + AccountPage
+  // tile) reflect the database, not stale localStorage. Anonymous
+  // visitors continue to read Redux directly (backed by localStorage).
+  const isSignedIn = Boolean(account.signedIn && account.phone);
+  const {
+    data: serverWishlist,
+    isLoading: serverLoading,
+    isUninitialized,
+  } = useGetWishlistQuery(
+    { phone: account.phone },
+    { skip: !isSignedIn, refetchOnMountOrArgChange: true },
+  );
+
+  useEffect(() => {
+    if (serverWishlist) {
+      // serverWishlist already conforms to replaceWishlist's payload shape
+      // (productId + product summary). The mapping to local WishlistItem
+      // happens inside the reducer so price/weight formatting stays in one
+      // place — see shopSlice.replaceWishlist.
+      dispatch(replaceWishlist(serverWishlist));
+    }
+  }, [serverWishlist, dispatch]);
+
+  // Initial-fetch skeleton: only block render when we're signed in AND
+  // the server query hasn't resolved yet AND we have no cached items to
+  // show in the meantime. Anonymous users skip this entirely.
+  const isInitialFetch = isSignedIn && (serverLoading || isUninitialized) && wishlist.length === 0;
+
+  if (isInitialFetch) {
+    return (
+      <div className="max-w-[1280px] mx-auto px-4 sm:px-6 py-8 sm:py-10 md:py-14">
+        <header className="mb-8 sm:mb-10">
+          <p className="text-eyebrow uppercase text-ink-500">Saved for you</p>
+          <div className="h-10 sm:h-12 md:h-14 w-2/3 max-w-md rounded bg-ink-100 animate-pulse mt-2" />
+        </header>
+        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-x-3 gap-y-8 sm:gap-x-5 sm:gap-y-12 md:gap-x-6">
+          {Array.from({ length: 8 }).map((_, i) => (
+            <div key={i} className="space-y-3">
+              <div className="aspect-[4/5] bg-ink-100 animate-pulse" />
+              <div className="h-4 w-3/4 rounded bg-ink-100 animate-pulse" />
+              <div className="h-3 w-1/3 rounded bg-ink-100 animate-pulse" />
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  }
 
   if (wishlist.length === 0) {
     return (
