@@ -76,18 +76,20 @@ export function AccountPage(): JSX.Element {
   const [pincode, setPincode] = useState('');
   const [identify, { isLoading: signingIn }] = useIdentifyCustomerMutation();
 
-  // Self-heal legacy localStorage: older sign-ins (before AuthSheet existed)
-  // wrote raw input via the local-only `signIn` reducer, so the visitor ends
-  // up with account.signedIn=true but no customerId and a non-E.164 phone.
-  // Those accounts can't fetch orders by customerId (the new robust path),
-  // so we transparently re-identify against the server on mount — phone gets
-  // normalized to E.164, customerId is populated, and any local-only cart
-  // or wishlist items get pushed up so nothing's lost in the rehydrate.
+  // Self-heal legacy localStorage. Two failure modes to repair:
+  //   1. signedIn=true but no customerId / non-E.164 phone (old AuthSheet-less
+  //      sign-in flow wrote raw input via the local-only `signIn` reducer).
+  //   2. customerId is set but stale — points to a Customer row deleted by
+  //      a re-seed or merge. The phone is still valid; we just need to swap
+  //      the id. Pre-fix this caused "No orders yet" on accounts that had
+  //      real orders, because the legacy id no longer matched anything.
+  // In both cases we transparently re-identify against the server on mount —
+  // phone gets normalized to E.164, customerId is refreshed, and any
+  // local-only cart or wishlist items get pushed up so nothing's lost.
   const healedRef = useRef(false);
   useEffect(() => {
     if (healedRef.current) return;
     if (!account.signedIn) return;
-    if (account.customerId) return; // already healthy
     if (!account.phone) return;
     const digits = account.phone.replace(/\D/g, '').slice(-10);
     if (!/^[6-9]\d{9}$/.test(digits)) return; // can't normalize — bail

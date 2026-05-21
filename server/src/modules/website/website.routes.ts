@@ -738,17 +738,34 @@ websiteRouter.get('/orders/by-phone', async (req, res, next) => {
       })
       .parse(req.query);
     const tenantId = await tenantFromQueryOrFirst(req);
-    // Prefer customerId — it survives phone-format drift between account and
-    // order. Fall back to phone for unauthenticated track-order lookups.
-    const where = q.customerId
-      ? { tenantId, customerId: q.customerId }
-      : (() => {
-          const phone = q.phone!;
-          const normPhone = phone.startsWith('+')
-            ? phone
-            : `+91${phone.replace(/\D/g, '').slice(-10)}`;
-          return { tenantId, customer: { phone: normPhone } } as const;
-        })();
+    // Match orders the visitor placed by EITHER the provided customerId
+    // (precise — survives phone-format drift) OR the canonical phone match
+    // (resilient — survives a stale customerId in localStorage that points
+    // at a Customer row deleted by a re-seed). Pre-fix this used customerId
+    // *exclusively* when present, so a visitor whose localStorage held the
+    // old id would see "No orders yet" even though their orders sat right
+    // there in the DB linked via phone.
+    //
+    // Cross-customer leak isn't a concern: Customer is unique on
+    // (tenantId, phone), so the phone branch only ever resolves to the same
+    // visitor's row.
+    const normPhone = q.phone
+      ? q.phone.startsWith('+')
+        ? q.phone
+        : `+91${q.phone.replace(/\D/g, '').slice(-10)}`
+      : null;
+    const where =
+      q.customerId && normPhone
+        ? {
+            tenantId,
+            OR: [
+              { customerId: q.customerId },
+              { customer: { phone: normPhone } },
+            ],
+          }
+        : q.customerId
+          ? { tenantId, customerId: q.customerId }
+          : { tenantId, customer: { phone: normPhone! } };
     const orders = await rawPrisma.order.findMany({
       where,
       orderBy: { createdAt: 'desc' },
