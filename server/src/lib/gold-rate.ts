@@ -133,6 +133,23 @@ export async function pollMcxAndCache(): Promise<void> {
     return;
   }
 
+  // No GOLDAPI_KEY → skip the external call entirely and serve the most
+  // recent DB row (if any) flagged stale. Lets demo/preview Render deploys
+  // boot without a goldapi.io key.
+  if (!env.GOLDAPI_KEY) {
+    const latest = await rawPrisma.goldRateDaily.findFirst({ orderBy: { date: 'desc' } });
+    if (latest) {
+      await writeRatesToRedis(latest, true);
+      logger.warn(
+        { fallbackDate: latest.date.toISOString().slice(0, 10) },
+        '[gold-rate] GOLDAPI_KEY not set; serving last DB row, flagged stale',
+      );
+    } else {
+      logger.warn('[gold-rate] GOLDAPI_KEY not set and no prior DB row — storefront rate will be unset');
+    }
+    return;
+  }
+
   try {
     const row = await fetchAndPersistToday(today);
     await writeRatesToRedis(row, false);

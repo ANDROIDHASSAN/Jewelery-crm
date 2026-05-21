@@ -11,7 +11,6 @@ import { readGoldRatePaise } from '../../lib/redis.js';
 import { bustKey } from '../../lib/cache.js';
 import {
   createRazorpayOrder,
-  isRazorpayConfigured,
   verifyCheckoutSignature,
 } from '../../lib/razorpay.js';
 import { env } from '../../env.js';

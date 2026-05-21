@@ -31,9 +31,13 @@ const EnvSchema = z.object({
   TWILIO_ACCOUNT_SID: z.string().optional().default(''),
   TWILIO_AUTH_TOKEN: z.string().optional().default(''),
 
-  // GoldAPI.io key — sole source of gold/silver rates. Required.
-  // Sign up at https://www.goldapi.io for a free 100-req/month key.
-  GOLDAPI_KEY: z.string().min(10, 'GOLDAPI_KEY missing — sign up at goldapi.io for a free key'),
+  // GoldAPI.io key — sole source of gold/silver rates when set. Optional in
+  // env so deploys without a key (preview envs, demo Render services) can
+  // boot. When empty the daily worker skips the external API call and the
+  // storefront falls back to the last known DB row marked `stale`. Set
+  // GOLDAPI_KEY in production (free 100-req/month tier at goldapi.io) to
+  // keep the daily refresh running.
+  GOLDAPI_KEY: z.string().optional().default(''),
 
   RAZORPAY_KEY_ID: z.string().optional().default(''),
   RAZORPAY_KEY_SECRET: z.string().optional().default(''),
