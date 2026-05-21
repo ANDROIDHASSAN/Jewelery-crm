@@ -1,22 +1,29 @@
 // POS service — bill creation in a single transaction. Idempotent on idempotencyKey.
 // Per specs/gotchas.md: making + stone + GST, old gold exchange reduces taxable base (does NOT subtract making).
+//
+// Math lives in `@goldos/shared/bill-math` so the cashier's preview and
+// the server's authoritative numbers cannot drift — historically the
+// client showed wastage as a taxable line item and the server didn't,
+// which meant the customer saw a different total than the receipt.
 
 import { prisma, rawPrisma } from '../../lib/prisma.js';
-import { computeGoldValuePaise, applyBps, sumPaise } from '../../lib/money.js';
-import { computeGst } from '../../lib/gst.js';
+import { computeGoldValuePaise, applyBps } from '../../lib/money.js';
 import { readGoldRatePaise } from '../../lib/redis.js';
 import { BusinessRuleError, ConflictError, NotFoundError } from '../../lib/errors.js';
 import { getTenantId } from '../../lib/async-context.js';
 import type { BillCreate } from '@goldos/shared/types';
+import { computeBillTotals } from '@goldos/shared/bill-math';
 
 const DEFAULT_GOLD_RATE = 642_000; // ₹6,420/g — dev fallback.
-const DEFAULT_WASTAGE_BPS = 200; // 2% old gold wastage.
 
 export async function createBill(input: BillCreate, createdByUserId?: string) {
   const tenantId = getTenantId();
   if (!tenantId) throw new Error('tenantId missing');
 
-  // Idempotency: same key → original response.
+  // Idempotency: same key → original response. The unique key on
+  // (tenantId, idempotencyKey) means a queued offline bill re-posted by
+  // the sync loop will return the original Bill row instead of creating
+  // a duplicate.
   const existing = await prisma.bill.findUnique({
     where: { tenantId_idempotencyKey: { tenantId, idempotencyKey: input.idempotencyKey } },
     include: { lines: true, payments: true, oldGoldExchange: true },
@@ -34,6 +41,14 @@ export async function createBill(input: BillCreate, createdByUserId?: string) {
     // v1: storefront billing address state isn't stored on Customer yet — derive default intra.
     customerStateCode = null;
   }
+
+  // Find the cashier's open register session so day-close reconciliation
+  // can compute expected cash including offline-synced bills. Bills posted
+  // outside a session (e.g. seed scripts) leave this null.
+  const openSession = await prisma.registerSession.findFirst({
+    where: { shopId: input.shopId, status: 'OPEN' },
+    select: { id: true },
+  });
 
   // Build line data + check stock.
   const items = await prisma.item.findMany({
@@ -61,39 +76,37 @@ export async function createBill(input: BillCreate, createdByUserId?: string) {
     }),
   );
 
-  const subtotalPaise = sumPaise(lineComputes.map((c) => c.goldValuePaise));
-  const makingChargesPaise = sumPaise(lineComputes.map((c) => c.makingPaise));
-  const stoneChargesPaise = sumPaise(input.lines.map((l) => l.stoneChargePaise));
-
-  // Old gold exchange — pure gold value back, NO making. Wastage deduction applies.
-  let oldGoldValuePaise = 0;
+  // Resolve the old-gold rate (matched to the exchanged piece's purity) so
+  // shared/bill-math computes wastage off the same number we'll persist.
+  let oldGoldRatePaise = DEFAULT_GOLD_RATE;
   if (input.oldGoldExchange) {
-    const og = input.oldGoldExchange;
-    const cached = await readGoldRatePaise(og.purityCaratX100);
-    const ratePerGramPaise = cached?.paise ?? DEFAULT_GOLD_RATE;
-    const gross = computeGoldValuePaise(og.weightMg, og.purityCaratX100, ratePerGramPaise);
-    const wastage = applyBps(gross, DEFAULT_WASTAGE_BPS);
-    oldGoldValuePaise = gross - wastage;
+    const cached = await readGoldRatePaise(input.oldGoldExchange.purityCaratX100);
+    oldGoldRatePaise = cached?.paise ?? DEFAULT_GOLD_RATE;
   }
 
-  // GST on (making + stone + gold − old gold exchange). Per line for accurate rounding.
-  const gstLines = lineComputes.map((c) => {
-    const lineExchange =
-      lineComputes.length > 0 ? Math.round((oldGoldValuePaise * c.linePaise) / (subtotalPaise + makingChargesPaise + stoneChargesPaise || 1)) : 0;
-    const taxable = Math.max(0, c.linePaise - lineExchange);
-    return { taxablePaise: taxable };
+  const totals = computeBillTotals({
+    lines: lineComputes.map((c) => ({
+      goldValuePaise: c.goldValuePaise,
+      makingPaise: c.makingPaise,
+      stoneChargePaise: c.l.stoneChargePaise,
+    })),
+    oldGold: input.oldGoldExchange
+      ? {
+          weightMg: input.oldGoldExchange.weightMg,
+          purityCaratX100: input.oldGoldExchange.purityCaratX100,
+          ratePerGramPaise: oldGoldRatePaise,
+        }
+      : null,
+    discountPaise: input.discountPaise,
+    shopStateCode: shop.gstStateCode,
+    customerStateCode,
   });
-  const gst = computeGst({ shopStateCode: shop.gstStateCode, customerStateCode, lines: gstLines });
 
-  const totalPaise =
-    subtotalPaise +
-    makingChargesPaise +
-    stoneChargesPaise +
-    gst.cgstPaise +
-    gst.sgstPaise +
-    gst.igstPaise -
-    oldGoldValuePaise -
-    input.discountPaise;
+  const subtotalPaise = totals.subtotalPaise;
+  const makingChargesPaise = totals.makingChargesPaise;
+  const stoneChargesPaise = totals.stoneChargesPaise;
+  const oldGoldValuePaise = totals.oldGoldValuePaise;
+  const totalPaise = totals.totalPaise;
 
   // Per-shop bill number sequence — simple monotonic count.
   const billCount = await prisma.bill.count({ where: { shopId: input.shopId } });
@@ -107,12 +120,13 @@ export async function createBill(input: BillCreate, createdByUserId?: string) {
         shopId: input.shopId,
         billNumber,
         customerId: input.customerId ?? null,
+        registerSessionId: openSession?.id ?? null,
         subtotalPaise,
         makingChargesPaise,
         stoneChargesPaise,
-        cgstPaise: gst.cgstPaise,
-        sgstPaise: gst.sgstPaise,
-        igstPaise: gst.igstPaise,
+        cgstPaise: totals.cgstPaise,
+        sgstPaise: totals.sgstPaise,
+        igstPaise: totals.igstPaise,
         oldGoldValuePaise,
         discountPaise: input.discountPaise,
         totalPaise,
@@ -137,7 +151,7 @@ export async function createBill(input: BillCreate, createdByUserId?: string) {
                 create: {
                   weightMg: input.oldGoldExchange.weightMg,
                   purityCaratX100: input.oldGoldExchange.purityCaratX100,
-                  ratePerGramPaise: DEFAULT_GOLD_RATE,
+                  ratePerGramPaise: oldGoldRatePaise,
                   valuePaise: oldGoldValuePaise,
                 },
               },

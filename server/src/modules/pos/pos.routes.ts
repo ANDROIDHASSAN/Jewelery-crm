@@ -48,6 +48,48 @@ posRouter.post('/bills', requirePermission('pos.bill_create'), async (req, res, 
   }
 });
 
+// Offline-bill drain endpoint. The cashier's IndexedDB queue
+// (`client/src/features/pos/offline.ts`) posts here when the network
+// returns. Each bill carries its own `idempotencyKey`, so re-posting a
+// successful bill is a no-op — the unique constraint on
+// (tenantId, idempotencyKey) makes the second call return the original
+// row. Per-bill `ok`/`error` lets the client mark items individually
+// `synced` vs `rejected` without abandoning the whole batch.
+const PosSyncSchema = z.object({
+  bills: z.array(BillCreateSchema).min(1).max(50),
+});
+posRouter.post('/sync', requirePermission('pos.bill_create'), async (req, res, next) => {
+  try {
+    const { bills } = PosSyncSchema.parse(req.body);
+    const results: Array<
+      | { idempotencyKey: string; ok: true; billId: string; billNumber: string }
+      | { idempotencyKey: string; ok: false; code: string; message: string }
+    > = [];
+    for (const body of bills) {
+      try {
+        const bill = await svc.createBill(body, req.user?.userId);
+        results.push({
+          idempotencyKey: body.idempotencyKey,
+          ok: true,
+          billId: bill.id,
+          billNumber: bill.billNumber,
+        });
+      } catch (err) {
+        const e = err as { code?: string; message?: string };
+        results.push({
+          idempotencyKey: body.idempotencyKey,
+          ok: false,
+          code: e.code ?? 'BILL_SYNC_FAILED',
+          message: e.message ?? 'Sync failed',
+        });
+      }
+    }
+    res.status(200).json({ data: { results } });
+  } catch (err) {
+    next(err);
+  }
+});
+
 // Bill receipt as A4 PDF. Streams the bytes directly so memory stays bounded.
 // Available to any authenticated user — RBAC permission lives on /pos/bills.
 //
@@ -61,7 +103,19 @@ posRouter.get('/bills/:id/receipt.pdf', async (req, res, next) => {
     const bill = await prisma.bill.findUnique({
       where: { id },
       include: {
-        lines: { include: { item: { select: { name: true, purityCaratX100: true, weightMg: true } } } },
+        lines: {
+          include: {
+            item: {
+              select: {
+                name: true,
+                purityCaratX100: true,
+                weightMg: true,
+                hallmarkRef: true,
+                hallmarkStatus: true,
+              },
+            },
+          },
+        },
         payments: true,
         customer: { select: { name: true, phone: true } },
         shop: { select: { name: true, address: true, phone: true, gstStateCode: true } },
@@ -97,12 +151,18 @@ posRouter.get('/bills/:id/receipt.pdf', async (req, res, next) => {
         lines: bill.lines.map((l) => {
           const purity = l.purityCaratX100 ?? l.item?.purityCaratX100 ?? null;
           const weightMg = l.weightMg ?? l.item?.weightMg ?? null;
+          // BIS hallmarking is mandatory for gold in India; the HUID on the
+          // receipt is what the customer can take to a BIS office for a
+          // weight/purity verification. Skip the HUID line for silver / lab-
+          // grown diamonds that don't carry one.
+          const huid = l.item?.hallmarkStatus === 'CERTIFIED' ? l.item?.hallmarkRef : null;
           return {
             description: l.item?.name ?? 'Jewellery piece',
             details: [
               purity ? `${(purity / 100).toFixed(0)}K` : null,
               weightMg ? `${(weightMg / 1000).toFixed(2)} g` : null,
               l.makingChargeBps ? `making ${(l.makingChargeBps / 100).toFixed(2)}%` : null,
+              huid ? `HUID ${huid}` : null,
             ].filter(Boolean).join(' · ') || undefined,
             qty: 1,
             unitPaise: l.linePaise,

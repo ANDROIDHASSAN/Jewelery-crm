@@ -61,7 +61,12 @@ export function computeGoldValuePaise(
   purityCaratX100: number,
   ratePerGramPaise: Paise,
 ): Paise {
-  if (purityCaratX100 === 0) return 0;
+  // Silver is stored as purityCaratX100 === 0 with the silver rate already
+  // in paise/g, so we skip the carat-ratio scaling. Returning 0 here
+  // (the old behavior) made every silver line show ₹0 in the POS catalog.
+  if (purityCaratX100 === 0) {
+    return bankersRound((weightMg * ratePerGramPaise) / 1000);
+  }
   const numerator = weightMg * ratePerGramPaise * purityCaratX100;
   return bankersRound(numerator / (1000 * 2400));
 }

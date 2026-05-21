@@ -58,6 +58,7 @@ import { OpenRegisterGate } from './OpenRegisterGate';
 import { enqueueOffline, isReallyOnline } from '@/features/pos/offline';
 import type { Item } from '@goldos/shared/types';
 import type { PaymentMode } from '@goldos/shared/constants';
+import { computeBillTotals } from '@goldos/shared/bill-math';
 
 // ---------------------------------------------------------------------------
 // Types & helpers (mirror PosPage so swapping the surface is risk-free)
@@ -99,9 +100,6 @@ interface OldGoldExchange {
   weightMg: number;
   purityCaratX100: number;
 }
-
-const GST_BPS = 300;
-const WASTAGE_BPS_DEFAULT = 200; // 2% wastage on the line subtotal
 
 function rateForPurity(
   rates: Array<{ purity: number; ratePerGramPaise: number; stale: boolean }> | undefined,
@@ -209,6 +207,17 @@ function PosBillingScreen(): JSX.Element {
   const [idempotencyKey, setIdempotencyKey] = useState<string>(() => freshIdempotencyKey());
   const [addItemOpen, setAddItemOpen] = useState(false);
 
+  // Last successfully committed bill — drives the Print + WhatsApp buttons
+  // in the status bar. They were `disabled` placeholders for months; now
+  // they wire to the server's PDF endpoint and a wa.me deep link.
+  const [lastBill, setLastBill] = useState<{
+    id: string;
+    billNumber: string;
+    totalPaise: number;
+    customerName: string | null;
+    customerPhone: string | null;
+  } | null>(null);
+
   // Mobile / tablet: collapse the right rail into a drawer.
   const [billDrawerOpen, setBillDrawerOpen] = useState(false);
 
@@ -243,23 +252,24 @@ function PosBillingScreen(): JSX.Element {
   }, [inStock, selectedCategoryId, purityFilter, search]);
 
   // ── Totals ────────────────────────────────────────────────────────────
+  // All taxable math goes through the shared `computeBillTotals` helper so
+  // the cashier's screen and the server's persisted numbers cannot drift.
+  // Previously this surface applied wastage to NEW sales (server didn't)
+  // and subtracted discount/loyalty from the taxable base (server doesn't),
+  // which meant the customer was sometimes told a different total than the
+  // receipt then printed.
   const subtotal = lines.reduce((s, l) => s + l.goldValuePaise, 0);
   const making = lines.reduce((s, l) => s + l.makingPaise, 0);
   const stone = lines.reduce((s, l) => s + l.stoneChargePaise, 0);
-  const wastage = applyBps(subtotal, WASTAGE_BPS_DEFAULT);
 
-  let exchangeValue = 0;
-  if (exchange) {
-    const rate = rateForPurity(rates, exchange.purityCaratX100);
-    const gross = computeGoldValuePaise(exchange.weightMg, exchange.purityCaratX100, rate.paise);
-    exchangeValue = gross - applyBps(gross, WASTAGE_BPS_DEFAULT);
-  }
+  const exchangeRate = exchange ? rateForPurity(rates, exchange.purityCaratX100).paise : 0;
 
+  const subTotalWithCharges = subtotal + making + stone;
   const discountPaise = (() => {
     const num = Number(discountRupees.replace(/,/g, '')) || 0;
     if (discountIsPct) {
       const pct = Math.max(0, Math.min(100, num));
-      return applyBps(subtotal + making + stone + wastage, pct * 100);
+      return applyBps(subTotalWithCharges, pct * 100);
     }
     return Math.round(num * 100);
   })();
@@ -269,9 +279,30 @@ function PosBillingScreen(): JSX.Element {
     return pts * 100; // 1 pt = ₹1 (placeholder)
   })();
 
-  const taxable = Math.max(0, subtotal + making + stone + wastage - exchangeValue - discountPaise - loyaltyPaise);
-  const gst = applyBps(taxable, GST_BPS);
-  const grandTotal = taxable + gst;
+  const totals = computeBillTotals({
+    lines: lines.map((l) => ({
+      goldValuePaise: l.goldValuePaise,
+      makingPaise: l.makingPaise,
+      stoneChargePaise: l.stoneChargePaise,
+    })),
+    oldGold: exchange && exchange.weightMg > 0
+      ? {
+          weightMg: exchange.weightMg,
+          purityCaratX100: exchange.purityCaratX100,
+          ratePerGramPaise: exchangeRate,
+        }
+      : null,
+    discountPaise,
+    loyaltyPaise,
+    shopStateCode: shop?.gstStateCode ?? '06',
+    customerStateCode: null,
+  });
+
+  const exchangeValue = totals.oldGoldValuePaise;
+  const cgst = totals.cgstPaise;
+  const sgst = totals.sgstPaise;
+  const igst = totals.igstPaise;
+  const grandTotal = totals.totalPaise;
   const paid = payments.reduce((s, p) => s + (Number.isFinite(p.amountPaise) ? p.amountPaise : 0), 0);
   const dueAfterPayments = grandTotal - paid;
 
@@ -432,8 +463,19 @@ function PosBillingScreen(): JSX.Element {
     }
 
     try {
-      await createBill(billPayload as never).unwrap();
-      toast.success(`Bill ${billNumber} posted`);
+      const result = await createBill(billPayload as never).unwrap();
+      const posted = result.data;
+      // Keep a handle on the just-posted bill so the cashier can re-print
+      // it or send it on WhatsApp from the status bar even after the form
+      // resets for the next customer.
+      setLastBill({
+        id: posted.id,
+        billNumber: posted.billNumber,
+        totalPaise: posted.totalPaise,
+        customerName: customer?.name ?? null,
+        customerPhone: customer?.phone ?? null,
+      });
+      toast.success(`Bill ${posted.billNumber} posted`);
       // Reset for next bill.
       setLines([]);
       setCustomer(null);
@@ -558,11 +600,12 @@ function PosBillingScreen(): JSX.Element {
             subtotal={subtotal}
             making={making}
             stone={stone}
-            wastage={wastage}
             exchangeValue={exchangeValue}
             discountPaise={discountPaise}
             loyaltyPaise={loyaltyPaise}
-            gst={gst}
+            cgst={cgst}
+            sgst={sgst}
+            igst={igst}
             grandTotal={grandTotal}
             paid={paid}
             tab={tab}
@@ -605,11 +648,12 @@ function PosBillingScreen(): JSX.Element {
             subtotal={subtotal}
             making={making}
             stone={stone}
-            wastage={wastage}
             exchangeValue={exchangeValue}
             discountPaise={discountPaise}
             loyaltyPaise={loyaltyPaise}
-            gst={gst}
+            cgst={cgst}
+            sgst={sgst}
+            igst={igst}
             grandTotal={grandTotal}
             paid={paid}
             tab={tab}
@@ -663,6 +707,8 @@ function PosBillingScreen(): JSX.Element {
         onShowBillDrawer={() => setBillDrawerOpen(true)}
         lineCount={lines.length}
         grandTotal={grandTotal}
+        lastBill={lastBill}
+        shopName={shop?.name ?? null}
       />
     </div>
   );
@@ -909,11 +955,12 @@ interface BillColumnProps {
   subtotal: number;
   making: number;
   stone: number;
-  wastage: number;
   exchangeValue: number;
   discountPaise: number;
   loyaltyPaise: number;
-  gst: number;
+  cgst: number;
+  sgst: number;
+  igst: number;
   grandTotal: number;
   paid: number;
   tab: 'payment' | 'customer';
@@ -938,7 +985,8 @@ interface BillColumnProps {
 function BillAndPaymentColumn(props: BillColumnProps): JSX.Element {
   const {
     billNumber, lines, customer, removeLine, clearCart, onPark, parking,
-    subtotal, making, stone, wastage, exchangeValue, discountPaise, loyaltyPaise, gst, grandTotal,
+    subtotal, making, stone, exchangeValue, discountPaise, loyaltyPaise,
+    cgst, sgst, igst, grandTotal,
     tab, onTabChange,
   } = props;
   return (
@@ -985,11 +1033,12 @@ function BillAndPaymentColumn(props: BillColumnProps): JSX.Element {
         <TotalsRow label="Gold value" paise={subtotal} />
         <TotalsRow label="Making" paise={making} />
         {stone > 0 && <TotalsRow label="Stone" paise={stone} />}
-        <TotalsRow label="Wastage (2%)" paise={wastage} />
         {exchangeValue > 0 && <TotalsRow label="Old-gold exchange" paise={-exchangeValue} tone="success" />}
+        {cgst > 0 && <TotalsRow label="CGST (1.5%)" paise={cgst} />}
+        {sgst > 0 && <TotalsRow label="SGST (1.5%)" paise={sgst} />}
+        {igst > 0 && <TotalsRow label="IGST (3%)" paise={igst} />}
         {discountPaise > 0 && <TotalsRow label="Discount" paise={-discountPaise} tone="success" />}
         {loyaltyPaise > 0 && <TotalsRow label="Loyalty" paise={-loyaltyPaise} tone="success" />}
-        <TotalsRow label="GST (3%)" paise={gst} />
         <div className="flex items-center justify-between pt-2 mt-2 border-t border-ink-100">
           <span className="text-sm font-medium text-ink-700">Grand total</span>
           <Money paise={grandTotal} className="font-mono text-lg sm:text-xl font-semibold text-brand-700" />
@@ -1369,6 +1418,14 @@ function CustomerTab(p: BillColumnProps): JSX.Element {
 // StatusBar — sticky footer with till info + actions
 // ─────────────────────────────────────────────────────────────────────────────
 
+interface LastBill {
+  id: string;
+  billNumber: string;
+  totalPaise: number;
+  customerName: string | null;
+  customerPhone: string | null;
+}
+
 function StatusBar({
   sessionOpen,
   openingFloatPaise,
@@ -1376,6 +1433,8 @@ function StatusBar({
   onShowBillDrawer,
   lineCount,
   grandTotal,
+  lastBill,
+  shopName,
 }: {
   sessionOpen: boolean;
   openingFloatPaise: number;
@@ -1383,7 +1442,34 @@ function StatusBar({
   onShowBillDrawer: () => void;
   lineCount: number;
   grandTotal: number;
+  lastBill: LastBill | null;
+  shopName: string | null;
 }): JSX.Element {
+  function printLastBill(): void {
+    if (!lastBill) return;
+    // PDF endpoint streams the bytes inline so the browser shows a print
+    // preview; the cashier can paper-print from there or just save.
+    window.open(`/api/v1/pos/bills/${lastBill.id}/receipt.pdf`, '_blank', 'noopener');
+  }
+
+  function whatsAppLastBill(): void {
+    if (!lastBill || !lastBill.customerPhone) return;
+    // Build a deep-link to WhatsApp Web / app. The receipt URL is also
+    // surfaced — if the cashier wants to share the PDF rather than a text
+    // summary they paste the link. The link points at the API origin so it
+    // requires an authenticated session to actually open — that's fine for
+    // the cashier's customer who'll only need the text summary anyway.
+    const phone = lastBill.customerPhone.replace(/\D/g, '');
+    const total = `₹${(lastBill.totalPaise / 100).toLocaleString('en-IN', { minimumFractionDigits: 2 })}`;
+    const greeting = lastBill.customerName ? `Hi ${lastBill.customerName.split(' ')[0]},` : 'Hi,';
+    const summary =
+      `${greeting}\nThank you for your purchase at ${shopName ?? 'our store'}.\n` +
+      `Bill ${lastBill.billNumber} · Total ${total}.\n` +
+      `We've kept a copy of your invoice. Reply here if you have any questions.`;
+    const url = `https://wa.me/${phone}?text=${encodeURIComponent(summary)}`;
+    window.open(url, '_blank', 'noopener,noreferrer');
+  }
+
   return (
     <footer className="bg-ink-0 border-t border-ink-100 px-3 sm:px-4 lg:px-6 py-2 flex items-center gap-3 flex-wrap shrink-0">
       <div className="flex items-center gap-1.5 text-xs">
@@ -1402,12 +1488,41 @@ function StatusBar({
         <span className="text-ink-500">Cash in drawer:</span>
         <Money paise={cashInDrawerPaise} className="font-mono text-ink-800" />
       </div>
+      {lastBill && (
+        <>
+          <span className="hidden lg:inline text-ink-200">·</span>
+          <div className="hidden lg:flex items-center gap-1.5 text-xs">
+            <span className="text-ink-500">Last bill:</span>
+            <span className="font-mono text-ink-800">{lastBill.billNumber}</span>
+          </div>
+        </>
+      )}
 
       <div className="ml-auto flex items-center gap-2">
-        <Button variant="outline" size="sm" disabled className="hidden sm:inline-flex">
-          <Printer className="h-3.5 w-3.5 mr-1.5" />Print preview
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={printLastBill}
+          disabled={!lastBill}
+          className="hidden sm:inline-flex"
+          title={lastBill ? `Reprint ${lastBill.billNumber}` : 'Charge a bill first'}
+        >
+          <Printer className="h-3.5 w-3.5 mr-1.5" />Print receipt
         </Button>
-        <Button variant="outline" size="sm" disabled className="hidden md:inline-flex">
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={whatsAppLastBill}
+          disabled={!lastBill || !lastBill.customerPhone}
+          className="hidden md:inline-flex"
+          title={
+            !lastBill
+              ? 'Charge a bill first'
+              : !lastBill.customerPhone
+                ? 'Bill has no customer phone — lookup customer next time'
+                : `Send to ${lastBill.customerPhone}`
+          }
+        >
           <Send className="h-3.5 w-3.5 mr-1.5" />Send on WhatsApp
         </Button>
         <Button variant="outline" size="sm" disabled>

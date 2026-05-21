@@ -9,7 +9,8 @@
     ".": "./index.ts",
     "./schemas": "./schemas.ts",
     "./types": "./types.ts",
-    "./constants": "./constants.ts"
+    "./constants": "./constants.ts",
+    "./bill-math": "./bill-math.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit"
