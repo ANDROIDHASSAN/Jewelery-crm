@@ -502,35 +502,109 @@ async function main(): Promise<void> {
       { days: 22, paise: 54_200_00,  shop: shopBranch.id, status: 'PAID' as const,    making:  3_900_00, customer: null },
     ];
     const customerIds = await tx.customer.findMany({ where: { tenantId: tenant.id }, select: { id: true } });
+    // Build bills + their idempotency keys up-front so we can attach Payment
+    // rows by billId after they're created.
+    const billRows = sampleBills.map((b, i) => {
+      const subtotal = b.paise - Math.round(b.paise * 300 / 10300); // back out 3% GST
+      const gst = b.paise - subtotal;
+      const shopCashiers = cashiers.filter((c) => c.shopId === b.shop);
+      const cashier = shopCashiers[i % Math.max(1, shopCashiers.length)];
+      return {
+        tenantId: tenant.id,
+        shopId: b.shop,
+        billNumber: `INV-${String(1001 + i).padStart(5, '0')}`,
+        customerId: b.customer !== null ? customerIds[b.customer]?.id ?? null : null,
+        subtotalPaise: subtotal,
+        makingChargesPaise: b.making,
+        stoneChargesPaise: 0,
+        cgstPaise: Math.floor(gst / 2),
+        sgstPaise: Math.ceil(gst / 2),
+        igstPaise: 0,
+        oldGoldValuePaise: 0,
+        discountPaise: 0,
+        totalPaise: b.paise,
+        paymentStatus: b.status,
+        idempotencyKey: `seed-bill-${i + 1}-${tenant.id.slice(-6)}`,
+        createdByUserId: cashier?.id ?? null,
+        createdAt: daysAgo(b.days),
+        _meta: { totalPaise: b.paise, status: b.status, daysAgo: b.days, index: i },
+      };
+    });
     await tx.bill.createMany({
-      data: sampleBills.map((b, i) => {
-        const subtotal = b.paise - Math.round(b.paise * 300 / 10300); // back out 3% GST
-        const gst = b.paise - subtotal;
-        // Attribute each bill to a cashier from the matching shop so the
-        // /analytics/staff leaderboard has signal. Round-robin within shop.
-        const shopCashiers = cashiers.filter((c) => c.shopId === b.shop);
-        const cashier = shopCashiers[i % Math.max(1, shopCashiers.length)];
-        return {
-          tenantId: tenant.id,
-          shopId: b.shop,
-          billNumber: `INV-${String(1001 + i).padStart(5, '0')}`,
-          customerId: b.customer !== null ? customerIds[b.customer]?.id ?? null : null,
-          subtotalPaise: subtotal,
-          makingChargesPaise: b.making,
-          stoneChargesPaise: 0,
-          cgstPaise: Math.floor(gst / 2),
-          sgstPaise: Math.ceil(gst / 2),
-          igstPaise: 0,
-          oldGoldValuePaise: 0,
-          discountPaise: 0,
-          totalPaise: b.paise,
-          paymentStatus: b.status,
-          idempotencyKey: `seed-bill-${i + 1}-${tenant.id.slice(-6)}`,
-          createdByUserId: cashier?.id ?? null,
-          createdAt: daysAgo(b.days),
-        };
+      data: billRows.map(({ _meta, ...row }) => {
+        void _meta;
+        return row;
       }),
     });
+
+    // Payments — without these the Mode-wise table and the daily-sales
+    // cash/digital split stay empty, even though revenue is non-zero. Mix
+    // CASH / UPI / CARD on a stable round-robin so the breakdown looks like
+    // a real jeweller and so PARTIAL bills get a smaller deposit.
+    const createdBills = await tx.bill.findMany({
+      where: { tenantId: tenant.id, idempotencyKey: { in: billRows.map((b) => b.idempotencyKey) } },
+      select: { id: true, idempotencyKey: true, totalPaise: true, paymentStatus: true, createdAt: true },
+    });
+    const billByKey = new Map(createdBills.map((b) => [b.idempotencyKey, b]));
+    const paymentRows: Array<{
+      billId: string;
+      mode: 'CASH' | 'UPI' | 'CARD';
+      amountPaise: number;
+      referenceId: string | null;
+      createdAt: Date;
+    }> = [];
+    const modeRotation: Array<'UPI' | 'CARD' | 'CASH'> = ['UPI', 'CARD', 'CASH'];
+    billRows.forEach((b, i) => {
+      const bill = billByKey.get(b.idempotencyKey);
+      if (!bill) return;
+      const primaryMode = modeRotation[i % modeRotation.length]!;
+      if (bill.paymentStatus === 'PARTIAL') {
+        // 60% deposit on UPI, leave the rest open.
+        const deposit = Math.round(bill.totalPaise * 0.6);
+        paymentRows.push({
+          billId: bill.id,
+          mode: 'UPI',
+          amountPaise: deposit,
+          referenceId: `UPI/${1000 + i}`,
+          createdAt: bill.createdAt,
+        });
+        return;
+      }
+      // PAID bills: 70% on primary mode, 30% on a complementary mode so the
+      // breakdown shows multiple slices. Single-mode bills are still common,
+      // so every 3rd bill goes 100% on the primary mode.
+      if (i % 3 === 0) {
+        paymentRows.push({
+          billId: bill.id,
+          mode: primaryMode,
+          amountPaise: bill.totalPaise,
+          referenceId: primaryMode === 'CASH' ? null : `${primaryMode}/${2000 + i}`,
+          createdAt: bill.createdAt,
+        });
+      } else {
+        const secondary: 'CASH' | 'UPI' | 'CARD' =
+          primaryMode === 'CASH' ? 'UPI' : primaryMode === 'UPI' ? 'CARD' : 'CASH';
+        const main = Math.round(bill.totalPaise * 0.7);
+        const rest = bill.totalPaise - main;
+        paymentRows.push({
+          billId: bill.id,
+          mode: primaryMode,
+          amountPaise: main,
+          referenceId: primaryMode === 'CASH' ? null : `${primaryMode}/${3000 + i}`,
+          createdAt: bill.createdAt,
+        });
+        paymentRows.push({
+          billId: bill.id,
+          mode: secondary,
+          amountPaise: rest,
+          referenceId: secondary === 'CASH' ? null : `${secondary}/${4000 + i}`,
+          createdAt: bill.createdAt,
+        });
+      }
+    });
+    if (paymentRows.length > 0) {
+      await tx.payment.createMany({ data: paymentRows });
+    }
 
     // Products — e-commerce catalog rows that the public storefront PDP fetches
     // via /api/v1/website/products. Slugs match the demo storefront's URLs.

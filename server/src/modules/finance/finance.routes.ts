@@ -1013,6 +1013,42 @@ financeRouter.get('/gst-bills', async (req, res, next) => {
 // 7. GOLD LOANS
 // =====================================================================
 
+// Customer search — drives the typeahead in the "New gold loan" dialog.
+// Matches on name OR phone (last 4 digits is the common shorthand), capped
+// at 20 rows so a careless empty query doesn't dump the whole CRM.
+financeRouter.get('/customers/search', async (req, res, next) => {
+  try {
+    const q = z
+      .object({
+        q: z.string().trim().min(1).max(64).optional(),
+        limit: z.coerce.number().int().positive().max(50).default(20),
+      })
+      .parse(req.query);
+    const tenantId = getTenantId();
+    if (!tenantId) {
+      res.status(401).json(noTenantError());
+      return;
+    }
+    const term = q.q ?? '';
+    const customers = await prisma.customer.findMany({
+      where: term
+        ? {
+            OR: [
+              { name: { contains: term, mode: 'insensitive' } },
+              { phone: { contains: term } },
+            ],
+          }
+        : {},
+      orderBy: { createdAt: 'desc' },
+      take: q.limit,
+      select: { id: true, name: true, phone: true },
+    });
+    res.json({ data: customers });
+  } catch (err) {
+    next(err);
+  }
+});
+
 financeRouter.get('/gold-loans', async (req, res, next) => {
   try {
     const q = z

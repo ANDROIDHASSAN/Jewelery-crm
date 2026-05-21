@@ -307,6 +307,12 @@ export interface VendorLite {
   outstandingPaise: number;
 }
 
+export interface CustomerLite {
+  id: string;
+  name: string;
+  phone: string;
+}
+
 // ---------------------------------------------------------------------
 // Accounting shapes
 // ---------------------------------------------------------------------
@@ -573,6 +579,12 @@ export const financeApi = baseApi.injectEndpoints({
       providesTags: ['User'],
     }),
 
+    // Customer search (for gold-loan typeahead and similar pickers).
+    searchCustomers: b.query<{ data: CustomerLite[] }, { q?: string; limit?: number } | void>({
+      query: (params) => ({ url: '/finance/customers/search', params: params ?? undefined }),
+      providesTags: ['Customer'],
+    }),
+
     // Accounting
     getDayBook: b.query<{ data: DayBookResponse }, { from: string; to: string; shopId?: string }>({
       query: (params) => ({ url: '/finance/accounting/day-book', params }),
@@ -640,4 +652,5 @@ export const {
   useGetTrialBalanceQuery,
   useGetBalanceSheetQuery,
   useGetLedgerQuery,
+  useSearchCustomersQuery,
 } = financeApi;

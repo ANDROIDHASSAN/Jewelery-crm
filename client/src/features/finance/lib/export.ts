@@ -55,21 +55,50 @@ export function printSection(elementId: string, documentTitle: string): void {
   }, 500);
 }
 
-/** Trigger a Tally export download via the backend. */
-export async function downloadTallyExport(from: string, to: string): Promise<void> {
+/**
+ * Trigger a Tally export download via the backend.
+ *
+ * Bypasses RTK Query so the response can stream as a binary file blob, but
+ * the server still demands a Bearer token (see auth middleware). We read the
+ * access token from the same localStorage slot the authSlice uses and attach
+ * it manually — without this, the request 401s and the toast reads
+ * "Export failed", which is what we were seeing in production.
+ */
+export async function downloadTallyExport(
+  from: string,
+  to: string,
+  format: 'csv' | 'xml' = 'csv',
+): Promise<void> {
   const f = encodeURIComponent(from);
   const t = encodeURIComponent(to);
-  const res = await fetch(`/api/v1/finance/tally-export?from=${f}&to=${t}`, {
+  const token =
+    typeof window !== 'undefined' ? window.localStorage.getItem('zelora.accessToken') : null;
+  const headers: Record<string, string> = {};
+  if (token) headers.Authorization = `Bearer ${token}`;
+  const res = await fetch(`/api/v1/finance/tally-export?from=${f}&to=${t}&format=${format}`, {
     credentials: 'include',
+    headers,
   });
-  if (!res.ok) throw new Error('export failed');
+  if (!res.ok) {
+    const msg = await safeReadError(res);
+    throw new Error(msg ?? `Export failed (${res.status})`);
+  }
   const blob = await res.blob();
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
-  a.download = `tally-${from.slice(0, 10)}-to-${to.slice(0, 10)}.csv`;
+  a.download = `tally-${from.slice(0, 10)}-to-${to.slice(0, 10)}.${format}`;
   document.body.appendChild(a);
   a.click();
   a.remove();
   URL.revokeObjectURL(url);
+}
+
+async function safeReadError(res: Response): Promise<string | null> {
+  try {
+    const body = await res.json();
+    return body?.error?.message ?? null;
+  } catch {
+    return null;
+  }
 }

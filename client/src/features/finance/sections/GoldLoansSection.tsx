@@ -14,6 +14,7 @@ import {
   useGetGoldLoansQuery,
   useCreateGoldLoanMutation,
   useAddGoldLoanRepaymentMutation,
+  useSearchCustomersQuery,
   type GoldLoanRow,
 } from '@/features/finance/financeApi';
 import { hasPermission } from '@/features/auth/authSlice';
@@ -209,6 +210,9 @@ function LoanStatusPill({ status }: { status: GoldLoanRow['status'] }): JSX.Elem
 
 function NewLoanDialog({ onClose }: { onClose: () => void }): JSX.Element {
   const [customerId, setCustomerId] = useState('');
+  const [customerName, setCustomerName] = useState('');
+  const [customerQuery, setCustomerQuery] = useState('');
+  const [showSuggestions, setShowSuggestions] = useState(false);
   const [principal, setPrincipal] = useState('');
   const [rate, setRate] = useState('1.5');
   const [weight, setWeight] = useState('');
@@ -219,8 +223,34 @@ function NewLoanDialog({ onClose }: { onClose: () => void }): JSX.Element {
   });
   const [createLoan, { isLoading }] = useCreateGoldLoanMutation();
 
+  // Debounced search term — `q` undefined returns the most-recent customers,
+  // useful when the field is focused but empty.
+  const trimmedQuery = customerQuery.trim();
+  const { data: searchData, isFetching: searching } = useSearchCustomersQuery(
+    trimmedQuery ? { q: trimmedQuery, limit: 10 } : { limit: 10 },
+  );
+  const suggestions = searchData?.data ?? [];
+
+  function pickCustomer(c: { id: string; name: string; phone: string }): void {
+    setCustomerId(c.id);
+    setCustomerName(c.name);
+    setCustomerQuery(`${c.name} · ${c.phone}`);
+    setShowSuggestions(false);
+  }
+
+  function clearCustomer(): void {
+    setCustomerId('');
+    setCustomerName('');
+    setCustomerQuery('');
+    setShowSuggestions(true);
+  }
+
   async function handleSubmit(e: React.FormEvent): Promise<void> {
     e.preventDefault();
+    if (!customerId) {
+      toast.error('Pick a customer from the list');
+      return;
+    }
     try {
       await createLoan({
         customerId,
@@ -229,7 +259,7 @@ function NewLoanDialog({ onClose }: { onClose: () => void }): JSX.Element {
         pledgedWeightMg: Math.round(Number(weight) * 1000),
         dueAt: new Date(dueAt) as unknown as Date,
       } as never).unwrap();
-      toast.success('Loan recorded');
+      toast.success(`Loan recorded for ${customerName}`);
       onClose();
     } catch (err) {
       const msg = (err as { data?: { error?: { message?: string } } }).data?.error?.message;
@@ -252,19 +282,66 @@ function NewLoanDialog({ onClose }: { onClose: () => void }): JSX.Element {
               </Dialog.Close>
             </div>
             <p className="text-xs text-ink-500">
-              Use customer ID from the CRM. Future UI will offer a typeahead.
+              Type the customer&apos;s name or phone number — pick from the list. Customer must
+              exist in the CRM.
             </p>
-            <label className="block text-sm">
-              <span className="text-[11px] uppercase tracking-wider text-ink-500">
-                Customer ID
-              </span>
-              <Input
-                value={customerId}
-                onChange={(e) => setCustomerId(e.target.value)}
-                placeholder="cust_…"
-                required
-              />
-            </label>
+            <div className="relative">
+              <label className="block text-sm">
+                <span className="text-[11px] uppercase tracking-wider text-ink-500">
+                  Customer
+                </span>
+                <Input
+                  value={customerQuery}
+                  onChange={(e) => {
+                    setCustomerQuery(e.target.value);
+                    setCustomerId('');
+                    setCustomerName('');
+                    setShowSuggestions(true);
+                  }}
+                  onFocus={() => setShowSuggestions(true)}
+                  placeholder="Name or phone…"
+                  autoComplete="off"
+                  required
+                />
+              </label>
+              {customerId && (
+                <button
+                  type="button"
+                  onClick={clearCustomer}
+                  className="absolute right-2 top-[26px] text-xs text-ink-500 hover:text-ink-900"
+                >
+                  Change
+                </button>
+              )}
+              {showSuggestions && !customerId && (
+                <div className="absolute left-0 right-0 mt-1 max-h-64 overflow-y-auto rounded-md border border-ink-200 bg-ink-0 shadow-lg z-10">
+                  {searching && (
+                    <p className="px-3 py-2 text-xs text-ink-500">Searching…</p>
+                  )}
+                  {!searching && suggestions.length === 0 && (
+                    <p className="px-3 py-2 text-xs text-ink-500">
+                      No customers match. Add them in CRM first.
+                    </p>
+                  )}
+                  {suggestions.map((c) => (
+                    <button
+                      type="button"
+                      key={c.id}
+                      onClick={() => pickCustomer(c)}
+                      className="w-full text-left px-3 py-2 hover:bg-brand-50/40 border-b border-ink-50 last:border-0"
+                    >
+                      <p className="text-sm font-medium text-ink-900">{c.name}</p>
+                      <p className="text-xs text-ink-500 font-mono">{c.phone}</p>
+                    </button>
+                  ))}
+                </div>
+              )}
+              {customerId && customerName && (
+                <p className="mt-1 text-[11px] text-ink-500 font-mono">
+                  Linked → {customerName} ({customerId.slice(-8)})
+                </p>
+              )}
+            </div>
             <div className="grid grid-cols-2 gap-3">
               <label className="block text-sm">
                 <span className="text-[11px] uppercase tracking-wider text-ink-500">

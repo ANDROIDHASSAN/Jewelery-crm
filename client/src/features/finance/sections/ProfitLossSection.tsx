@@ -87,8 +87,8 @@ export function ProfitLossSection(): JSX.Element {
         new Date(`${to}T23:59:59.999Z`).toISOString(),
       );
       toast.success('Tally CSV downloaded');
-    } catch {
-      toast.error('Export failed');
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Export failed');
     }
   }
 
