@@ -38,8 +38,7 @@ import {
 } from 'lucide-react';
 import { cn } from '@/lib/cn';
 import { useAppDispatch, useAppSelector } from '@/app/hooks';
-import { logout as logoutAction } from '@/features/auth/authSlice';
-import { useLogoutMutation } from '@/features/auth/authApi';
+import { signOutAndClear } from '@/features/auth/authActions';
 import { useGetOpenSessionQuery, useListParkedQuery, useListRepairsQuery } from './posFeaturesApi';
 import { useGetShopsQuery } from '@/features/shops/shopsApi';
 import { GoldRateTicker } from './GoldRateTicker';
@@ -56,7 +55,6 @@ export function PosShell(): JSX.Element {
   const user = useAppSelector((s) => s.auth.user);
   const dispatch = useAppDispatch();
   const navigate = useNavigate();
-  const [logout] = useLogoutMutation();
 
   // Online/offline mirror.
   const [online, setOnline] = useState<boolean>(typeof navigator === 'undefined' ? true : navigator.onLine);
@@ -136,12 +134,9 @@ export function PosShell(): JSX.Element {
   }, [mobileNavOpen]);
 
   async function onSignOut(): Promise<void> {
-    try {
-      await logout().unwrap();
-    } catch {
-      /* swallow */
-    }
-    dispatch(logoutAction());
+    // Resets the RTK Query cache too — keeps the next cashier (or any
+    // signed-in admin) from briefly seeing this cashier's POS state.
+    await dispatch(signOutAndClear());
     navigate(isPosHost() ? '/login' : '/admin/login', { replace: true });
   }
 

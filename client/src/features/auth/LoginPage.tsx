@@ -8,7 +8,7 @@ import { useNavigate, useLocation, Link } from 'react-router-dom';
 import { toast } from 'sonner';
 import { Eye, EyeOff, ShieldCheck } from 'lucide-react';
 import { useAppDispatch } from '@/app/hooks';
-import { setSession } from './authSlice';
+import { signInWithFreshCache } from './authActions';
 import { useLoginMutation } from './authApi';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -46,7 +46,11 @@ export function LoginPage(): JSX.Element {
       }).unwrap();
 
       const { accessToken, user } = result.data;
-      dispatch(setSession({ accessToken, user }));
+      // signInWithFreshCache also flushes the RTK Query cache when the
+      // freshly-logged-in user differs from whoever was here before. That
+      // makes perm changes / role switches reflect instantly — no need
+      // to hard-refresh the page.
+      dispatch(signInWithFreshCache({ accessToken, user }));
       toast.success(`Welcome back, ${user.name}`);
 
       // Routing rules between admin (CRM) and POS subdomain:

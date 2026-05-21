@@ -4,8 +4,7 @@ import { useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
 import { ShopSwitcher } from './ShopSwitcher';
 import { useAppDispatch, useAppSelector } from '@/app/hooks';
-import { logout as logoutAction } from '@/features/auth/authSlice';
-import { useLogoutMutation } from '@/features/auth/authApi';
+import { signOutAndClear } from '@/features/auth/authActions';
 import { cn } from '@/lib/cn';
 import { NotificationBell } from '@/features/notifications/NotificationBell';
 
@@ -19,8 +18,6 @@ export function TopBar({ onOpenCmdK, onOpenMobileNav }: TopBarProps): JSX.Elemen
   const user = useAppSelector((s) => s.auth.user);
   const dispatch = useAppDispatch();
   const navigate = useNavigate();
-  const [logout] = useLogoutMutation();
-
   const initials = (user?.name ?? 'AK')
     .split(' ')
     .map((s) => s[0])
@@ -29,12 +26,12 @@ export function TopBar({ onOpenCmdK, onOpenMobileNav }: TopBarProps): JSX.Elemen
     .toUpperCase();
 
   async function signOut(): Promise<void> {
-    try {
-      await logout().unwrap();
-    } catch {
-      /* swallow */
-    }
-    dispatch(logoutAction());
+    // signOutAndClear takes care of:
+    //   - server-side refresh-cookie revoke (via /auth/logout)
+    //   - clearing the auth slice + localStorage
+    //   - resetting the RTK Query cache so the next signed-in user never
+    //     sees this user's cached data (perm change propagation bug).
+    await dispatch(signOutAndClear());
     toast.success('Signed out');
     navigate('/admin/login', { replace: true });
   }

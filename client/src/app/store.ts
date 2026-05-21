@@ -48,7 +48,14 @@ const baseQueryWithRefresh: BaseQueryFn<string | FetchArgs, unknown, FetchBaseQu
       api.dispatch(setAccessToken(next));
       result = await rawBaseQuery(args, api, extraOptions);
     } else {
+      // Refresh denied — the session is dead. Clear auth state AND wipe the
+      // RTK Query cache so a re-login on the same tab doesn't briefly serve
+      // the previous user's cached lists (perm propagation bug). We can't
+      // call baseApi.util.resetApiState() until baseApi is constructed
+      // below, so we lazy-reference it through `api.dispatch` with the
+      // already-built action creator on the baseApi singleton.
       api.dispatch(logout());
+      api.dispatch(baseApi.util.resetApiState());
     }
   }
   return result;
