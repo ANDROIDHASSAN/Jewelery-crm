@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import multer from 'multer';
 import {
   ItemInputSchema,
   TransferInitiateSchema,
@@ -8,9 +9,21 @@ import {
 } from '@goldos/shared/schemas';
 import { z } from 'zod';
 import * as svc from './inventory.service.js';
+import { bulkImportItems, bulkImportTemplate } from './bulk-import.service.js';
 import { requirePermission, requireAnyPermission } from '../../middleware/require-permission.js';
 
 export const inventoryRouter: Router = Router();
+
+// Multer storage — in-memory, 8MB cap. Bulk-import sheets are typically
+// well under 1MB (10k rows of jewellery items fits in ~300KB), so 8MB is
+// a generous ceiling that still kills accidentally-attached photos before
+// they hit Express's body parser. Stored in RAM, never on disk, so we
+// don't have to manage temp-file cleanup or worry about a stray .xlsx
+// from one tenant being readable by another.
+const bulkUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 8 * 1024 * 1024, files: 1 },
+});
 
 // Action-level RBAC gates. The mount-level gate in app.ts accepts any of
 // inventory.{read,write,delete,transfer,wastage,purchase_order,hallmark,audit}
@@ -40,6 +53,46 @@ inventoryRouter.get('/items/:id', async (req, res, next) => {
     next(err);
   }
 });
+
+// Bulk import — Excel or CSV upload. `dryRun=true` validates and returns
+// the would-insert result without writing. Use that to drive the preview
+// UI; flip to false (or omit) to commit.
+inventoryRouter.post(
+  '/items/bulk-import',
+  requirePermission('inventory.write'),
+  bulkUpload.single('file'),
+  async (req, res, next) => {
+    try {
+      if (!req.file) {
+        res.status(400).json({
+          error: { code: 'FILE_REQUIRED', message: 'Attach the spreadsheet as form field "file"' },
+        });
+        return;
+      }
+      const dryRun = String(req.body['dryRun'] ?? '').toLowerCase() === 'true';
+      const result = await bulkImportItems({
+        fileBuffer: req.file.buffer,
+        filename: req.file.originalname,
+        dryRun,
+        performedByUserId: req.user?.userId,
+      });
+      res.json({ data: result });
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+// Template for the import UI — returns the canonical columns + example
+// rows so the client can offer a downloadable template that always
+// matches the validator.
+inventoryRouter.get(
+  '/items/bulk-import/template',
+  requirePermission('inventory.write'),
+  (_req, res) => {
+    res.json({ data: bulkImportTemplate() });
+  },
+);
 
 inventoryRouter.post('/items', requirePermission('inventory.write'), async (req, res, next) => {
   try {

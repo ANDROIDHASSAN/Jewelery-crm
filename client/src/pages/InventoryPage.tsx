@@ -3,6 +3,7 @@
 // so adds/edits flow back to the active view (and to dashboard tiles) immediately.
 
 import { useMemo, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import type { ColumnDef } from '@tanstack/react-table';
 import {
   Plus,
@@ -15,6 +16,8 @@ import {
   Coins,
   ScrollText,
   Sliders,
+  Upload,
+  Tag as TagIcon,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import type { Item } from '@goldos/shared/types';
@@ -50,6 +53,7 @@ import { SectionCard } from '@/components/ui/SectionCard';
 import { Toolbar, StatPill } from '@/components/ui/Toolbar';
 import { TableSkeleton } from '@/components/ui/Skeleton';
 import { cn } from '@/lib/cn';
+import { BulkImportModal } from '@/features/inventory/BulkImportModal';
 
 type Tab =
   | 'items'
@@ -105,6 +109,7 @@ export function InventoryPage(): JSX.Element {
 // Items tab — main list, row click opens detail Sheet with barcode + actions.
 
 function ItemsTab(): JSX.Element {
+  const navigate = useNavigate();
   const { data, isLoading } = useGetItemsQuery({});
   const { data: catRes } = useGetCategoriesQuery();
   const { data: shopsRes } = useGetShopsQuery();
@@ -112,6 +117,7 @@ function ItemsTab(): JSX.Element {
   const [addOpen, setAddOpen] = useState(false);
   const [transferOpen, setTransferOpen] = useState(false);
   const [wastageOpen, setWastageOpen] = useState(false);
+  const [importOpen, setImportOpen] = useState(false);
 
   const categoryNameById = useMemo(() => {
     const map = new Map<string, string>();
@@ -195,9 +201,24 @@ function ItemsTab(): JSX.Element {
     <>
       <Toolbar
         end={
-          <Button onClick={() => setAddOpen(true)}>
-            <Plus className="h-4 w-4" /> Add item
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button variant="outline" onClick={() => setImportOpen(true)}>
+              <Upload className="h-4 w-4" /> Import
+            </Button>
+            <Button
+              variant="outline"
+              onClick={() => {
+                const skus = (data?.data ?? []).map((i) => i.sku);
+                navigate('/admin/inventory/print-labels', { state: { skus } });
+              }}
+              disabled={!data || data.data.length === 0}
+            >
+              <TagIcon className="h-4 w-4" /> Print labels
+            </Button>
+            <Button onClick={() => setAddOpen(true)}>
+              <Plus className="h-4 w-4" /> Add item
+            </Button>
+          </div>
         }
       >
         {data && (
@@ -206,6 +227,8 @@ function ItemsTab(): JSX.Element {
           </StatPill>
         )}
       </Toolbar>
+
+      <BulkImportModal open={importOpen} onClose={() => setImportOpen(false)} />
 
       {isLoading && <TableSkeleton rows={8} columns={8} />}
       {!isLoading && (!data || data.data.length === 0) && (
@@ -330,7 +353,10 @@ function MovementsTab({
   emptyLabel: string;
 }): JSX.Element {
   const { data, isLoading } = useGetMovementsQuery({ type });
+  const { data: shopsRes } = useGetShopsQuery();
   const rows = data?.data ?? [];
+  const shopName = (id: string | null | undefined): string =>
+    id ? shopsRes?.data.find((s) => s.id === id)?.name ?? id.slice(-6) : '—';
   return (
     <div className="rounded-md border border-ink-100 bg-ink-0">
       {isLoading && <p className="p-5 text-sm text-ink-500">Loading…</p>}
@@ -353,9 +379,15 @@ function MovementsTab({
                 <td className="px-5 py-3 text-ink-700 font-mono text-xs">
                   {new Date(m.createdAt).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' })}
                 </td>
-                <td className="px-5 py-3 font-mono text-xs">{m.itemId.slice(-8)}</td>
-                <td className="px-5 py-3 text-xs text-ink-700">{m.fromShopId?.slice(-6) ?? '—'}</td>
-                <td className="px-5 py-3 text-xs text-ink-700">{m.toShopId?.slice(-6) ?? '—'}</td>
+                <td className="px-5 py-3 font-mono text-xs text-ink-900">
+                  {m.item?.sku ?? m.itemId.slice(-8)}
+                </td>
+                <td className="px-5 py-3 text-xs text-ink-700">
+                  {m.fromShop?.name ?? shopName(m.fromShopId)}
+                </td>
+                <td className="px-5 py-3 text-xs text-ink-700">
+                  {m.toShop?.name ?? shopName(m.toShopId)}
+                </td>
                 <td className="px-5 py-3 text-ink-600">{m.reason ?? '—'}</td>
               </tr>
             ))}
@@ -451,7 +483,15 @@ function LowStockTab(): JSX.Element {
   const { data, isLoading } = useGetLowStockQuery({ threshold });
   const { data: catRes } = useGetCategoriesQuery();
   const { data: shopsRes } = useGetShopsQuery();
-  const rows = data?.data?.rows ?? [];
+  const buckets = data?.data?.rows ?? [];
+  const items = data?.data?.items ?? [];
+
+  // Index counts by (shopId, categoryId) so each product row can show "X left
+  // in this shop+category" — the operational signal owners care about.
+  const countKey = (shopId: string, categoryId: string): string => `${shopId}::${categoryId}`;
+  const countByBucket = new Map(buckets.map((b) => [countKey(b.shopId, b.categoryId), b.itemCount]));
+  const shopNameById = new Map((shopsRes?.data ?? []).map((s) => [s.id, s.name]));
+  const catNameById = new Map((catRes?.data ?? []).map((c) => [c.id, c.name]));
 
   return (
     <div className="space-y-4">
@@ -466,37 +506,114 @@ function LowStockTab(): JSX.Element {
           className="h-9 w-20 px-2 rounded-md border border-ink-200 font-mono text-sm focus:outline-none focus:border-brand-500"
         />
       </div>
-      <div className="rounded-md border border-ink-100 bg-ink-0">
-        {isLoading && <p className="p-5 text-sm text-ink-500">Loading…</p>}
-        {!isLoading && rows.length === 0 && (
-          <p className="p-5 text-sm text-ink-500">No category × shop is at or below {threshold} items. Healthy stock.</p>
-        )}
-        {rows.length > 0 && (
+
+      {/* Per-bucket summary — running low buckets with their headline count */}
+      {buckets.length > 0 && (
+        <div className="rounded-md border border-ink-100 bg-ink-0">
+          <header className="px-5 py-3 border-b border-ink-100">
+            <p className="text-eyebrow uppercase text-ink-500">Running low</p>
+            <h2 className="text-md font-medium text-ink-900">
+              {buckets.length} category × shop combination{buckets.length === 1 ? '' : 's'} at or below {threshold}
+            </h2>
+          </header>
           <div className="overflow-x-auto">
-          <table className="w-full text-sm min-w-[480px]">
-            <thead className="text-eyebrow uppercase text-ink-500">
-              <tr>
-                <th className="text-left px-5 py-3">Shop</th>
-                <th className="text-left px-5 py-3">Category</th>
-                <th className="text-right px-5 py-3">Items in stock</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-ink-100">
-              {rows.map((r, i) => (
-                <tr key={i}>
-                  <td className="px-5 py-3 text-ink-800">
-                    {shopsRes?.data.find((s) => s.id === r.shopId)?.name ?? r.shopId.slice(-6)}
-                  </td>
-                  <td className="px-5 py-3 text-ink-800">
-                    {catRes?.data.find((c) => c.id === r.categoryId)?.name ?? r.categoryId.slice(-6)}
-                  </td>
-                  <td className="px-5 py-3 text-right font-mono tabular-nums">
-                    <Badge tone="warning">{r.itemCount}</Badge>
-                  </td>
+            <table className="w-full text-sm min-w-[480px]">
+              <thead className="text-eyebrow uppercase text-ink-500">
+                <tr>
+                  <th className="text-left px-5 py-3">Shop</th>
+                  <th className="text-left px-5 py-3">Category</th>
+                  <th className="text-right px-5 py-3">Items in stock</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody className="divide-y divide-ink-100">
+                {buckets.map((r, i) => (
+                  <tr key={i}>
+                    <td className="px-5 py-3 text-ink-800">
+                      {shopNameById.get(r.shopId) ?? r.shopId.slice(-6)}
+                    </td>
+                    <td className="px-5 py-3 text-ink-800">
+                      {catNameById.get(r.categoryId) ?? r.categoryId.slice(-6)}
+                    </td>
+                    <td className="px-5 py-3 text-right font-mono tabular-nums">
+                      <Badge tone="warning">{r.itemCount}</Badge>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* Actual products in those buckets */}
+      <div className="rounded-md border border-ink-100 bg-ink-0">
+        <header className="px-5 py-3 border-b border-ink-100">
+          <p className="text-eyebrow uppercase text-ink-500">Products to restock</p>
+          <h2 className="text-md font-medium text-ink-900">Items in running-low buckets</h2>
+        </header>
+        {isLoading && <p className="p-5 text-sm text-ink-500">Loading…</p>}
+        {!isLoading && items.length === 0 && (
+          <p className="p-5 text-sm text-ink-500">
+            No category × shop is at or below {threshold} items. Healthy stock.
+          </p>
+        )}
+        {items.length > 0 && (
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm min-w-[760px]">
+              <thead className="text-eyebrow uppercase text-ink-500">
+                <tr>
+                  <th className="text-left px-5 py-3">SKU</th>
+                  <th className="text-left px-5 py-3">Shop</th>
+                  <th className="text-left px-5 py-3">Category</th>
+                  <th className="text-right px-5 py-3">Weight</th>
+                  <th className="text-left px-5 py-3">Purity</th>
+                  <th className="text-left px-5 py-3">Hallmark</th>
+                  <th className="text-right px-5 py-3">Cost</th>
+                  <th className="text-right px-5 py-3">Bucket size</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-ink-100">
+                {items.map((it) => {
+                  const bucketCount = countByBucket.get(countKey(it.shopId, it.categoryId)) ?? 0;
+                  const tone =
+                    it.hallmarkStatus === 'CERTIFIED'
+                      ? 'success'
+                      : it.hallmarkStatus === 'PENDING'
+                        ? 'warning'
+                        : it.hallmarkStatus === 'SUBMITTED'
+                          ? 'info'
+                          : 'neutral';
+                  return (
+                    <tr key={it.id}>
+                      <td className="px-5 py-3 font-mono text-xs text-ink-900">{it.sku}</td>
+                      <td className="px-5 py-3 text-ink-800">
+                        {shopNameById.get(it.shopId) ?? it.shopId.slice(-6)}
+                      </td>
+                      <td className="px-5 py-3 text-ink-800">
+                        {catNameById.get(it.categoryId) ?? it.categoryId.slice(-6)}
+                      </td>
+                      <td className="px-5 py-3 text-right">
+                        <Weight mg={it.weightMg} />
+                      </td>
+                      <td className="px-5 py-3">
+                        <Purity x100={it.purityCaratX100} />
+                      </td>
+                      <td className="px-5 py-3">
+                        <Badge tone={tone as 'success' | 'warning' | 'info' | 'neutral'}>
+                          {it.hallmarkStatus.toLowerCase()}
+                        </Badge>
+                      </td>
+                      <td className="px-5 py-3 text-right">
+                        <Money paise={it.costPricePaise} />
+                      </td>
+                      <td className="px-5 py-3 text-right">
+                        <Badge tone="warning">{bucketCount}</Badge>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
           </div>
         )}
       </div>

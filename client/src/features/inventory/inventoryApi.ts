@@ -20,6 +20,10 @@ export interface ItemMovementRow {
   reason: string | null;
   performedByUserId: string | null;
   createdAt: string;
+  // Server now joins these so transfer / wastage tables can show real names.
+  item?: { id: string; sku: string } | null;
+  fromShop?: { id: string; name: string } | null;
+  toShop?: { id: string; name: string } | null;
 }
 
 export interface PurchaseOrderRow {
@@ -49,9 +53,21 @@ export interface ValuationRow {
   byCategory: Array<{ categoryId: string; totalPaise: number; itemCount: number }>;
 }
 
+export interface LowStockItem {
+  id: string;
+  sku: string;
+  shopId: string;
+  categoryId: string;
+  weightMg: number;
+  purityCaratX100: number;
+  costPricePaise: number;
+  hallmarkStatus: 'PENDING' | 'SUBMITTED' | 'CERTIFIED' | 'EXEMPT';
+}
+
 export interface LowStockRow {
   threshold: number;
   rows: Array<{ categoryId: string; shopId: string; itemCount: number }>;
+  items: LowStockItem[];
 }
 
 export const inventoryApi = baseApi.injectEndpoints({
@@ -157,6 +173,37 @@ export const inventoryApi = baseApi.injectEndpoints({
       query: (params) => ({ url: '/inventory/audit', params: params ?? undefined }),
       providesTags: [{ type: 'Item', id: 'AUDIT' }],
     }),
+    // Bulk import: send the file via FormData. dryRun=true validates only.
+    bulkImportItems: b.mutation<
+      ApiOne<{
+        dryRun: boolean;
+        totalRows: number;
+        validRows: number;
+        inserted: number;
+        duplicates: string[];
+        errors: Array<{ row: number; column?: string; message: string }>;
+      }>,
+      { file: File; dryRun: boolean }
+    >({
+      query: ({ file, dryRun }) => {
+        const form = new FormData();
+        form.append('file', file);
+        form.append('dryRun', dryRun ? 'true' : 'false');
+        return { url: '/inventory/items/bulk-import', method: 'POST', body: form };
+      },
+      invalidatesTags: [
+        { type: 'Item', id: 'LIST' },
+        { type: 'Item', id: 'MOVEMENTS' },
+        { type: 'Item', id: 'AUDIT' },
+        'StockValuation',
+      ],
+    }),
+    getBulkImportTemplate: b.query<
+      ApiOne<{ columns: string[]; example: Array<Record<string, string | number>> }>,
+      void
+    >({
+      query: () => '/inventory/items/bulk-import/template',
+    }),
   }),
 });
 
@@ -179,4 +226,6 @@ export const {
   useUpdateVendorMutation,
   useDeleteVendorMutation,
   useGetAuditLogQuery,
+  useBulkImportItemsMutation,
+  useLazyGetBulkImportTemplateQuery,
 } = inventoryApi;

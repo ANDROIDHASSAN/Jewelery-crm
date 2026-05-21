@@ -38,10 +38,15 @@ export function BarcodePreview({
   value,
   height = 56,
   className,
+  hideLabel = false,
 }: {
   value: string;
   height?: number;
   className?: string;
+  /** Hide the SKU caption under the bars. Useful in tiny print labels
+   *  where the SKU is rendered separately and the caption would be
+   *  unreadable. */
+  hideLabel?: boolean;
 }): JSX.Element {
   const codes = encode(value);
   const bits = codes.map((c) => CODE128_PATTERNS[c] ?? '').join('') + '11';
@@ -73,7 +78,9 @@ export function BarcodePreview({
       >
         {rects}
       </svg>
-      <p className="mt-1 text-center font-mono text-xs text-ink-700 tracking-wide">{value}</p>
+      {!hideLabel && (
+        <p className="mt-1 text-center font-mono text-xs text-ink-700 tracking-wide">{value}</p>
+      )}
     </div>
   );
 }

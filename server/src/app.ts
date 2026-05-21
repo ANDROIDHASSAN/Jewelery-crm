@@ -36,6 +36,7 @@ import { analyticsRouter } from './modules/analytics/analytics.routes.js';
 import { websiteRouter } from './modules/website/website.routes.js';
 import { storefrontRouter } from './modules/storefront/storefront.routes.js';
 import { webhooksRouter } from './modules/webhooks/webhooks.routes.js';
+import { settingsRouter } from './modules/settings/settings.routes.js';
 
 export function createApp(): express.Express {
   const app = express();
@@ -145,6 +146,14 @@ export function createApp(): express.Express {
 
   // Storefront content (CMS)
   protectedRouter.use('/storefront', requireAnyPermission('website.read', 'website.write'), storefrontRouter);
+
+  // Workspace settings — read by anyone with settings.read; writes (PATCH
+  // tenant) gated inside the router with settings.write.
+  protectedRouter.use(
+    '/settings',
+    requireAnyPermission('settings.read', 'settings.write'),
+    settingsRouter,
+  );
 
   app.use('/api/v1', protectedRouter);
 

@@ -17,6 +17,7 @@ import { StorefrontLayout } from '@/features/storefront/StorefrontLayout';
 
 import { DashboardPage } from '@/pages/DashboardPage';
 import { InventoryPage } from '@/pages/InventoryPage';
+import { PrintLabelsPage } from '@/pages/PrintLabelsPage';
 import { FinancePage } from '@/pages/FinancePage';
 import { CrmPage } from '@/pages/CrmPage';
 import { EcommerceAdminPage } from '@/pages/EcommerceAdminPage';
@@ -154,6 +155,7 @@ const MAIN_HOST_ROUTES = [
     children: [
       { index: true, element: <RequirePermission permission="dashboard.view"><DashboardPage /></RequirePermission> },
       { path: 'inventory', element: <RequirePermission any={['inventory.read', 'inventory.write']}><InventoryPage /></RequirePermission> },
+      { path: 'inventory/print-labels', element: <RequirePermission any={['inventory.read', 'inventory.write']}><PrintLabelsPage /></RequirePermission> },
       // Offline-shops monitor: read-only window into every shop's POS
       // (sessions, bills, variances, cashiers). The actual billing surface
       // lives on the POS subdomain — no /admin/pos route by design.
