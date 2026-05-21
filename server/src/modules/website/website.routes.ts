@@ -237,10 +237,19 @@ websiteRouter.get('/products/:slug/reviews', async (req, res, next) => {
 // Public storefront checkout. Creates (or reuses by phone) a Customer, then
 // builds an Order with line items. Admin's EcommerceAdminPage picks it up
 // via the protected /ecommerce/orders endpoint.
-const OrderItemPublicSchema = z.object({
-  productId: z.string().min(1),
-  qty: z.number().int().positive().max(99),
-});
+// Order line items accept EITHER a productId or a slug — slug takes
+// precedence so the client can be immune to stale cached IDs from the
+// Vercel-edge-cached /website/products listing. (Pre-fix: client posted
+// the cached id, server checked live DB, ID had been recycled by a reseed
+// or unpublish → 400 PRODUCT_UNAVAILABLE. With slug we resolve once at
+// write time from the fresh DB.)
+const OrderItemPublicSchema = z
+  .object({
+    productId: z.string().min(1).optional(),
+    slug: z.string().min(1).max(140).optional(),
+    qty: z.number().int().positive().max(99),
+  })
+  .refine((v) => v.productId || v.slug, { message: 'Either productId or slug is required' });
 // Shipping address. Optional in v1 — reserve-at-store and walk-in COD don't
 // need it. Required when paymentMethod=razorpay and shippingPaise > 0 (i.e.
 // real online courier order).
@@ -282,32 +291,53 @@ websiteRouter.post('/orders', async (req, res, next) => {
     const tenantId = await tenantFromQueryOrFirst(req);
     const body = OrderCreatePublicSchema.parse(req.body);
 
-    // Look up each product once — fetch price AND name in a single round trip.
-    // (Previously two separate findMany calls; on a remote DB that doubled the
-    // checkout latency. Cuts ~250ms of WAN RTT.)
-    const productIds = body.items.map((i) => i.productId);
+    // Resolve every line item to a live product row. Looking up by BOTH
+    // candidate IDs and candidate slugs in a single OR query keeps this at
+    // one round trip; the slug branch is the resilient one (cuids in the
+    // listing payload can be served stale from the Vercel edge cache).
+    const candidateIds = body.items.map((i) => i.productId).filter((v): v is string => !!v);
+    const candidateSlugs = body.items.map((i) => i.slug).filter((v): v is string => !!v);
     const products = await rawPrisma.product.findMany({
-      where: { tenantId, id: { in: productIds }, isPublished: true },
-      select: { id: true, name: true, basePricePaise: true, stoneChargePaise: true },
+      where: {
+        tenantId,
+        isPublished: true,
+        OR: [
+          candidateIds.length > 0 ? { id: { in: candidateIds } } : undefined,
+          candidateSlugs.length > 0 ? { slug: { in: candidateSlugs } } : undefined,
+        ].filter((c): c is NonNullable<typeof c> => c !== undefined),
+      },
+      select: { id: true, slug: true, name: true, basePricePaise: true, stoneChargePaise: true },
     });
-    const priceByProductId = new Map(products.map((p) => [p.id, p.basePricePaise + p.stoneChargePaise]));
-    const nameById = new Map(products.map((p) => [p.id, p.name]));
+    const byId = new Map(products.map((p) => [p.id, p]));
+    const bySlug = new Map(products.map((p) => [p.slug, p]));
+    // Build a resolved item list — every line carries the canonical id we'll
+    // write to OrderItem, no matter how the client identified it.
+    const resolvedItems: Array<{ product: typeof products[number]; qty: number }> = [];
     for (const it of body.items) {
-      if (!priceByProductId.has(it.productId)) {
-        res.status(400).json({ error: { code: 'PRODUCT_UNAVAILABLE', message: `Product ${it.productId} not available` } });
+      const product = (it.slug && bySlug.get(it.slug)) || (it.productId && byId.get(it.productId)) || null;
+      if (!product) {
+        res.status(400).json({
+          error: {
+            code: 'PRODUCT_UNAVAILABLE',
+            message: `Product ${it.slug ?? it.productId ?? ''} not available`,
+          },
+        });
         return;
       }
+      resolvedItems.push({ product, qty: it.qty });
     }
-    const subtotalPaise = body.items.reduce(
-      (s, i) => s + (priceByProductId.get(i.productId) ?? 0) * i.qty,
+    const priceByProductId = new Map(products.map((p) => [p.id, p.basePricePaise + p.stoneChargePaise]));
+    const nameById = new Map(products.map((p) => [p.id, p.name]));
+    const subtotalPaise = resolvedItems.reduce(
+      (s, { product, qty }) => s + (priceByProductId.get(product.id) ?? 0) * qty,
       0,
     );
     const taxPaise = Math.round((subtotalPaise * 300) / 10_000); // 3% GST
     const totalPaise = subtotalPaise + body.shippingPaise + taxPaise;
 
     // Human-readable interest string for the admin Reservations tab.
-    const piecesLabel = body.items
-      .map((i) => `${nameById.get(i.productId) ?? 'Piece'} × ${i.qty}`)
+    const piecesLabel = resolvedItems
+      .map(({ product, qty }) => `${nameById.get(product.id) ?? product.name} × ${qty}`)
       .join(', ');
     const totalLabel = `Total ₹${(totalPaise / 100).toLocaleString('en-IN')}`;
     const interest = `RESERVE: ${piecesLabel} · ${totalLabel} · via cart checkout`.slice(0, 400);
@@ -423,10 +453,10 @@ websiteRouter.post('/orders', async (req, res, next) => {
           shippingState: body.shippingAddress?.state ?? null,
           shippingPincode: body.shippingAddress?.pincode ?? null,
           items: {
-            create: body.items.map((i) => ({
-              productId: i.productId,
-              qty: i.qty,
-              pricePaise: priceByProductId.get(i.productId) ?? 0,
+            create: resolvedItems.map(({ product, qty }) => ({
+              productId: product.id,
+              qty,
+              pricePaise: priceByProductId.get(product.id) ?? 0,
             })),
           },
           events: {
@@ -513,11 +543,11 @@ websiteRouter.post('/orders', async (req, res, next) => {
           customerName: body.customer.name,
           customerPhone: body.customer.phone,
           shipping: body.shippingAddress!,
-          items: body.items.map((i) => ({
-            name: nameById.get(i.productId) ?? 'Jewellery piece',
-            sku: i.productId,
-            qty: i.qty,
-            pricePaise: priceByProductId.get(i.productId) ?? 0,
+          items: resolvedItems.map(({ product, qty }) => ({
+            name: nameById.get(product.id) ?? product.name,
+            sku: product.id,
+            qty,
+            pricePaise: priceByProductId.get(product.id) ?? 0,
           })),
           subtotalPaise,
           shippingPaise: body.shippingPaise,

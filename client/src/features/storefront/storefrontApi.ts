@@ -280,7 +280,11 @@ export const storefrontApi = baseApi.injectEndpoints({
       },
       {
         customer: { name: string; phone: string; email?: string };
-        items: Array<{ productId: string; qty: number }>;
+        // Items may identify the product by id, slug, or both. Slug is the
+        // resilient path — `/website/products` is edge-cached on Vercel, so
+        // cached ids can be stale after a reseed or unpublish. The server
+        // prefers slug when both are present.
+        items: Array<{ productId?: string; slug?: string; qty: number }>;
         paymentMethod?: 'reserve-at-store' | 'razorpay' | 'cod';
         shippingPaise?: number;
         shippingAddress?: {

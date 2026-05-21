@@ -689,11 +689,6 @@ function ReserveModal({ open, onClose, productId, productSlug, productName, puri
   const dispatch = useAppDispatch();
   const [createOrder, { isLoading: submitting }] = useCreatePublicOrderMutation();
   const [verifyPayment] = useVerifyRazorpayPaymentMutation();
-  // Pull fresh catalog IDs at submit time. RTK Query keeps the product list
-  // cached (keepUnusedDataFor: 5 min); after a re-seed on the server the
-  // cached id goes stale and /orders returns PRODUCT_UNAVAILABLE. Refetching
-  // by slug at submit time keeps the id aligned with what the server stores.
-  const { refetch: refetchProducts } = useGetPublicProductsQuery();
 
   const handleSubmit = async (e: React.FormEvent): Promise<void> => {
     e.preventDefault();
@@ -738,23 +733,12 @@ function ReserveModal({ open, onClose, productId, productSlug, productName, puri
       pincode,
     };
 
-    // Re-resolve the productId from the live catalog by slug, in case the
-    // RTK Query cache is stale (most commonly: the server has been re-seeded
-    // since this page loaded, so the cached id no longer exists in the DB).
-    let liveProductId = productId;
-    try {
-      const fresh = await refetchProducts().unwrap();
-      const match = fresh.find((p) => p.slug === productSlug);
-      if (match) liveProductId = match.id;
-      else {
-        toast.error('This piece is no longer available — please refresh the page.');
-        return;
-      }
-    } catch {
-      // Network/refetch failure — fall through with the cached id; the server
-      // will reject if it's truly stale and the user can retry.
-    }
-
+    // Send the slug — server resolves it to the live product id from a
+    // fresh DB read at order time. Bypasses Vercel's edge cache on
+    // /website/products, which is what made the older "refetch by slug"
+    // fix unreliable (the refetch was served stale from the edge too).
+    // We still send the cached id as a hint for back-compat with any
+    // in-flight clients, but slug wins server-side.
     try {
       const res = await createOrder({
         customer: {
@@ -762,7 +746,7 @@ function ReserveModal({ open, onClose, productId, productSlug, productName, puri
           phone: customerPhoneE164,
           email: customerEmail || undefined,
         },
-        items: [{ productId: liveProductId, qty }],
+        items: [{ productId, slug: productSlug, qty }],
         paymentMethod,
         shippingAddress,
         notes: notes.trim() || undefined,
