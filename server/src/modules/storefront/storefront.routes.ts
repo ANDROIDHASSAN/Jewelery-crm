@@ -6,6 +6,7 @@ import { StorefrontContentSchema } from '@goldos/shared/schemas';
 import { rawPrisma } from '../../lib/prisma.js';
 import { getTenantId } from '../../lib/async-context.js';
 import { UnauthorizedError } from '../../lib/errors.js';
+import { requirePermission } from '../../middleware/require-permission.js';
 
 export const storefrontRouter: Router = Router();
 
@@ -24,7 +25,7 @@ storefrontRouter.get('/', async (_req, res, next) => {
   }
 });
 
-storefrontRouter.put('/', async (req, res, next) => {
+storefrontRouter.put('/', requirePermission('website.write'), async (req, res, next) => {
   try {
     const tenantId = getTenantId();
     if (!tenantId) throw new UnauthorizedError();

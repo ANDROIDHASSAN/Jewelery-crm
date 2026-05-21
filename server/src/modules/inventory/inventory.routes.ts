@@ -8,8 +8,14 @@ import {
 } from '@goldos/shared/schemas';
 import { z } from 'zod';
 import * as svc from './inventory.service.js';
+import { requirePermission, requireAnyPermission } from '../../middleware/require-permission.js';
 
 export const inventoryRouter: Router = Router();
+
+// Action-level RBAC gates. The mount-level gate in app.ts accepts any of
+// inventory.{read,write,delete,transfer,wastage,purchase_order,hallmark,audit}
+// so a user with only `inventory.read` clears the mount and still hits this
+// router — we have to gate every mutating route here or read users can write.
 
 const ListQuery = z.object({
   shopId: z.string().optional(),
@@ -35,7 +41,7 @@ inventoryRouter.get('/items/:id', async (req, res, next) => {
   }
 });
 
-inventoryRouter.post('/items', async (req, res, next) => {
+inventoryRouter.post('/items', requirePermission('inventory.write'), async (req, res, next) => {
   try {
     const body = ItemInputSchema.parse(req.body);
     const item = await svc.createItem(body, req.user?.userId);
@@ -45,7 +51,7 @@ inventoryRouter.post('/items', async (req, res, next) => {
   }
 });
 
-inventoryRouter.patch('/items/:id', async (req, res, next) => {
+inventoryRouter.patch('/items/:id', requirePermission('inventory.write'), async (req, res, next) => {
   try {
     const body = ItemInputSchema.partial().parse(req.body);
     const item = await svc.updateItem(req.params['id']!, body, req.user?.userId);
@@ -55,7 +61,7 @@ inventoryRouter.patch('/items/:id', async (req, res, next) => {
   }
 });
 
-inventoryRouter.delete('/items/:id', async (req, res, next) => {
+inventoryRouter.delete('/items/:id', requirePermission('inventory.delete'), async (req, res, next) => {
   try {
     await svc.deleteItem(req.params['id']!, req.user?.userId);
     res.status(204).end();
@@ -64,7 +70,7 @@ inventoryRouter.delete('/items/:id', async (req, res, next) => {
   }
 });
 
-inventoryRouter.post('/items/:id/transfer', async (req, res, next) => {
+inventoryRouter.post('/items/:id/transfer', requirePermission('inventory.transfer'), async (req, res, next) => {
   try {
     const body = TransferInitiateSchema.parse({ itemId: req.params['id'], ...req.body });
     await svc.transferItem(body.itemId, body.toShopId, body.reason, req.user?.userId);
@@ -74,7 +80,7 @@ inventoryRouter.post('/items/:id/transfer', async (req, res, next) => {
   }
 });
 
-inventoryRouter.post('/items/:id/wastage', async (req, res, next) => {
+inventoryRouter.post('/items/:id/wastage', requirePermission('inventory.wastage'), async (req, res, next) => {
   try {
     const body = WastageInputSchema.parse({ itemId: req.params['id'], ...req.body });
     const movement = await svc.recordWastage(body.itemId, body.reason, req.user?.userId);
@@ -108,7 +114,7 @@ inventoryRouter.get('/categories', async (_req, res, next) => {
   }
 });
 
-inventoryRouter.patch('/categories/:id/making-charge', async (req, res, next) => {
+inventoryRouter.patch('/categories/:id/making-charge', requirePermission('inventory.write'), async (req, res, next) => {
   try {
     const body = z.object({ defaultMakingChargeBps: z.number().int().min(0).max(10_000) }).parse(req.body);
     const updated = await svc.updateCategoryMakingCharge(req.params['id']!, body.defaultMakingChargeBps);
@@ -146,7 +152,7 @@ inventoryRouter.get('/vendors', async (_req, res, next) => {
   }
 });
 
-inventoryRouter.post('/vendors', async (req, res, next) => {
+inventoryRouter.post('/vendors', requirePermission('inventory.write'), async (req, res, next) => {
   try {
     const body = VendorInputSchema.parse(req.body);
     const vendor = await svc.createVendor(body);
@@ -156,7 +162,7 @@ inventoryRouter.post('/vendors', async (req, res, next) => {
   }
 });
 
-inventoryRouter.patch('/vendors/:id', async (req, res, next) => {
+inventoryRouter.patch('/vendors/:id', requirePermission('inventory.write'), async (req, res, next) => {
   try {
     const body = VendorInputSchema.partial().parse(req.body);
     const vendor = await svc.updateVendor(req.params['id']!, body);
@@ -166,7 +172,7 @@ inventoryRouter.patch('/vendors/:id', async (req, res, next) => {
   }
 });
 
-inventoryRouter.delete('/vendors/:id', async (req, res, next) => {
+inventoryRouter.delete('/vendors/:id', requirePermission('inventory.delete'), async (req, res, next) => {
   try {
     await svc.deleteVendor(req.params['id']!);
     res.status(204).end();
@@ -185,7 +191,7 @@ inventoryRouter.get('/purchase-orders', async (_req, res, next) => {
   }
 });
 
-inventoryRouter.post('/purchase-orders', async (req, res, next) => {
+inventoryRouter.post('/purchase-orders', requirePermission('inventory.purchase_order'), async (req, res, next) => {
   try {
     const body = PurchaseOrderCreateSchema.parse(req.body);
     const po = await svc.createPurchaseOrder(body);
@@ -195,7 +201,7 @@ inventoryRouter.post('/purchase-orders', async (req, res, next) => {
   }
 });
 
-inventoryRouter.post('/purchase-orders/:id/receive', async (req, res, next) => {
+inventoryRouter.post('/purchase-orders/:id/receive', requirePermission('inventory.purchase_order'), async (req, res, next) => {
   try {
     const body = z
       .object({ shopId: z.string().min(1), categoryId: z.string().min(1) })
@@ -209,7 +215,12 @@ inventoryRouter.post('/purchase-orders/:id/receive', async (req, res, next) => {
 
 // --- Audit log ---
 
-inventoryRouter.get('/audit', async (req, res, next) => {
+// Inventory-scoped audit log. Accept either the dedicated audit.read perm
+// (admin / compliance roles) OR inventory.write — staff who edit stock often
+// need to scrub the history of their own edits to debug bad SKUs or
+// reconcile a transfer. Read-only viewers (inventory.read alone) are kept
+// out, matching the principle that audit trails are not for general staff.
+inventoryRouter.get('/audit', requireAnyPermission('audit.read', 'inventory.write'), async (req, res, next) => {
   try {
     const q = z
       .object({

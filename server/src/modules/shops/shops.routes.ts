@@ -5,6 +5,7 @@ import { ShopInputSchema } from '@goldos/shared/schemas';
 import { prisma } from '../../lib/prisma.js';
 import { NotFoundError } from '../../lib/errors.js';
 import { getTenantId } from '../../lib/async-context.js';
+import { requirePermission } from '../../middleware/require-permission.js';
 
 export const shopsRouter: Router = Router();
 
@@ -30,7 +31,7 @@ shopsRouter.get('/:id', async (req, res, next) => {
   }
 });
 
-shopsRouter.post('/', async (req, res, next) => {
+shopsRouter.post('/', requirePermission('shops.write'), async (req, res, next) => {
   try {
     const body = ShopInputSchema.parse(req.body);
     const tenantId = getTenantId();

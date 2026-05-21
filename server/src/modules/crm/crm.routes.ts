@@ -5,8 +5,13 @@ import { prisma } from '../../lib/prisma.js';
 import { LEAD_STATUSES } from '@goldos/shared/constants';
 import { NotFoundError } from '../../lib/errors.js';
 import { getTenantId } from '../../lib/async-context.js';
+import { requirePermission } from '../../middleware/require-permission.js';
 
 export const crmRouter: Router = Router();
+
+// Per-route RBAC gates. The mount-level gate in app.ts accepts any of
+// crm.{read,write,assign,whatsapp_send}, so the read-only viewer would
+// otherwise be able to create leads, edit them, and fire WhatsApp blasts.
 
 // Pipeline kanban supports drag-and-drop in any direction — both for normal
 // progression (NEW → CONTACTED → … → CONVERTED), for marking lost from any
@@ -39,7 +44,7 @@ crmRouter.get('/leads', async (req, res, next) => {
   }
 });
 
-crmRouter.post('/leads', async (req, res, next) => {
+crmRouter.post('/leads', requirePermission('crm.write'), async (req, res, next) => {
   try {
     const body = LeadInputSchema.parse(req.body);
     const tenantId = getTenantId();
@@ -61,7 +66,7 @@ const BroadcastSchema = z.object({
   message: z.string().min(2).max(1500),
 });
 
-crmRouter.post('/broadcasts', async (req, res, next) => {
+crmRouter.post('/broadcasts', requirePermission('crm.whatsapp_send'), async (req, res, next) => {
   try {
     const body = BroadcastSchema.parse(req.body);
     const where = body.audience === 'ALL' ? {} : { status: body.audience };
@@ -90,7 +95,7 @@ crmRouter.post('/broadcasts', async (req, res, next) => {
   }
 });
 
-crmRouter.patch('/leads/:id', async (req, res, next) => {
+crmRouter.patch('/leads/:id', requirePermission('crm.write'), async (req, res, next) => {
   try {
     const body = z
       .object({
@@ -102,6 +107,19 @@ crmRouter.patch('/leads/:id', async (req, res, next) => {
 
     const existing = await prisma.lead.findUnique({ where: { id: req.params['id']! } });
     if (!existing) throw new NotFoundError();
+
+    // Re-assigning a lead is its own permission separate from general edit.
+    // We only require crm.assign when the assignment actually changes — a
+    // body that re-passes the current assignee (idempotent UI re-saves) is
+    // fine for any crm.write holder.
+    if (
+      body.assignedToUserId &&
+      body.assignedToUserId !== existing.assignedToUserId &&
+      !req.user?.perms.includes('crm.assign')
+    ) {
+      const { ForbiddenError } = await import('../../lib/errors.js');
+      throw new ForbiddenError('Missing permission: crm.assign');
+    }
 
     const lead = await prisma.lead.update({
       where: { id: req.params['id']! },

@@ -7,8 +7,12 @@ import { readGoldRatePaise } from '../../lib/redis.js';
 import { applyBps, computeGoldValuePaise } from '../../lib/money.js';
 import { getTenantId } from '../../lib/async-context.js';
 import { withCache, bustKey } from '../../lib/cache.js';
+import { requirePermission } from '../../middleware/require-permission.js';
 
 export const ecommerceRouter: Router = Router();
+
+// Per-route RBAC gates. Mount-level only checks ecommerce.read; mutating
+// catalogue/order routes need their action-specific permission.
 
 /**
  * Live price = metal value at today's spot rate + making charge on metal + stone charge.
@@ -81,7 +85,7 @@ ecommerceRouter.get('/products', async (req, res, next) => {
   }
 });
 
-ecommerceRouter.post('/products', async (req, res, next) => {
+ecommerceRouter.post('/products', requirePermission('ecommerce.product_write'), async (req, res, next) => {
   try {
     const body = ProductInputSchema.parse(req.body);
     const tenantId = getTenantId();
@@ -95,7 +99,7 @@ ecommerceRouter.post('/products', async (req, res, next) => {
 
 const ProductPatchSchema = ProductInputSchema.partial();
 
-ecommerceRouter.patch('/products/:id', async (req, res, next) => {
+ecommerceRouter.patch('/products/:id', requirePermission('ecommerce.product_write'), async (req, res, next) => {
   try {
     const { id } = z.object({ id: z.string().min(1) }).parse(req.params);
     const body = ProductPatchSchema.parse(req.body);
@@ -106,7 +110,7 @@ ecommerceRouter.patch('/products/:id', async (req, res, next) => {
   }
 });
 
-ecommerceRouter.delete('/products/:id', async (req, res, next) => {
+ecommerceRouter.delete('/products/:id', requirePermission('ecommerce.product_write'), async (req, res, next) => {
   try {
     const { id } = z.object({ id: z.string().min(1) }).parse(req.params);
     await prisma.product.delete({ where: { id } });
@@ -291,7 +295,7 @@ const OrderPatchSchema = z.object({
   actorName: z.string().max(80).optional(),
 });
 
-ecommerceRouter.patch('/orders/:id', async (req, res, next) => {
+ecommerceRouter.patch('/orders/:id', requirePermission('ecommerce.order_fulfil'), async (req, res, next) => {
   try {
     const { id } = z.object({ id: z.string().min(1) }).parse(req.params);
     const body = OrderPatchSchema.parse(req.body);

@@ -141,6 +141,14 @@ export async function listMovements(opts: { itemId?: string; type?: string; curs
     orderBy: { createdAt: 'desc' },
     take: take + 1,
     ...(opts.cursor ? { cursor: { id: opts.cursor }, skip: 1 } : {}),
+    // Join the item only — shop relations on ItemMovement aren't declared in
+    // the Prisma schema (the FK columns exist as bare strings). InventoryPage
+    // falls back to a client-side shopName(...) lookup, so a join isn't
+    // required. To enable a server-side join, add fromShop/toShop @relation()
+    // to model ItemMovement in schema.prisma and re-generate the client.
+    include: {
+      item: { select: { id: true, sku: true } },
+    },
   });
   const hasMore = movements.length > take;
   const page = movements.slice(0, take);
@@ -203,14 +211,35 @@ export async function computeLowStock(threshold: number) {
     where: { status: 'IN_STOCK' },
     _count: { _all: true },
   });
-  const rows = grouped
+  const lowBuckets = grouped
     .map((g) => ({
       categoryId: g.categoryId,
       shopId: g.shopId,
       itemCount: g._count._all,
     }))
     .filter((r) => r.itemCount <= threshold);
-  return { threshold, rows };
+  if (lowBuckets.length === 0) return { threshold, rows: [], items: [] };
+  // Pull every IN_STOCK item that lives in a low bucket so the UI can render
+  // an actual product list (SKU / weight / purity / cost) instead of just
+  // "Bridal — 2 items".
+  const items = await prisma.item.findMany({
+    where: {
+      status: 'IN_STOCK',
+      OR: lowBuckets.map((b) => ({ categoryId: b.categoryId, shopId: b.shopId })),
+    },
+    orderBy: [{ shopId: 'asc' }, { categoryId: 'asc' }, { createdAt: 'desc' }],
+    select: {
+      id: true,
+      sku: true,
+      shopId: true,
+      categoryId: true,
+      weightMg: true,
+      purityCaratX100: true,
+      costPricePaise: true,
+      hallmarkStatus: true,
+    },
+  });
+  return { threshold, rows: lowBuckets, items };
 }
 
 // --- Vendors ---
