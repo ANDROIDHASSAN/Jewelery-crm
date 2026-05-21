@@ -511,6 +511,7 @@ export function ProductDetailPage(): JSX.Element {
         open={reserveOpen}
         onClose={() => setReserveOpen(false)}
         productId={product.id}
+        productSlug={product.slug}
         productName={product.name}
         purity={purity}
         size={size}
@@ -652,6 +653,7 @@ interface ReserveModalProps {
   open: boolean;
   onClose: () => void;
   productId: string;
+  productSlug: string;
   productName: string;
   purity: string;
   size: string;
@@ -659,7 +661,7 @@ interface ReserveModalProps {
   totalPaise: number;
 }
 
-function ReserveModal({ open, onClose, productId, productName, purity, size, qty, totalPaise }: ReserveModalProps): JSX.Element {
+function ReserveModal({ open, onClose, productId, productSlug, productName, purity, size, qty, totalPaise }: ReserveModalProps): JSX.Element {
   // Prefill from the signed-in account + default saved address. By the time
   // ReserveModal opens the visitor has already passed the AuthGate, so the
   // contact fields are known; the address book may or may not have an entry.
@@ -687,6 +689,11 @@ function ReserveModal({ open, onClose, productId, productName, purity, size, qty
   const dispatch = useAppDispatch();
   const [createOrder, { isLoading: submitting }] = useCreatePublicOrderMutation();
   const [verifyPayment] = useVerifyRazorpayPaymentMutation();
+  // Pull fresh catalog IDs at submit time. RTK Query keeps the product list
+  // cached (keepUnusedDataFor: 5 min); after a re-seed on the server the
+  // cached id goes stale and /orders returns PRODUCT_UNAVAILABLE. Refetching
+  // by slug at submit time keeps the id aligned with what the server stores.
+  const { refetch: refetchProducts } = useGetPublicProductsQuery();
 
   const handleSubmit = async (e: React.FormEvent): Promise<void> => {
     e.preventDefault();
@@ -731,6 +738,23 @@ function ReserveModal({ open, onClose, productId, productName, purity, size, qty
       pincode,
     };
 
+    // Re-resolve the productId from the live catalog by slug, in case the
+    // RTK Query cache is stale (most commonly: the server has been re-seeded
+    // since this page loaded, so the cached id no longer exists in the DB).
+    let liveProductId = productId;
+    try {
+      const fresh = await refetchProducts().unwrap();
+      const match = fresh.find((p) => p.slug === productSlug);
+      if (match) liveProductId = match.id;
+      else {
+        toast.error('This piece is no longer available — please refresh the page.');
+        return;
+      }
+    } catch {
+      // Network/refetch failure — fall through with the cached id; the server
+      // will reject if it's truly stale and the user can retry.
+    }
+
     try {
       const res = await createOrder({
         customer: {
@@ -738,7 +762,7 @@ function ReserveModal({ open, onClose, productId, productName, purity, size, qty
           phone: customerPhoneE164,
           email: customerEmail || undefined,
         },
-        items: [{ productId, qty }],
+        items: [{ productId: liveProductId, qty }],
         paymentMethod,
         shippingAddress,
         notes: notes.trim() || undefined,
