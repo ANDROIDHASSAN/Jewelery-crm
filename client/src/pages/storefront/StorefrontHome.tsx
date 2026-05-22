@@ -29,12 +29,12 @@ const SHOP_BY = [
 // showing category name + product count. Counts are placeholders until
 // wired to the live products query.
 const SHOP_BY_OCCASION = [
-  { name: 'Bracelets', slug: '22k', count: 16, img: 'https://images.unsplash.com/photo-1611591437281-460bfbe1220a?auto=format&fit=crop&w=1200&q=92' },
-  { name: 'Earrings', slug: 'daily-wear', count: 16, img: 'https://images.unsplash.com/photo-1535632787350-4e68ef0ac584?auto=format&fit=crop&w=1200&q=92' },
-  { name: 'Gold Set', slug: 'bridal', count: 4, img: 'https://images.unsplash.com/photo-1602173574767-37ac01994b2a?auto=format&fit=crop&w=1200&q=92' },
-  { name: 'Necklaces', slug: 'festive', count: 12, img: 'https://images.unsplash.com/photo-1599643477877-530eb83abc8e?auto=format&fit=crop&w=1200&q=92' },
-  { name: 'Rings', slug: 'diamond', count: 13, img: 'https://images.unsplash.com/photo-1605100804763-247f67b3557e?auto=format&fit=crop&w=1200&q=92' },
-  { name: 'Silver Set', slug: 'silver', count: 3, img: 'https://images.unsplash.com/photo-1603561591411-07134e71a2a9?auto=format&fit=crop&w=1200&q=92' },
+  { name: 'Bracelets',  slug: '22k',        count: 16, img: '/categories/jewl1.jpg' },
+  { name: 'Earrings',   slug: 'daily-wear', count: 16, img: '/categories/jewl2.jpg' },
+  { name: 'Gold Set',   slug: 'bridal',     count: 4,  img: '/categories/jew3.jpg'  },
+  { name: 'Necklaces',  slug: 'festive',    count: 12, img: '/categories/jewl4.jpg' },
+  { name: 'Rings',      slug: 'diamond',    count: 13, img: '/categories/jewl6.jpg' },
+  { name: 'Silver Set', slug: 'silver',     count: 3,  img: '/categories/jewl7.jpg' },
 ];
 
 // Tanishq-signature: circular portrait tiles for browse-by-category.
