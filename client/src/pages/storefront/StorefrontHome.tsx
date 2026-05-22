@@ -177,10 +177,10 @@ export function StorefrontHome(): JSX.Element {
           </div>
 
           {/* Right: full-bleed video panel (Pinterest reel). Save the video
-              file to client/public/img/hero.mp4 and it auto-plays. The
-              `poster` falls back to the original hero image until the video
-              loads (or forever if the file is missing). */}
-          <div className="relative aspect-[4/5] lg:aspect-auto lg:min-h-[640px] bg-ink-100 order-1 lg:order-2 overflow-hidden">
+              file to client/public/img/hero.mp4 and it auto-plays. Height
+              extends down to roughly the CTA-button line of the left text
+              panel so the fold reads balanced (not too short, not dominant). */}
+          <div className="relative aspect-[4/5] sm:aspect-[16/10] lg:aspect-auto lg:h-[680px] xl:h-[720px] bg-ink-100 order-1 lg:order-2 overflow-hidden">
             <video
               src="/img/hero.mp4"
               poster={hero.image}
