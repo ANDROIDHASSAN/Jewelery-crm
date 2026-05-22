@@ -16,7 +16,13 @@ export function StorefrontLayout(): JSX.Element {
   // Hydrate the local slice from the database on mount + whenever the server
   // version refreshes. Preserves the existing useAppSelector consumers without
   // requiring a per-component refactor.
+  //
+  // Set `VITE_USE_DEFAULT_CONTENT=1` in client/.env to bypass API hydration
+  // and render the design-system defaults (high-quality stock imagery, brand
+  // copy etc.) — useful for design preview / screenshot work before the CMS
+  // is populated. Production builds don't set the flag.
   useEffect(() => {
+    if (import.meta.env.VITE_USE_DEFAULT_CONTENT === '1') return;
     if (data?.content) dispatch(setContent(data.content));
   }, [data, dispatch]);
 
@@ -30,15 +36,15 @@ export function StorefrontLayout(): JSX.Element {
         <Outlet />
       </main>
       <StorefrontFooter />
-      {/* WhatsApp floating button per design-references */}
+      {/* WhatsApp floating button per design-references — soft floating bob */}
       <a
         href={`https://wa.me/${whatsapp}`}
         target="_blank"
         rel="noopener noreferrer"
-        className="fixed bottom-4 right-4 sm:bottom-6 sm:right-6 h-12 w-12 sm:h-14 sm:w-14 rounded-full bg-brand-400 text-ink-900 inline-flex items-center justify-center shadow-md hover:bg-brand-500 transition-colors duration-fast z-30"
+        className="group fixed bottom-4 right-4 sm:bottom-6 sm:right-6 h-12 w-12 sm:h-14 sm:w-14 rounded-full bg-brand-400 text-ink-900 inline-flex items-center justify-center shadow-md hover:bg-brand-500 transition-colors duration-fast z-30 animate-float-bob"
         aria-label="Chat on WhatsApp"
       >
-        <MessageCircle className="h-5 w-5 sm:h-6 sm:w-6" />
+        <MessageCircle className="h-5 w-5 sm:h-6 sm:w-6 transition-transform duration-200 group-hover:scale-110" />
       </a>
     </div>
     </AuthGateProvider>

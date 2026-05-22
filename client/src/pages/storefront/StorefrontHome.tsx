@@ -92,22 +92,24 @@ export function StorefrontHome(): JSX.Element {
       {/* Hero — light split editorial. Text on faint blush, full-bleed image on right. */}
       <section className="bg-[#FAF3EE] border-b border-[#EFE0D2]/70">
         <div className="max-w-[1280px] mx-auto grid grid-cols-1 lg:grid-cols-[1.05fr_1fr] items-stretch">
-          {/* Left: cream content panel */}
+          {/* Left: cream content panel — staggered fade-in-up */}
           <div className="flex flex-col justify-center px-4 sm:px-6 lg:pl-2 lg:pr-12 py-14 sm:py-20 lg:py-24 order-2 lg:order-1">
-            <p className="text-eyebrow uppercase text-brand-700">{hero.eyebrow}</p>
-            <h1 className="font-display text-[36px] leading-[1.05] sm:text-[48px] md:text-[64px] lg:text-[72px] lg:leading-[1.02] tracking-tight text-ink-900 mt-4 sm:mt-5 max-w-xl">
+            <p className="text-eyebrow uppercase text-brand-700 animate-fade-in-up-1 inline-flex items-center gap-1.5">
+              <Sparkles className="h-3 w-3 text-brand-500 animate-twinkle" aria-hidden /> {hero.eyebrow}
+            </p>
+            <h1 className="font-display text-[36px] leading-[1.05] sm:text-[48px] md:text-[64px] lg:text-[72px] lg:leading-[1.02] tracking-tight text-ink-900 mt-4 sm:mt-5 max-w-xl animate-fade-in-up-2">
               {hero.title}
             </h1>
-            <p className="mt-5 sm:mt-6 max-w-md text-[15px] sm:text-base text-ink-600 leading-relaxed">
+            <p className="mt-5 sm:mt-6 max-w-md text-[15px] sm:text-base text-ink-600 leading-relaxed animate-fade-in-up-3">
               {hero.subtitle}
             </p>
-            <div className="mt-7 sm:mt-9 flex flex-wrap items-center gap-3">
+            <div className="mt-7 sm:mt-9 flex flex-wrap items-center gap-3 animate-fade-in-up-4">
               <Link
                 to={hero.ctaHref}
-                className="inline-flex items-center gap-2 h-11 sm:h-12 px-5 sm:px-7 rounded-full bg-ink-900 text-ink-0 text-sm font-medium hover:bg-ink-800 transition-colors duration-fast"
+                className="group inline-flex items-center gap-2 h-11 sm:h-12 px-5 sm:px-7 rounded-full bg-ink-900 text-ink-0 text-sm font-medium hover:bg-ink-800 transition-colors duration-fast"
               >
-                {hero.ctaLabel}
-                <ArrowRight className="h-4 w-4" />
+                <span className="gold-shine-target">{hero.ctaLabel}</span>
+                <ArrowRight className="h-4 w-4 transition-transform duration-200 group-hover:translate-x-0.5" />
               </Link>
               {hero.secondaryCtaLabel && (
                 <Link
@@ -119,7 +121,7 @@ export function StorefrontHome(): JSX.Element {
               )}
             </div>
             {/* Live rate strip — on cream, gold accents */}
-            <div className="mt-10 sm:mt-12 flex flex-wrap items-center gap-x-5 sm:gap-x-6 gap-y-2 text-xs text-ink-600 font-mono tabular-nums border-t border-ink-100 pt-5 sm:pt-6">
+            <div className="mt-10 sm:mt-12 flex flex-wrap items-center gap-x-5 sm:gap-x-6 gap-y-2 text-xs text-ink-600 font-mono tabular-nums border-t border-ink-100 pt-5 sm:pt-6 animate-fade-in-up-5">
               <span><span className="text-ink-400">Today 24K</span> <span className="text-brand-700 font-semibold">{rates.g24}</span></span>
               <span><span className="text-ink-400">22K</span> <span className="text-brand-700 font-semibold">{rates.g22}</span></span>
               <span className="hidden sm:inline"><span className="text-ink-400">18K</span> {rates.g18}</span>
@@ -128,12 +130,12 @@ export function StorefrontHome(): JSX.Element {
             </div>
           </div>
 
-          {/* Right: full-bleed photography */}
+          {/* Right: full-bleed photography with slow ken-burns zoom */}
           <div className="relative aspect-[4/5] lg:aspect-auto lg:min-h-[640px] bg-ink-100 order-1 lg:order-2 overflow-hidden">
             <img
               src={hero.image}
               alt=""
-              className="absolute inset-0 h-full w-full object-cover"
+              className="absolute inset-0 h-full w-full object-cover animate-ken-burns"
               loading="eager"
             />
             {/* Subtle vignette to keep edges soft against cream panel */}
@@ -166,21 +168,21 @@ export function StorefrontHome(): JSX.Element {
             <h2 className="font-display text-3xl sm:text-[36px] md:text-[44px] leading-tight text-ink-900 mt-2">Shop the look</h2>
           </div>
           <div className="grid grid-cols-3 sm:grid-cols-6 gap-4 sm:gap-6 md:gap-8">
-            {CATEGORY_TILES.map((c) => (
+            {CATEGORY_TILES.map((c, i) => (
               <Link
                 key={c.label}
                 to={`/store/collections/${c.slug}`}
-                className="group flex flex-col items-center text-center"
+                className={`group flex flex-col items-center text-center animate-fade-in-up-${(i % 6) + 1}`}
               >
-                <div className="relative w-full aspect-square overflow-hidden rounded-full bg-[#FAF3EE] ring-1 ring-[#EFE0D2] group-hover:ring-brand-400 transition-all duration-200">
+                <div className="relative w-full aspect-square overflow-hidden rounded-full bg-[#FAF3EE] ring-1 ring-[#EFE0D2] group-hover:ring-brand-400 transition-all duration-200 gold-shine-target">
                   <img
                     src={c.img}
                     alt={c.label}
-                    className="absolute inset-0 h-full w-full object-cover group-hover:scale-[1.06] transition-transform duration-slow"
+                    className="absolute inset-0 h-full w-full object-cover group-hover:scale-[1.08] transition-transform duration-slow"
                     loading="lazy"
                   />
                 </div>
-                <span className="mt-3 sm:mt-4 text-xs sm:text-sm text-ink-800 group-hover:text-ink-900 tracking-wide">
+                <span className="mt-3 sm:mt-4 text-xs sm:text-sm text-ink-800 group-hover:text-brand-700 tracking-wide transition-colors">
                   {c.label}
                 </span>
               </Link>
@@ -206,19 +208,19 @@ export function StorefrontHome(): JSX.Element {
             <Link
               key={c.slug}
               to={`/store/collections/${c.slug}`}
-              className="group block"
+              className={`group block animate-fade-in-up-${(i % 4) + 1}`}
             >
-              <div className="relative aspect-[4/5] overflow-hidden bg-ink-100">
+              <div className="relative aspect-[4/5] overflow-hidden bg-[#FAF3EE] rounded-sm gold-shine-target">
                 <img
                   src={c.img}
                   alt={c.name}
-                  className="h-full w-full object-cover group-hover:scale-[1.04] transition-transform duration-slow ease-out"
+                  className="h-full w-full object-cover group-hover:scale-[1.06] transition-transform duration-slow ease-out"
                   loading={i === 0 ? 'eager' : 'lazy'}
                 />
                 <div className="absolute inset-0 bg-gradient-to-t from-ink-900/30 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-200" aria-hidden />
               </div>
               <div className="mt-4 sm:mt-5">
-                <h3 className="font-display text-lg sm:text-[22px] leading-tight text-ink-900">{c.name}</h3>
+                <h3 className="font-display text-lg sm:text-[22px] leading-tight text-ink-900 group-hover:text-brand-700 transition-colors">{c.name}</h3>
                 <p className="text-xs sm:text-sm text-ink-500 mt-1 sm:mt-1.5">{c.tagline}</p>
               </div>
             </Link>
@@ -279,15 +281,15 @@ export function StorefrontHome(): JSX.Element {
           </Link>
         </div>
         <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-x-3 sm:gap-x-5 gap-y-8 sm:gap-y-10 md:gap-x-6">
-          {bestSellers.map((p) => (
-            <Link key={p.slug} to={`/store/products/${p.slug}`} className="group block">
-              <div className="relative aspect-[4/5] overflow-hidden bg-ink-100">
-                <img src={p.img} alt={p.name} className="absolute inset-0 h-full w-full object-cover transition-opacity duration-300 group-hover:opacity-0" loading="lazy" />
-                <img src={p.alt} alt="" className="absolute inset-0 h-full w-full object-cover opacity-0 group-hover:opacity-100 transition-opacity duration-300" loading="lazy" aria-hidden />
-                <span className="absolute top-3 left-3 bg-ink-0/90 backdrop-blur-sm text-[10px] uppercase tracking-[0.16em] px-2.5 py-1 rounded-full text-ink-700">Bestseller</span>
+          {bestSellers.map((p, i) => (
+            <Link key={p.slug} to={`/store/products/${p.slug}`} className={`group block animate-fade-in-up-${(i % 4) + 1}`}>
+              <div className="relative aspect-[4/5] overflow-hidden bg-[#FAF3EE] rounded-sm gold-shine-target">
+                <img src={p.img} alt={p.name} className="absolute inset-0 h-full w-full object-cover transition-all duration-500 group-hover:opacity-0 group-hover:scale-[1.04]" loading="lazy" />
+                <img src={p.alt} alt="" className="absolute inset-0 h-full w-full object-cover opacity-0 group-hover:opacity-100 group-hover:scale-[1.04] transition-all duration-500" loading="lazy" aria-hidden />
+                <span className="absolute top-3 left-3 bg-ink-0/90 backdrop-blur-sm text-[10px] uppercase tracking-[0.16em] px-2.5 py-1 rounded-full text-brand-700 font-medium">Bestseller</span>
               </div>
               <div className="mt-3 sm:mt-4">
-                <h3 className="font-display text-base sm:text-[18px] text-ink-900 leading-tight">{p.name}</h3>
+                <h3 className="font-display text-base sm:text-[18px] text-ink-900 leading-tight group-hover:text-brand-700 transition-colors">{p.name}</h3>
                 <p className="text-[11px] sm:text-xs text-ink-500 mt-1">{p.weight}</p>
                 <p className="text-sm text-ink-900 font-mono tabular-nums mt-1 sm:mt-1.5">{p.priceLabel}</p>
               </div>
