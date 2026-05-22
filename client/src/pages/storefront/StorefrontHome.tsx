@@ -24,6 +24,19 @@ const SHOP_BY = [
   { label: 'Gifting', to: '/store/collections/gifting' },
 ];
 
+// Shop-by-occasion 6-tile body-shot grid (reference: Antisa / CaratLane
+// category strip). Tall portrait tiles with a dark gradient overlay
+// showing category name + product count. Counts are placeholders until
+// wired to the live products query.
+const SHOP_BY_OCCASION = [
+  { name: 'Bracelets', slug: '22k', count: 16, img: 'https://images.unsplash.com/photo-1611591437281-460bfbe1220a?auto=format&fit=crop&w=1200&q=92' },
+  { name: 'Earrings', slug: 'daily-wear', count: 16, img: 'https://images.unsplash.com/photo-1535632787350-4e68ef0ac584?auto=format&fit=crop&w=1200&q=92' },
+  { name: 'Gold Set', slug: 'bridal', count: 4, img: 'https://images.unsplash.com/photo-1602173574767-37ac01994b2a?auto=format&fit=crop&w=1200&q=92' },
+  { name: 'Necklaces', slug: 'festive', count: 12, img: 'https://images.unsplash.com/photo-1599643477877-530eb83abc8e?auto=format&fit=crop&w=1200&q=92' },
+  { name: 'Rings', slug: 'diamond', count: 13, img: 'https://images.unsplash.com/photo-1605100804763-247f67b3557e?auto=format&fit=crop&w=1200&q=92' },
+  { name: 'Silver Set', slug: 'silver', count: 3, img: 'https://images.unsplash.com/photo-1603561591411-07134e71a2a9?auto=format&fit=crop&w=1200&q=92' },
+];
+
 // Tanishq-signature: circular portrait tiles for browse-by-category.
 // Each links to an existing collection slug already wired in the router.
 // SEO-friendly labels with metal/style hint.
@@ -103,7 +116,7 @@ function toBestSellerCard(p: PublicProduct): BestSellerCard {
 
 export function StorefrontHome(): JSX.Element {
   const content = useAppSelector((s) => s.storefrontContent);
-  const { hero, rates: cmsRates, collections, story } = content;
+  const { hero, rates: cmsRates, story } = content;
   const { data: liveProducts } = useGetPublicProductsQuery();
   const { data: liveRate } = useGetPublicGoldRateQuery(undefined, {
     pollingInterval: 5 * 60 * 1000,
@@ -229,12 +242,13 @@ export function StorefrontHome(): JSX.Element {
         </div>
       </section>
 
-      {/* Collection TOC — magazine-style. */}
+      {/* Shop by occasion — 6 tall body-shot tiles with dark gradient overlay
+          showing category name + product count. Replaces the older 4-card TOC. */}
       <section className="max-w-[1280px] mx-auto px-4 sm:px-6 py-14 sm:py-20 md:py-24">
-        <div className="flex items-end justify-between mb-8 sm:mb-10 gap-4">
-          <div>
+        <div className="flex items-end justify-between mb-8 sm:mb-12 gap-4">
+          <div className="max-w-2xl">
             <p className="text-eyebrow uppercase text-brand-700">Shop by occasion</p>
-            <h2 className="font-display text-3xl sm:text-display-lg md:text-[48px] md:leading-[1.05] text-ink-900 mt-2">Indian bridal &amp; festive jewellery, by collection</h2>
+            <h2 className="font-display text-3xl sm:text-[40px] md:text-[52px] leading-[1.06] text-ink-900 mt-2">Indian bridal &amp; festive jewellery, by collection</h2>
             <p className="mt-3 text-sm text-ink-600 max-w-xl">Hand-crafted 22K and 18K pieces — bridal, daily-wear, festive, diamond and silver — from our family workshop in Haryana.</p>
           </div>
           <Link to="/store/collections" className="hidden sm:inline-flex items-center gap-1 text-sm text-ink-700 hover:text-brand-700 border-b border-ink-200 hover:border-brand-400 pb-0.5 shrink-0 transition-colors">
@@ -242,25 +256,27 @@ export function StorefrontHome(): JSX.Element {
             <ArrowRight className="h-3.5 w-3.5" />
           </Link>
         </div>
-        <div className="grid grid-cols-2 md:grid-cols-2 lg:grid-cols-4 gap-x-4 sm:gap-x-6 gap-y-8 sm:gap-y-10">
-          {collections.map((c, i) => (
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 sm:gap-4 md:gap-5">
+          {SHOP_BY_OCCASION.map((c, i) => (
             <Link
               key={c.slug}
               to={`/store/collections/${c.slug}`}
-              className={`group block animate-fade-in-up-${(i % 4) + 1}`}
+              className={`group relative block aspect-[3/4] overflow-hidden bg-[#FAF3EE] rounded-sm gold-shine-target animate-fade-in-up-${(i % 6) + 1}`}
             >
-              <div className="relative aspect-[4/5] overflow-hidden bg-[#FAF3EE] rounded-sm gold-shine-target">
-                <img
-                  src={c.img}
-                  alt={c.name}
-                  className="h-full w-full object-cover group-hover:scale-[1.06] transition-transform duration-slow ease-out"
-                  loading={i === 0 ? 'eager' : 'lazy'}
-                />
-                <div className="absolute inset-0 bg-gradient-to-t from-ink-900/30 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-200" aria-hidden />
-              </div>
-              <div className="mt-4 sm:mt-5">
-                <h3 className="font-display text-lg sm:text-[22px] leading-tight text-ink-900 group-hover:text-brand-700 transition-colors">{c.name}</h3>
-                <p className="text-xs sm:text-sm text-ink-500 mt-1 sm:mt-1.5">{c.tagline}</p>
+              <img
+                src={c.img}
+                alt={c.name}
+                className="absolute inset-0 h-full w-full object-cover group-hover:scale-[1.06] transition-transform duration-slow ease-out"
+                loading={i < 2 ? 'eager' : 'lazy'}
+              />
+              {/* Dark gradient at bottom — name + product count */}
+              <div className="absolute inset-x-0 bottom-0 pt-16 pb-4 sm:pb-5 px-3 sm:px-4 bg-gradient-to-t from-ink-900/85 via-ink-900/50 to-transparent">
+                <h3 className="text-ink-0 font-display text-lg sm:text-[22px] leading-tight">
+                  {c.name}
+                </h3>
+                <p className="mt-1 text-[10px] sm:text-[11px] uppercase tracking-[0.18em] text-ink-100/80 font-medium">
+                  {c.count} products
+                </p>
               </div>
             </Link>
           ))}
