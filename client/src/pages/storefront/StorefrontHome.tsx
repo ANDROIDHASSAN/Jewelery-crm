@@ -40,12 +40,19 @@ const SHOP_BY_OCCASION = [
 // Each links to an existing collection slug already wired in the router.
 // SEO-friendly labels with metal/style hint.
 const CATEGORY_TILES = [
-  { label: 'Diamond rings', slug: 'diamond', img: 'https://images.unsplash.com/photo-1605100804763-247f67b3557e?auto=format&fit=crop&w=800&q=92' },
-  { label: 'Bridal necklaces', slug: 'bridal', img: 'https://images.unsplash.com/photo-1599643477877-530eb83abc8e?auto=format&fit=crop&w=800&q=92' },
-  { label: 'Gold earrings', slug: 'daily-wear', img: 'https://images.unsplash.com/photo-1535632787350-4e68ef0ac584?auto=format&fit=crop&w=800&q=92' },
-  { label: '22K bangles', slug: '22k', img: 'https://images.unsplash.com/photo-1611591437281-460bfbe1220a?auto=format&fit=crop&w=800&q=92' },
-  { label: 'Pendants', slug: '18k', img: 'https://images.unsplash.com/photo-1602173574767-37ac01994b2a?auto=format&fit=crop&w=800&q=92' },
-  { label: 'Mangalsutra', slug: 'festive', img: 'https://images.unsplash.com/photo-1603561591411-07134e71a2a9?auto=format&fit=crop&w=800&q=92' },
+  { label: 'Diamond rings',    slug: 'diamond',    img: 'https://images.unsplash.com/photo-1605100804763-247f67b3557e?auto=format&fit=crop&w=800&q=92' },
+  { label: 'Bridal necklaces', slug: 'bridal',     img: 'https://images.unsplash.com/photo-1599643477877-530eb83abc8e?auto=format&fit=crop&w=800&q=92' },
+  { label: 'Gold earrings',    slug: 'daily-wear', img: 'https://images.unsplash.com/photo-1535632787350-4e68ef0ac584?auto=format&fit=crop&w=800&q=92' },
+  { label: '22K bangles',      slug: '22k',        img: 'https://images.unsplash.com/photo-1611591437281-460bfbe1220a?auto=format&fit=crop&w=800&q=92' },
+  { label: 'Pendants',         slug: '18k',        img: 'https://images.unsplash.com/photo-1602173574767-37ac01994b2a?auto=format&fit=crop&w=800&q=92' },
+  { label: 'Mangalsutra',      slug: 'festive',    img: 'https://images.unsplash.com/photo-1603561591411-07134e71a2a9?auto=format&fit=crop&w=800&q=92' },
+  // Additional tiles to enrich the marquee (uses user-uploaded /categories images)
+  { label: 'Solitaires',       slug: 'diamond',    img: '/categories/jewl6.jpg' },
+  { label: '18K rings',        slug: '18k',        img: '/categories/jewl1.jpg' },
+  { label: 'Chains',           slug: 'daily-wear', img: '/categories/jewl4.jpg' },
+  { label: 'Festive sets',     slug: 'festive',    img: '/categories/jew3.jpg'  },
+  { label: 'Silver pieces',    slug: 'silver',     img: '/categories/jewl7.jpg' },
+  { label: 'Gifting',          slug: 'gifting',    img: '/categories/jewl2.jpg' },
 ];
 
 // Instagram-reel-style 9:16 video tiles. Posters are still images today;
@@ -199,34 +206,39 @@ export function StorefrontHome(): JSX.Element {
         </div>
       </section>
 
-      {/* Tanishq-style circular category portrait tiles */}
-      <section className="bg-ink-0">
-        <div className="max-w-[1280px] mx-auto px-4 sm:px-6 py-12 sm:py-16 md:py-20">
-          <div className="text-center mb-8 sm:mb-12">
+      {/* Tanishq-style circular category portrait tiles — auto-scroll marquee.
+          Tiles duplicated in JSX so the -50% translation keeps content visible
+          throughout the loop. Pause on hover. Section padding preserved. */}
+      <section className="bg-ink-0 overflow-hidden">
+        <div className="py-12 sm:py-16 md:py-20">
+          <div className="max-w-[1280px] mx-auto px-4 sm:px-6 text-center mb-8 sm:mb-12">
             <p className="text-eyebrow uppercase text-brand-700">Browse by category</p>
             <h2 className="font-display text-3xl sm:text-[36px] md:text-[44px] leading-tight text-ink-900 mt-2">Rings, necklaces, earrings &amp; more</h2>
-            <p className="mt-3 text-sm text-ink-600 max-w-md mx-auto">Six categories, one hallmarked workshop. Shop diamond rings, 22K bridal necklaces, gold earrings, bangles, pendants and mangalsutra.</p>
+            <p className="mt-3 text-sm text-ink-600 max-w-md mx-auto">From diamond solitaires to 22K bridal necklaces — shop every category in one hallmarked workshop.</p>
           </div>
-          <div className="grid grid-cols-3 sm:grid-cols-6 gap-4 sm:gap-6 md:gap-8">
-            {CATEGORY_TILES.map((c, i) => (
-              <Link
-                key={c.label}
-                to={`/store/collections/${c.slug}`}
-                className={`group flex flex-col items-center text-center animate-fade-in-up-${(i % 6) + 1}`}
-              >
-                <div className="relative w-full aspect-square overflow-hidden rounded-full bg-[#FAF3EE] ring-1 ring-[#EFE0D2] group-hover:ring-brand-400 transition-all duration-200 gold-shine-target">
-                  <img
-                    src={c.img}
-                    alt={c.label}
-                    className="absolute inset-0 h-full w-full object-cover group-hover:scale-[1.08] transition-transform duration-slow"
-                    loading="lazy"
-                  />
-                </div>
-                <span className="mt-3 sm:mt-4 text-xs sm:text-sm text-ink-800 group-hover:text-brand-700 tracking-wide transition-colors">
-                  {c.label}
-                </span>
-              </Link>
-            ))}
+          {/* Marquee */}
+          <div className="group">
+            <div className="flex w-max gap-6 sm:gap-8 md:gap-10 animate-marquee-left marquee-pause px-4 sm:px-6">
+              {[...CATEGORY_TILES, ...CATEGORY_TILES].map((c, i) => (
+                <Link
+                  key={`${c.label}-${i}`}
+                  to={`/store/collections/${c.slug}`}
+                  className="group/tile flex flex-col items-center text-center shrink-0 w-[120px] sm:w-[140px] md:w-[160px]"
+                >
+                  <div className="relative w-full aspect-square overflow-hidden rounded-full bg-[#FAF3EE] ring-1 ring-[#EFE0D2] group-hover/tile:ring-brand-400 transition-all duration-200 gold-shine-target">
+                    <img
+                      src={c.img}
+                      alt={c.label}
+                      className="absolute inset-0 h-full w-full object-cover group-hover/tile:scale-[1.08] transition-transform duration-slow"
+                      loading="lazy"
+                    />
+                  </div>
+                  <span className="mt-3 sm:mt-4 text-xs sm:text-sm text-ink-800 group-hover/tile:text-brand-700 tracking-wide transition-colors whitespace-nowrap">
+                    {c.label}
+                  </span>
+                </Link>
+              ))}
+            </div>
           </div>
         </div>
       </section>
