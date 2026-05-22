@@ -176,14 +176,29 @@ export function StorefrontHome(): JSX.Element {
             </div>
           </div>
 
-          {/* Right: full-bleed photography with slow ken-burns zoom */}
+          {/* Right: full-bleed video panel (Pinterest reel). Save the video
+              file to client/public/img/hero.mp4 and it auto-plays. The
+              `poster` falls back to the original hero image until the video
+              loads (or forever if the file is missing). */}
           <div className="relative aspect-[4/5] lg:aspect-auto lg:min-h-[640px] bg-ink-100 order-1 lg:order-2 overflow-hidden">
-            <img
-              src={hero.image}
-              alt=""
-              className="absolute inset-0 h-full w-full object-cover animate-ken-burns"
-              loading="eager"
-            />
+            <video
+              src="/img/hero.mp4"
+              poster={hero.image}
+              autoPlay
+              muted
+              loop
+              playsInline
+              preload="metadata"
+              className="absolute inset-0 h-full w-full object-cover"
+              aria-hidden
+            >
+              {/* Fallback for browsers that block autoplay or fail to load */}
+              <img
+                src={hero.image}
+                alt=""
+                className="absolute inset-0 h-full w-full object-cover"
+              />
+            </video>
             {/* Subtle vignette to keep edges soft against cream panel */}
             <div className="absolute inset-0 bg-gradient-to-l from-transparent via-transparent to-[#FAF3EE]/40 pointer-events-none" aria-hidden />
           </div>
