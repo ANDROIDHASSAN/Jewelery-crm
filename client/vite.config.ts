@@ -18,8 +18,13 @@ export default defineConfig({
     port: 3000,
     proxy: {
       '/api': {
-        target: 'http://localhost:4000',
+        // Local UI talks to the deployed API by default so the storefront has real
+        // products / gold rate / collections without booting the backend locally.
+        // Override with API_PROXY_TARGET=http://localhost:4000 when running against
+        // a local server.
+        target: process.env.API_PROXY_TARGET ?? 'https://jewelery-crm.vercel.app',
         changeOrigin: true,
+        secure: true,
       },
     },
   },

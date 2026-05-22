@@ -79,42 +79,30 @@ export function StorefrontHeader(): JSX.Element {
   }, [mobileOpen]);
 
   return (
-    <header className="sticky top-0 z-40">
-      {/* Announcement bar — gold rate ticker (Bluestone). */}
-      <div className="bg-ink-900 text-ink-50">
-        <div className="max-w-[1280px] mx-auto px-4 sm:px-6 h-8 flex items-center justify-between text-[11px] tracking-wide">
+    <header className="relative z-40">
+      {/* Announcement bar — faint blush + champagne, premium tonal. */}
+      <div className="bg-[#F5E5DC] border-b border-[#E8CFC1]/60 text-ink-700">
+        <div className="max-w-[1280px] mx-auto px-4 sm:px-6 h-9 flex items-center justify-between text-[11px] tracking-wide">
           <span className="font-mono tabular-nums truncate">
-            Today&apos;s rate · <span className="text-brand-300">24K {rates.g24}</span>
-            <span className="text-ink-400 mx-2 hidden sm:inline">·</span>
-            <span className="text-brand-300 hidden sm:inline">22K {rates.g22}</span>
-            <span className="text-ink-400 mx-2 hidden sm:inline">·</span>
-            <span className="hidden md:inline">18K {rates.g18} · Silver {rates.silver}</span>
+            <span className="text-ink-500">Today&apos;s rate ·</span> <span className="text-brand-700 font-semibold">24K {rates.g24}</span>
+            <span className="text-ink-300 mx-2 hidden sm:inline">·</span>
+            <span className="text-brand-700 font-semibold hidden sm:inline">22K {rates.g22}</span>
+            <span className="text-ink-300 mx-2 hidden sm:inline">·</span>
+            <span className="hidden md:inline text-ink-600">18K {rates.g18} · Silver {rates.silver}</span>
           </span>
-          <span className="hidden md:flex items-center gap-4 text-ink-300">
-            <Link to="/store/locations" className="inline-flex items-center gap-1 hover:text-ink-0">
+          <span className="hidden md:flex items-center gap-5 text-ink-600">
+            <Link to="/store/locations" className="inline-flex items-center gap-1 hover:text-ink-900 transition-colors">
               <MapPin className="h-3 w-3" /> {locationCount} {locationCount === 1 ? 'store' : 'stores'}
             </Link>
-            <Link to="/store/track" className="hover:text-ink-0">Track order</Link>
-            <Link to="/store/help" className="hover:text-ink-0">Help</Link>
+            <Link to="/store/track" className="hover:text-ink-900 transition-colors">Track order</Link>
+            <Link to="/store/help" className="hover:text-ink-900 transition-colors">Help</Link>
           </span>
         </div>
       </div>
 
-      {/* Main bar */}
-      <div
-        className={cn(
-          'transition-[background-color,box-shadow,height] duration-200 ease-out',
-          scrolled
-            ? 'bg-ink-0/90 backdrop-blur-md border-b border-ink-100 shadow-sm'
-            : 'bg-ink-0 border-b border-ink-100',
-        )}
-      >
-        <div
-          className={cn(
-            'max-w-[1280px] mx-auto px-4 sm:px-6 flex items-center justify-between gap-3 sm:gap-6 transition-[height] duration-200',
-            scrolled ? 'h-14' : 'h-16 sm:h-[72px]',
-          )}
-        >
+      {/* Main bar — champagne cream, no shrink (navbar scrolls away with page). */}
+      <div className="bg-[#FAF3EE] border-b border-[#EFE0D2]/70">
+        <div className="max-w-[1280px] mx-auto px-4 sm:px-6 flex items-center justify-between gap-3 sm:gap-6 h-16 sm:h-[72px]">
           <button
             type="button"
             onClick={() => setMobileOpen(true)}

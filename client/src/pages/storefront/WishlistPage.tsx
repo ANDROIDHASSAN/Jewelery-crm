@@ -47,7 +47,7 @@ export function WishlistPage(): JSX.Element {
     return (
       <div className="max-w-[1280px] mx-auto px-4 sm:px-6 py-8 sm:py-10 md:py-14">
         <header className="mb-8 sm:mb-10">
-          <p className="text-eyebrow uppercase text-ink-500">Saved for you</p>
+          <p className="text-eyebrow uppercase text-brand-700">Saved for you</p>
           <div className="h-10 sm:h-12 md:h-14 w-2/3 max-w-md rounded bg-ink-100 animate-pulse mt-2" />
         </header>
         <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-x-3 gap-y-8 sm:gap-x-5 sm:gap-y-12 md:gap-x-6">
@@ -65,28 +65,31 @@ export function WishlistPage(): JSX.Element {
 
   if (wishlist.length === 0) {
     return (
-      <div className="max-w-2xl w-full mx-auto px-4 sm:px-6 py-14 sm:py-20 text-center">
-        <div className="mx-auto h-16 w-16 rounded-full bg-ink-50 flex items-center justify-center">
-          <Heart className="h-6 w-6 text-ink-500" />
+      <div className="bg-[#FDF8F4] min-h-[60vh]">
+        <div className="max-w-2xl w-full mx-auto px-4 sm:px-6 py-14 sm:py-20 text-center">
+          <div className="mx-auto h-16 w-16 rounded-full bg-[#FAF3EE] ring-1 ring-[#EFE0D2] flex items-center justify-center">
+            <Heart className="h-6 w-6 text-brand-700" />
+          </div>
+          <h1 className="font-display text-2xl sm:text-[32px] mt-6 text-ink-900">Your wishlist is empty</h1>
+          <p className="mt-2 text-ink-600 text-sm">
+            Tap the heart on any piece to save it for later. Wishlists sync to your phone when you sign in.
+          </p>
+          <Link
+            to="/store/collections/bridal"
+            className="mt-8 inline-flex h-12 px-7 rounded-full bg-ink-900 text-ink-0 text-sm font-medium hover:bg-ink-800 transition-colors"
+          >
+            Explore bridal
+          </Link>
         </div>
-        <h1 className="font-display text-2xl sm:text-[32px] mt-6 text-ink-900">Your wishlist is empty</h1>
-        <p className="mt-2 text-ink-600 text-sm">
-          Tap the heart on any piece to save it for later. Wishlists sync to your phone when you sign in.
-        </p>
-        <Link
-          to="/store/collections/bridal"
-          className="mt-8 inline-flex h-12 px-7 rounded-full bg-brand-400 text-ink-900 text-sm font-medium hover:bg-brand-300 transition-colors"
-        >
-          Explore bridal
-        </Link>
       </div>
     );
   }
 
   return (
+    <div className="bg-[#FDF8F4]">
     <div className="max-w-[1280px] mx-auto px-4 sm:px-6 py-8 sm:py-10 md:py-14">
       <header className="mb-8 sm:mb-10">
-        <p className="text-eyebrow uppercase text-ink-500">Saved for you</p>
+        <p className="text-eyebrow uppercase text-brand-700">Saved for you</p>
         <h1 className="font-display text-2xl sm:text-[34px] md:text-[40px] text-ink-900 mt-2">
           {wishlist.length} {wishlist.length === 1 ? 'piece' : 'pieces'} on your wishlist
         </h1>
@@ -148,6 +151,7 @@ export function WishlistPage(): JSX.Element {
           </article>
         ))}
       </div>
+    </div>
     </div>
   );
 }

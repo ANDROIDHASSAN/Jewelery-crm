@@ -36,12 +36,12 @@ export function StorefrontFooter(): JSX.Element {
     }
   }
   return (
-    <footer className="bg-ink-50 border-t border-ink-100">
+    <footer className="bg-[#FAF3EE] border-t border-[#EFE0D2]">
       {/* Newsletter — inline, never a popup */}
-      <div className="border-b border-ink-100 bg-ink-25">
+      <div className="border-b border-[#EFE0D2] bg-[#F5E5DC]">
         <div className="max-w-[1280px] mx-auto px-4 sm:px-6 py-10 sm:py-12 md:py-14 grid grid-cols-1 md:grid-cols-[1fr_auto] gap-6 md:gap-10 items-center">
           <div className="max-w-md">
-            <p className="text-eyebrow uppercase text-ink-500">Stay in the loop</p>
+            <p className="text-eyebrow uppercase text-brand-700">Stay in the loop</p>
             <h2 className="font-display text-2xl sm:text-[26px] md:text-[32px] leading-tight text-ink-900 mt-2">
               New collections, in your inbox.
             </h2>
@@ -128,10 +128,10 @@ export function StorefrontFooter(): JSX.Element {
         />
       </div>
 
-      {/* Compliance microbar — pb-* on the wrapper extends the bg-ink-25
+      {/* Compliance microbar — pb-* on the wrapper extends the bg
           strip past the text so the fixed WhatsApp orb (bottom-right) sits
           over a clear zone of the same colour at scroll-bottom on mobile. */}
-      <div className="border-t border-ink-100 bg-ink-25 pb-16 sm:pb-20 lg:pb-0">
+      <div className="border-t border-[#EFE0D2] bg-[#FDF8F4] pb-16 sm:pb-20 lg:pb-0">
         <div className="max-w-[1280px] mx-auto px-4 sm:px-6 py-5 text-xs text-ink-500 flex flex-col md:flex-row md:items-center md:justify-between gap-3">
           <p>© {new Date().getFullYear()} {brand.name} · BIS Hallmark #IND-916 · GSTIN 27ABCDE1234F1Z5</p>
           <div className="flex items-center gap-4">
@@ -157,7 +157,7 @@ function hashCode(s: string): number {
 function FooterCol({ title, links }: { title: string; links: Array<[string, string]> }): JSX.Element {
   return (
     <div>
-      <p className="text-eyebrow uppercase text-ink-500">{title}</p>
+      <p className="text-eyebrow uppercase text-brand-700">{title}</p>
       <ul className="mt-4 space-y-2.5 text-sm text-ink-700">
         {links.map(([label, to]) => (
           <li key={to}>

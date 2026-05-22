@@ -168,26 +168,27 @@ export function CollectionPage(): JSX.Element {
   }, [filtered, sort]);
 
   return (
+    <div className="bg-[#FDF8F4] min-h-full">
     <div className="max-w-[1280px] mx-auto px-4 sm:px-6 py-8 sm:py-12 md:py-16">
       <nav className="text-xs text-ink-500 mb-5" aria-label="Breadcrumb">
-        <Link to="/store" className="hover:text-ink-700">Home</Link>
+        <Link to="/store" className="hover:text-brand-700">Home</Link>
         <span className="mx-2 text-ink-300">/</span>
-        <Link to="/store/collections" className="hover:text-ink-700">Collections</Link>
+        <Link to="/store/collections" className="hover:text-brand-700">Collections</Link>
         {slug && (
           <>
             <span className="mx-2 text-ink-300">/</span>
-            <span className="text-ink-700">{meta.title}</span>
+            <span className="text-ink-800">{meta.title}</span>
           </>
         )}
       </nav>
 
-      <header className="mb-8 sm:mb-10 max-w-3xl">
-        <p className="text-eyebrow uppercase text-ink-500">Collection</p>
-        <h1 className="font-display text-3xl sm:text-[40px] md:text-[56px] leading-[1.05] text-ink-900 mt-2">{meta.title}</h1>
-        {meta.subtitle && <p className="mt-3 sm:mt-4 text-sm sm:text-base text-ink-600 leading-relaxed max-w-2xl">{meta.subtitle}</p>}
+      <header className="mb-8 sm:mb-12 max-w-3xl text-center mx-auto">
+        <p className="text-eyebrow uppercase text-brand-700">Collection</p>
+        <h1 className="font-display text-3xl sm:text-[40px] md:text-[56px] leading-[1.05] text-ink-900 mt-3">{meta.title}</h1>
+        {meta.subtitle && <p className="mt-4 sm:mt-5 text-sm sm:text-base text-ink-600 leading-relaxed max-w-2xl mx-auto">{meta.subtitle}</p>}
       </header>
 
-      <div className="sticky top-[88px] sm:top-[104px] z-10 bg-ink-0 -mx-4 sm:-mx-6 px-4 sm:px-6 border-y border-ink-100 mb-6 sm:mb-8">
+      <div className="bg-[#FAF3EE] -mx-4 sm:-mx-6 px-4 sm:px-6 border-y border-[#EFE0D2] mb-8 sm:mb-10">
         <div className="h-14 flex items-center justify-between gap-4">
           <button
             type="button"
@@ -210,7 +211,7 @@ export function CollectionPage(): JSX.Element {
               onChange={(e) => setQ(e.target.value)}
               placeholder="Search this collection…"
               aria-label="Search pieces"
-              className="w-full h-10 pl-9 pr-8 bg-ink-50 rounded-full border border-ink-200 text-sm text-ink-900 placeholder:text-ink-500 focus:bg-ink-0 focus:border-brand-500 focus:ring-2 focus:ring-brand-200 outline-none transition-colors"
+              className="w-full h-10 pl-9 pr-8 bg-ink-0 rounded-full border border-[#EFE0D2] text-sm text-ink-900 placeholder:text-ink-500 focus:bg-ink-0 focus:border-brand-500 focus:ring-2 focus:ring-brand-200/40 outline-none transition-colors"
             />
             {q && (
               <button
@@ -239,7 +240,7 @@ export function CollectionPage(): JSX.Element {
             {sortOpen && (
               <ul
                 role="listbox"
-                className="absolute right-0 top-full mt-2 w-60 rounded-md border border-ink-100 bg-ink-0 shadow-md py-1 text-sm"
+                className="absolute right-0 top-full mt-2 w-60 rounded-md border border-[#EFE0D2] bg-ink-0 shadow-lg py-1 text-sm z-20"
               >
                 {SORTS.map((s) => (
                   <li key={s}>
@@ -252,8 +253,8 @@ export function CollectionPage(): JSX.Element {
                         setSortOpen(false);
                       }}
                       className={cn(
-                        'w-full text-left px-3 py-2 hover:bg-ink-50',
-                        s === sort ? 'text-ink-900' : 'text-ink-700',
+                        'w-full text-left px-3 py-2 hover:bg-[#FDF8F4] transition-colors',
+                        s === sort ? 'text-brand-700 font-medium' : 'text-ink-700',
                       )}
                     >
                       {s}
@@ -307,7 +308,7 @@ export function CollectionPage(): JSX.Element {
             const secondary = p.images[1] ?? primary;
             return (
               <Link to={`/store/products/${p.slug}`} key={p.id} className="group block">
-                <div className="relative aspect-[4/5] overflow-hidden bg-ink-100">
+                <div className="relative aspect-[4/5] overflow-hidden bg-[#FAF3EE] rounded-sm">
                   <img
                     src={primary}
                     alt={p.name}
@@ -321,9 +322,13 @@ export function CollectionPage(): JSX.Element {
                     loading="lazy"
                     aria-hidden
                   />
+                  {/* CaratLane-style hover overlay with quiet view CTA */}
+                  <div className="absolute inset-x-0 bottom-0 px-3 py-2.5 bg-ink-0/85 backdrop-blur-sm text-center text-[11px] uppercase tracking-[0.18em] text-ink-900 opacity-0 group-hover:opacity-100 transition-opacity duration-200">
+                    View piece
+                  </div>
                 </div>
-                <div className="mt-3 sm:mt-4 space-y-1">
-                  <h3 className="font-display text-base sm:text-[18px] leading-tight text-ink-900">{p.name}</h3>
+                <div className="mt-3 sm:mt-4 space-y-1 px-0.5">
+                  <h3 className="font-display text-base sm:text-[18px] leading-tight text-ink-900 group-hover:text-brand-700 transition-colors">{p.name}</h3>
                   <p className="text-[11px] sm:text-xs text-ink-500">
                     {weightG.toFixed(2)} g · {purityLabel(p)} hallmarked
                   </p>
@@ -341,9 +346,9 @@ export function CollectionPage(): JSX.Element {
         <div className="fixed inset-0 z-50 lg:hidden">
           <div className="absolute inset-0 bg-ink-900/40" onClick={() => setFiltersOpen(false)} aria-hidden />
           <div className="absolute inset-y-0 right-0 w-[85%] max-w-sm bg-ink-0 flex flex-col">
-            <div className="flex items-center justify-between h-14 px-5 border-b border-ink-100">
+            <div className="flex items-center justify-between h-14 px-5 border-b border-[#EFE0D2]">
               <span className="font-display text-lg text-ink-900">Filters</span>
-              <button onClick={() => setFiltersOpen(false)} className="h-9 w-9 inline-flex items-center justify-center rounded-full hover:bg-ink-50" aria-label="Close filters">
+              <button onClick={() => setFiltersOpen(false)} className="h-9 w-9 inline-flex items-center justify-center rounded-full hover:bg-[#FDF8F4]" aria-label="Close filters">
                 <X className="h-4 w-4" />
               </button>
             </div>
@@ -364,6 +369,7 @@ export function CollectionPage(): JSX.Element {
           </div>
         </div>
       )}
+    </div>
     </div>
   );
 }
