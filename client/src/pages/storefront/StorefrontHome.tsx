@@ -27,12 +27,12 @@ const SHOP_BY = [
 // Tanishq-signature: circular portrait tiles for browse-by-category.
 // Each links to an existing collection slug already wired in the router.
 const CATEGORY_TILES = [
-  { label: 'Rings', slug: 'diamond', img: 'https://images.unsplash.com/photo-1605100804763-247f67b3557e?auto=format&fit=crop&w=400&q=80' },
-  { label: 'Necklaces', slug: 'bridal', img: 'https://images.unsplash.com/photo-1599643477877-530eb83abc8e?auto=format&fit=crop&w=400&q=80' },
-  { label: 'Earrings', slug: 'daily-wear', img: 'https://images.unsplash.com/photo-1535632787350-4e68ef0ac584?auto=format&fit=crop&w=400&q=80' },
-  { label: 'Bangles', slug: '22k', img: 'https://images.unsplash.com/photo-1611591437281-460bfbe1220a?auto=format&fit=crop&w=400&q=80' },
-  { label: 'Pendants', slug: '18k', img: 'https://images.unsplash.com/photo-1602173574767-37ac01994b2a?auto=format&fit=crop&w=400&q=80' },
-  { label: 'Mangalsutra', slug: 'festive', img: 'https://images.unsplash.com/photo-1603561591411-07134e71a2a9?auto=format&fit=crop&w=400&q=80' },
+  { label: 'Rings', slug: 'diamond', img: 'https://images.unsplash.com/photo-1605100804763-247f67b3557e?auto=format&fit=crop&w=800&q=92' },
+  { label: 'Necklaces', slug: 'bridal', img: 'https://images.unsplash.com/photo-1599643477877-530eb83abc8e?auto=format&fit=crop&w=800&q=92' },
+  { label: 'Earrings', slug: 'daily-wear', img: 'https://images.unsplash.com/photo-1535632787350-4e68ef0ac584?auto=format&fit=crop&w=800&q=92' },
+  { label: 'Bangles', slug: '22k', img: 'https://images.unsplash.com/photo-1611591437281-460bfbe1220a?auto=format&fit=crop&w=800&q=92' },
+  { label: 'Pendants', slug: '18k', img: 'https://images.unsplash.com/photo-1602173574767-37ac01994b2a?auto=format&fit=crop&w=800&q=92' },
+  { label: 'Mangalsutra', slug: 'festive', img: 'https://images.unsplash.com/photo-1603561591411-07134e71a2a9?auto=format&fit=crop&w=800&q=92' },
 ];
 
 interface BestSellerCard {
@@ -45,10 +45,10 @@ interface BestSellerCard {
 }
 
 const BESTSELLERS_FALLBACK: BestSellerCard[] = [
-  { slug: 'mira-bangle', name: 'Mira bangle', priceLabel: '₹84,500', weight: '12.45 g · 22K', img: 'https://images.unsplash.com/photo-1611591437281-460bfbe1220a?auto=format&fit=crop&w=800&q=80', alt: 'https://images.unsplash.com/photo-1605100804763-247f67b3557e?auto=format&fit=crop&w=800&q=80' },
-  { slug: 'tara-mangalsutra', name: 'Tara mangalsutra', priceLabel: '₹62,200', weight: '8.10 g · 22K', img: 'https://images.unsplash.com/photo-1599643477877-530eb83abc8e?auto=format&fit=crop&w=800&q=80', alt: 'https://images.unsplash.com/photo-1603561591411-07134e71a2a9?auto=format&fit=crop&w=800&q=80' },
-  { slug: 'aarya-ring', name: 'Aarya solitaire', priceLabel: '₹48,900', weight: '0.32 ct · 18K', img: 'https://images.unsplash.com/photo-1603561591411-07134e71a2a9?auto=format&fit=crop&w=800&q=80', alt: 'https://images.unsplash.com/photo-1599643477877-530eb83abc8e?auto=format&fit=crop&w=800&q=80' },
-  { slug: 'riya-jhumka', name: 'Riya jhumkas', priceLabel: '₹31,400', weight: '5.20 g · 22K', img: 'https://images.unsplash.com/photo-1605100804763-247f67b3557e?auto=format&fit=crop&w=800&q=80', alt: 'https://images.unsplash.com/photo-1611591437281-460bfbe1220a?auto=format&fit=crop&w=800&q=80' },
+  { slug: 'mira-bangle', name: 'Mira bangle', priceLabel: '₹84,500', weight: '12.45 g · 22K', img: 'https://images.unsplash.com/photo-1611591437281-460bfbe1220a?auto=format&fit=crop&w=1400&q=92', alt: 'https://images.unsplash.com/photo-1605100804763-247f67b3557e?auto=format&fit=crop&w=1400&q=92' },
+  { slug: 'tara-mangalsutra', name: 'Tara mangalsutra', priceLabel: '₹62,200', weight: '8.10 g · 22K', img: 'https://images.unsplash.com/photo-1599643477877-530eb83abc8e?auto=format&fit=crop&w=1400&q=92', alt: 'https://images.unsplash.com/photo-1602173574767-37ac01994b2a?auto=format&fit=crop&w=1400&q=92' },
+  { slug: 'aarya-ring', name: 'Aarya solitaire', priceLabel: '₹48,900', weight: '0.32 ct · 18K', img: 'https://images.unsplash.com/photo-1603561591411-07134e71a2a9?auto=format&fit=crop&w=1400&q=92', alt: 'https://images.unsplash.com/photo-1605100804763-247f67b3557e?auto=format&fit=crop&w=1400&q=92' },
+  { slug: 'riya-jhumka', name: 'Riya jhumkas', priceLabel: '₹31,400', weight: '5.20 g · 22K', img: 'https://images.unsplash.com/photo-1535632787350-4e68ef0ac584?auto=format&fit=crop&w=1400&q=92', alt: 'https://images.unsplash.com/photo-1611591437281-460bfbe1220a?auto=format&fit=crop&w=1400&q=92' },
 ];
 
 function toBestSellerCard(p: PublicProduct): BestSellerCard {
@@ -231,7 +231,7 @@ export function StorefrontHome(): JSX.Element {
         <div className="max-w-[1280px] mx-auto px-4 sm:px-6 py-14 sm:py-20 md:py-24 grid grid-cols-1 lg:grid-cols-[1.4fr_1fr] gap-6 md:gap-8">
           <Link to="/store/collections/bridal" className="group relative block aspect-[4/5] lg:aspect-auto lg:min-h-[560px] overflow-hidden bg-ink-100 rounded-sm">
             <img
-              src="https://images.unsplash.com/photo-1602173574767-37ac01994b2a?auto=format&fit=crop&w=1400&q=85"
+              src="https://images.unsplash.com/photo-1602173574767-37ac01994b2a?auto=format&fit=crop&w=2000&q=95"
               alt="Bridal lookbook"
               className="absolute inset-0 h-full w-full object-cover group-hover:scale-[1.03] transition-transform duration-slow"
               loading="lazy"
@@ -250,8 +250,8 @@ export function StorefrontHome(): JSX.Element {
           </Link>
           <div className="grid grid-rows-2 gap-6 md:gap-8">
             {[
-              { slug: 'gifting', overline: 'Under ₹50,000', title: 'Gifts that hold value', img: 'https://images.unsplash.com/photo-1605100804763-247f67b3557e?auto=format&fit=crop&w=1100&q=85' },
-              { slug: 'diamond', overline: 'New · Diamond', title: 'Solitaires, certified', img: 'https://images.unsplash.com/photo-1603561591411-07134e71a2a9?auto=format&fit=crop&w=1100&q=85' },
+              { slug: 'gifting', overline: 'Under ₹50,000', title: 'Gifts that hold value', img: 'https://images.unsplash.com/photo-1605100804763-247f67b3557e?auto=format&fit=crop&w=1600&q=92' },
+              { slug: 'diamond', overline: 'New · Diamond', title: 'Solitaires, certified', img: 'https://images.unsplash.com/photo-1603561591411-07134e71a2a9?auto=format&fit=crop&w=1600&q=92' },
             ].map((f) => (
               <Link key={f.slug} to={`/store/collections/${f.slug}`} className="group relative block overflow-hidden bg-ink-100 aspect-[4/3] lg:aspect-auto rounded-sm">
                 <img src={f.img} alt={f.title} className="absolute inset-0 h-full w-full object-cover group-hover:scale-[1.03] transition-transform duration-slow" loading="lazy" />
