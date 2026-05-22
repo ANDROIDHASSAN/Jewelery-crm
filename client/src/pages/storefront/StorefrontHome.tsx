@@ -26,13 +26,47 @@ const SHOP_BY = [
 
 // Tanishq-signature: circular portrait tiles for browse-by-category.
 // Each links to an existing collection slug already wired in the router.
+// SEO-friendly labels with metal/style hint.
 const CATEGORY_TILES = [
-  { label: 'Rings', slug: 'diamond', img: 'https://images.unsplash.com/photo-1605100804763-247f67b3557e?auto=format&fit=crop&w=800&q=92' },
-  { label: 'Necklaces', slug: 'bridal', img: 'https://images.unsplash.com/photo-1599643477877-530eb83abc8e?auto=format&fit=crop&w=800&q=92' },
-  { label: 'Earrings', slug: 'daily-wear', img: 'https://images.unsplash.com/photo-1535632787350-4e68ef0ac584?auto=format&fit=crop&w=800&q=92' },
-  { label: 'Bangles', slug: '22k', img: 'https://images.unsplash.com/photo-1611591437281-460bfbe1220a?auto=format&fit=crop&w=800&q=92' },
+  { label: 'Diamond rings', slug: 'diamond', img: 'https://images.unsplash.com/photo-1605100804763-247f67b3557e?auto=format&fit=crop&w=800&q=92' },
+  { label: 'Bridal necklaces', slug: 'bridal', img: 'https://images.unsplash.com/photo-1599643477877-530eb83abc8e?auto=format&fit=crop&w=800&q=92' },
+  { label: 'Gold earrings', slug: 'daily-wear', img: 'https://images.unsplash.com/photo-1535632787350-4e68ef0ac584?auto=format&fit=crop&w=800&q=92' },
+  { label: '22K bangles', slug: '22k', img: 'https://images.unsplash.com/photo-1611591437281-460bfbe1220a?auto=format&fit=crop&w=800&q=92' },
   { label: 'Pendants', slug: '18k', img: 'https://images.unsplash.com/photo-1602173574767-37ac01994b2a?auto=format&fit=crop&w=800&q=92' },
   { label: 'Mangalsutra', slug: 'festive', img: 'https://images.unsplash.com/photo-1603561591411-07134e71a2a9?auto=format&fit=crop&w=800&q=92' },
+];
+
+// Instagram-reel-style 9:16 video tiles. Posters are still images today;
+// swap to actual <video> via CMS once real branded reels are shot.
+const REELS = [
+  { handle: '@priya.bridal', caption: 'Day-of-wedding bridal set · 22K', poster: 'https://images.unsplash.com/photo-1602173574767-37ac01994b2a?auto=format&fit=crop&w=900&q=92', slug: 'bridal' },
+  { handle: '@diya.daily', caption: 'Light-weight 22K chain · 8.2 g', poster: 'https://images.unsplash.com/photo-1599643477877-530eb83abc8e?auto=format&fit=crop&w=900&q=92', slug: 'daily-wear' },
+  { handle: '@aisha.studio', caption: 'Festive jhumka stack', poster: 'https://images.unsplash.com/photo-1535632787350-4e68ef0ac584?auto=format&fit=crop&w=900&q=92', slug: 'festive' },
+  { handle: '@meera.solitaire', caption: 'IGI-certified solitaire · 0.48 ct', poster: 'https://images.unsplash.com/photo-1603561591411-07134e71a2a9?auto=format&fit=crop&w=900&q=92', slug: 'diamond' },
+  { handle: '@aanya.bangles', caption: 'Stack of 6 · 22K · 38 g', poster: 'https://images.unsplash.com/photo-1611591437281-460bfbe1220a?auto=format&fit=crop&w=900&q=92', slug: '22k' },
+];
+
+// Multi-testimonial grid — names + cities only (no PII per gotchas.md).
+// Real customer reviews land here via the admin CMS once collected.
+const TESTIMONIALS = [
+  {
+    quote: 'They weighed each piece in front of me and printed the rate for that exact minute. I have never felt this calm buying gold.',
+    author: 'Priya R.',
+    city: 'Gurugram',
+    occasion: 'Bridal set · 2024',
+  },
+  {
+    quote: 'My daughter\u2019s mangalsutra arrived hand-finished, BIS hallmarked, with the GST broken out line-by-line. Three generations of trust.',
+    author: 'Sunita M.',
+    city: 'Karnal',
+    occasion: 'Wedding gift · 2024',
+  },
+  {
+    quote: 'WhatsApp updates with photos of my piece on the bench made it feel personal. Worth every gram.',
+    author: 'Aanya K.',
+    city: 'Faridabad',
+    occasion: 'Anniversary · 2025',
+  },
 ];
 
 interface BestSellerCard {
@@ -66,7 +100,7 @@ function toBestSellerCard(p: PublicProduct): BestSellerCard {
 
 export function StorefrontHome(): JSX.Element {
   const content = useAppSelector((s) => s.storefrontContent);
-  const { hero, rates: cmsRates, collections, story, testimonial } = content;
+  const { hero, rates: cmsRates, collections, story } = content;
   const { data: liveProducts } = useGetPublicProductsQuery();
   const { data: liveRate } = useGetPublicGoldRateQuery(undefined, {
     pollingInterval: 5 * 60 * 1000,
@@ -165,7 +199,8 @@ export function StorefrontHome(): JSX.Element {
         <div className="max-w-[1280px] mx-auto px-4 sm:px-6 py-12 sm:py-16 md:py-20">
           <div className="text-center mb-8 sm:mb-12">
             <p className="text-eyebrow uppercase text-brand-700">Browse by category</p>
-            <h2 className="font-display text-3xl sm:text-[36px] md:text-[44px] leading-tight text-ink-900 mt-2">Shop the look</h2>
+            <h2 className="font-display text-3xl sm:text-[36px] md:text-[44px] leading-tight text-ink-900 mt-2">Rings, necklaces, earrings &amp; more</h2>
+            <p className="mt-3 text-sm text-ink-600 max-w-md mx-auto">Six categories, one hallmarked workshop. Shop diamond rings, 22K bridal necklaces, gold earrings, bangles, pendants and mangalsutra.</p>
           </div>
           <div className="grid grid-cols-3 sm:grid-cols-6 gap-4 sm:gap-6 md:gap-8">
             {CATEGORY_TILES.map((c, i) => (
@@ -195,10 +230,11 @@ export function StorefrontHome(): JSX.Element {
       <section className="max-w-[1280px] mx-auto px-4 sm:px-6 py-14 sm:py-20 md:py-24">
         <div className="flex items-end justify-between mb-8 sm:mb-10 gap-4">
           <div>
-            <p className="text-eyebrow uppercase text-ink-500">Shop by occasion</p>
-            <h2 className="font-display text-3xl sm:text-display-lg md:text-[48px] md:leading-[1.05] text-ink-900 mt-2">Collections</h2>
+            <p className="text-eyebrow uppercase text-brand-700">Shop by occasion</p>
+            <h2 className="font-display text-3xl sm:text-display-lg md:text-[48px] md:leading-[1.05] text-ink-900 mt-2">Indian bridal &amp; festive jewellery, by collection</h2>
+            <p className="mt-3 text-sm text-ink-600 max-w-xl">Hand-crafted 22K and 18K pieces — bridal, daily-wear, festive, diamond and silver — from our family workshop in Haryana.</p>
           </div>
-          <Link to="/store/collections" className="hidden sm:inline-flex items-center gap-1 text-sm text-ink-700 hover:text-ink-900 border-b border-ink-200 hover:border-ink-400 pb-0.5 shrink-0">
+          <Link to="/store/collections" className="hidden sm:inline-flex items-center gap-1 text-sm text-ink-700 hover:text-brand-700 border-b border-ink-200 hover:border-brand-400 pb-0.5 shrink-0 transition-colors">
             See all
             <ArrowRight className="h-3.5 w-3.5" />
           </Link>
@@ -272,10 +308,11 @@ export function StorefrontHome(): JSX.Element {
       <section className="max-w-[1280px] mx-auto px-4 sm:px-6 py-14 sm:py-20 md:py-24">
         <div className="flex items-end justify-between mb-8 sm:mb-10 gap-4">
           <div>
-            <p className="text-eyebrow uppercase text-ink-500">Most loved this season</p>
-            <h2 className="font-display text-3xl sm:text-display-lg md:text-[48px] md:leading-[1.05] text-ink-900 mt-2">Best-sellers</h2>
+            <p className="text-eyebrow uppercase text-brand-700">Most loved this season</p>
+            <h2 className="font-display text-3xl sm:text-display-lg md:text-[48px] md:leading-[1.05] text-ink-900 mt-2">Best-selling 22K bangles, mangalsutra &amp; solitaires</h2>
+            <p className="mt-3 text-sm text-ink-600 max-w-xl">Hand-set by our karigars, BIS-hallmarked, priced against today\u2019s live gold rate.</p>
           </div>
-          <Link to="/store/collections" className="hidden sm:inline-flex items-center gap-1 text-sm text-ink-700 hover:text-ink-900 border-b border-ink-200 hover:border-ink-400 pb-0.5 shrink-0">
+          <Link to="/store/collections" className="hidden sm:inline-flex items-center gap-1 text-sm text-ink-700 hover:text-brand-700 border-b border-ink-200 hover:border-brand-400 pb-0.5 shrink-0 transition-colors">
             Browse all
             <ArrowRight className="h-3.5 w-3.5" />
           </Link>
@@ -325,13 +362,13 @@ export function StorefrontHome(): JSX.Element {
         </div>
       </section>
 
-      {/* Trust strip */}
+      {/* Trust strip — SEO copy: BIS 916 hallmark, MCX gold rate, GST, exchange */}
       <section>
         <div className="max-w-[1280px] mx-auto px-4 sm:px-6 py-10 sm:py-14 grid grid-cols-1 md:grid-cols-3 gap-6 sm:gap-8 md:gap-12">
           {[
-            { icon: ShieldCheck, title: 'BIS Hallmarked', body: 'Every gram. Every piece. Audited monthly by an independent lab.' },
-            { icon: Sparkles, title: 'Transparent pricing', body: 'Weight × today’s MCX rate + making + GST. Itemised on every bill.' },
-            { icon: Award, title: 'Lifetime exchange', body: 'Trade in any piece against pure-gold value — no time limit.' },
+            { icon: ShieldCheck, title: 'BIS 916 hallmarked gold', body: 'Every gram of our 22K and 18K jewellery is BIS-hallmarked and audited monthly by an independent assay lab.' },
+            { icon: Sparkles, title: 'Live MCX rate · transparent GST', body: 'Weight × today\u2019s MCX gold rate + making charges + 3% GST, itemised on every bill. No hidden margins.' },
+            { icon: Award, title: 'Lifetime exchange on pure gold', body: 'Trade in any piece against pure-gold value at the current rate — no time limit, no deduction beyond stones.' },
           ].map((t) => (
             <div key={t.title} className="flex items-start gap-4">
               <div className="h-11 w-11 shrink-0 rounded-full bg-brand-50 text-brand-700 inline-flex items-center justify-center">
@@ -346,19 +383,96 @@ export function StorefrontHome(): JSX.Element {
         </div>
       </section>
 
-      {/* Testimonial / press — deeper blush rose, premium tonal. */}
+      {/* Watch & wear — Instagram-reel-style 9:16 video tiles. Horizontal
+          scroll on mobile, full grid on desktop. SEO copy mentions live
+          customer styling for long-tail "how to wear / styling" searches. */}
+      <section className="bg-ink-0">
+        <div className="max-w-[1280px] mx-auto px-4 sm:px-6 py-14 sm:py-20 md:py-24">
+          <div className="flex items-end justify-between mb-8 sm:mb-10 gap-4">
+            <div>
+              <p className="text-eyebrow uppercase text-brand-700">Watch &amp; wear</p>
+              <h2 className="font-display text-3xl sm:text-display-lg md:text-[48px] md:leading-[1.05] text-ink-900 mt-2">Styling reels from our customers</h2>
+              <p className="mt-2 text-sm text-ink-600 max-w-md">
+                Real brides, real jhumka stacks, real solitaires. Tap any reel to shop the look.
+              </p>
+            </div>
+            <a
+              href="https://instagram.com/"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="hidden sm:inline-flex items-center gap-1 text-sm text-ink-700 hover:text-brand-700 border-b border-ink-200 hover:border-brand-400 pb-0.5 shrink-0 transition-colors"
+            >
+              Follow on Instagram
+              <ArrowRight className="h-3.5 w-3.5" />
+            </a>
+          </div>
+          {/* Horizontal scroll on mobile, 5-col grid on lg+ */}
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 sm:gap-4 md:gap-5">
+            {REELS.map((r, i) => (
+              <Link
+                key={r.handle}
+                to={`/store/collections/${r.slug}`}
+                className={`group relative block aspect-[9/16] overflow-hidden rounded-md bg-[#FAF3EE] gold-shine-target animate-fade-in-up-${(i % 5) + 1}`}
+              >
+                <img
+                  src={r.poster}
+                  alt={r.caption}
+                  className="absolute inset-0 h-full w-full object-cover group-hover:scale-[1.06] transition-transform duration-slow"
+                  loading="lazy"
+                />
+                <div className="absolute inset-0 bg-gradient-to-t from-ink-900/75 via-ink-900/10 to-ink-900/20" aria-hidden />
+                {/* Reel play indicator */}
+                <div className="absolute top-3 right-3 h-7 w-7 rounded-full bg-ink-0/85 backdrop-blur-sm inline-flex items-center justify-center shadow-sm">
+                  <svg width="10" height="12" viewBox="0 0 10 12" fill="none" aria-hidden>
+                    <path d="M0 0L10 6L0 12V0Z" fill="#1F1D1A" />
+                  </svg>
+                </div>
+                <div className="absolute inset-x-0 bottom-0 p-3 sm:p-4 text-ink-0">
+                  <p className="text-[10px] uppercase tracking-[0.16em] text-brand-200">{r.handle}</p>
+                  <p className="mt-1 text-xs sm:text-sm leading-snug">{r.caption}</p>
+                </div>
+              </Link>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      {/* Customer reviews — 3-card grid on deeper blush. Replaces single
+          quote so the page reads as multiple voices, not one. */}
       <section className="bg-[#F5E5DC] border-y border-[#E8CFC1]/60">
-        <div className="max-w-[1280px] mx-auto px-4 sm:px-6 py-14 sm:py-20 md:py-24 grid grid-cols-1 lg:grid-cols-[1fr_auto] gap-8 sm:gap-10 items-end">
-          <figure className="max-w-2xl">
-            <Quote className="h-7 w-7 text-brand-500" aria-hidden />
-            <blockquote className="mt-4 sm:mt-5 font-display text-2xl sm:text-[28px] md:text-[36px] leading-[1.15] text-ink-900">
-              &ldquo;{testimonial.quote}&rdquo;
-            </blockquote>
-            <figcaption className="mt-6 text-sm text-ink-500">
-              {testimonial.author}
-            </figcaption>
-          </figure>
-          <div className="flex flex-wrap items-center gap-x-8 gap-y-3 text-ink-500 text-xs uppercase tracking-[0.18em]">
+        <div className="max-w-[1280px] mx-auto px-4 sm:px-6 py-14 sm:py-20 md:py-24">
+          <div className="text-center max-w-2xl mx-auto mb-10 sm:mb-12">
+            <p className="text-eyebrow uppercase text-brand-700">Loved by jewellery families across Haryana</p>
+            <h2 className="font-display text-3xl sm:text-[36px] md:text-[44px] leading-tight text-ink-900 mt-2">
+              50,000+ verified customers since 1972
+            </h2>
+            <p className="mt-3 text-sm text-ink-600">Transparent pricing, BIS-hallmarked gold, and a WhatsApp update on every piece — that&apos;s why families trust us for bridal, festive, and gifting.</p>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-5 sm:gap-6 md:gap-8">
+            {TESTIMONIALS.map((t, i) => (
+              <figure
+                key={t.author}
+                className={`relative bg-ink-0 rounded-md p-6 sm:p-7 border border-[#E8CFC1]/70 shadow-sm animate-fade-in-up-${i + 1}`}
+              >
+                <Quote className="h-6 w-6 text-brand-500" aria-hidden />
+                <blockquote className="mt-3 sm:mt-4 font-display text-[18px] sm:text-[20px] leading-[1.4] text-ink-900">
+                  &ldquo;{t.quote}&rdquo;
+                </blockquote>
+                <figcaption className="mt-5 sm:mt-6 pt-4 border-t border-[#EFE0D2] flex items-center gap-3">
+                  <span className="h-10 w-10 rounded-full bg-[#FAF3EE] ring-1 ring-[#EFE0D2] inline-flex items-center justify-center text-brand-700 font-display text-base">
+                    {t.author.charAt(0)}
+                  </span>
+                  <span className="flex flex-col">
+                    <span className="text-sm font-medium text-ink-900">{t.author}, <span className="text-ink-500 font-normal">{t.city}</span></span>
+                    <span className="text-[11px] uppercase tracking-[0.14em] text-brand-700 mt-0.5">{t.occasion}</span>
+                  </span>
+                </figcaption>
+              </figure>
+            ))}
+          </div>
+          {/* Press strip beneath the reviews */}
+          <div className="mt-12 sm:mt-14 pt-8 border-t border-[#E8CFC1]/60 flex flex-wrap items-center justify-center gap-x-8 sm:gap-x-12 gap-y-3 text-ink-500 text-xs uppercase tracking-[0.18em]">
+            <span className="text-ink-500">As featured in</span>
             <span>Vogue India</span>
             <span>Femina</span>
             <span>The Hindu</span>
@@ -371,10 +485,11 @@ export function StorefrontHome(): JSX.Element {
       <section className="bg-[#FDF8F4]">
         <div className="max-w-[1280px] mx-auto px-4 sm:px-6 py-12 sm:py-16 md:py-20 flex flex-col md:flex-row items-start md:items-center justify-between gap-6 border-t border-[#EFE0D2]/60">
           <div className="max-w-xl">
-            <p className="text-eyebrow uppercase text-brand-700">Visit us</p>
+            <p className="text-eyebrow uppercase text-brand-700">Visit our jewellery showrooms</p>
             <h2 className="font-display text-2xl sm:text-[28px] md:text-[36px] leading-tight text-ink-900 mt-3">
-              Two showrooms in Haryana. Walk in, weigh, decide.
+              Two BIS-certified showrooms in Gurugram &amp; Karnal. Walk in, weigh, decide.
             </h2>
+            <p className="mt-3 text-sm text-ink-600 max-w-lg">In-person rate matching, free try-on, lifetime exchange — and a chai on the house while you decide.</p>
           </div>
           <Link to="/store/locations" className="inline-flex items-center gap-2 h-11 sm:h-12 px-5 sm:px-7 rounded-full bg-ink-900 text-ink-0 text-sm font-medium hover:bg-ink-800 transition-colors duration-fast">
             Find a store

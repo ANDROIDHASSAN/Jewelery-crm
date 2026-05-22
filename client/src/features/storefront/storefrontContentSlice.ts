@@ -87,14 +87,14 @@ export interface StorefrontContent {
 export const DEFAULT_CONTENT: StorefrontContent = {
   brand: {
     name: 'Zelora',
-    tagline: 'Family jewellers since 1972. Hallmarked gold. Transparent pricing. Hand-crafted in Haryana.',
+    tagline: 'Indian bridal jewellery, BIS-hallmarked 22K & 18K gold, certified diamond solitaires and 925 silver — family jewellers in Haryana since 1972. Priced against the live MCX gold rate, with transparent making charges on every bill.',
     logo: '/logo/zelora-mark.png',
   },
   hero: {
-    eyebrow: 'The 2025 Bridal Edit',
-    title: 'Heirlooms, made for the modern bride.',
+    eyebrow: 'The 2025 Bridal Edit · BIS Hallmarked',
+    title: 'Heirloom Indian bridal jewellery, made for the modern bride.',
     subtitle:
-      "Hand-set by our karigars in Haryana. 22K BIS-hallmarked. Priced transparently against today's MCX rate — weight × rate + making, nothing hidden.",
+      'Hand-set 22K BIS-hallmarked gold, IGI/GIA-certified diamond solitaires, and lightweight daily-wear pieces. Priced against today\u2019s live MCX gold rate \u2014 weight \u00d7 rate + making + GST, nothing hidden.',
     ctaLabel: 'Explore the edit',
     ctaHref: '/store/collections/bridal',
     secondaryCtaLabel: 'Visit our store',
