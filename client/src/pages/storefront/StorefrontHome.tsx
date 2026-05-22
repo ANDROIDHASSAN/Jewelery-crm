@@ -1,5 +1,6 @@
 import { Link } from 'react-router-dom';
 import { ArrowRight, Award, ShieldCheck, Sparkles, Star } from 'lucide-react';
+import { cn } from '@/lib/cn';
 import { useAppSelector } from '@/app/hooks';
 import {
   useGetPublicGoldRateQuery,
@@ -83,6 +84,30 @@ const TESTIMONIALS_ROW_2: Testimonial[] = [
   { quote: '0.48 ct IGI-certified solitaire, delivered with the original lab certificate and box. No middleman, no markup.', author: 'Divya Patel', city: 'Faridabad', occasion: 'Solitaire ring · 2025' },
   { quote: 'Engagement ring with a transparent breakdown \u2014 weight, rate, making, GST. No haggling, no surprises at billing.', author: 'Neha Joshi', city: 'Gurugram', occasion: 'Engagement · 2024' },
   { quote: 'Bought a complete bridal jewellery set for my wedding. Everything weighed publicly, hallmarked, and delivered on time.', author: 'Pooja Choudhary', city: 'Hisar', occasion: 'Bridal · 2025' },
+];
+
+// Deals-of-the-week strip — left editorial card + right 2x4 product grid
+// (reference: Antisa / WoodMart "Deals" layout). NEW / SALE / OUT badges,
+// 5-star rating row, price under each card. Uses user-uploaded photos in
+// /img/j1.jpg ... j8.jpg.
+interface DealCard {
+  slug: string;
+  name: string;
+  category: string;
+  priceLabel: string;
+  badge: 'NEW' | 'SALE' | 'OUT';
+  img: string;
+}
+
+const DEALS: DealCard[] = [
+  { slug: 'aurelia-pendant',  name: 'Aurelia Diamond Pendant', category: 'NECKLACES', priceLabel: '₹29,000', badge: 'NEW',  img: '/img/j1.jpg' },
+  { slug: 'mira-bangle-set',  name: 'Mira 22K Bangle Stack',   category: 'BANGLES',   priceLabel: '₹84,500', badge: 'NEW',  img: '/img/j2.jpg' },
+  { slug: 'tara-mangalsutra', name: 'Tara Mangalsutra',        category: 'NECKLACES', priceLabel: '₹62,200', badge: 'NEW',  img: '/img/j3.jpg' },
+  { slug: 'aarya-pearl-drop', name: 'Aarya Pearl Drops',       category: 'EARRINGS',  priceLabel: '₹19,400', badge: 'OUT',  img: '/img/j4.jpg' },
+  { slug: 'forever-solitaire',name: 'Forever Solitaire Ring',  category: 'RINGS',     priceLabel: '₹48,900', badge: 'NEW',  img: '/img/j5.jpg' },
+  { slug: 'meera-jhumka',     name: 'Meera Festive Jhumkas',   category: 'EARRINGS',  priceLabel: '₹31,400', badge: 'SALE', img: '/img/j6.jpg' },
+  { slug: 'kavya-chain',      name: 'Kavya Light Chain',       category: 'NECKLACES', priceLabel: '₹18,900', badge: 'NEW',  img: '/img/j7.jpg' },
+  { slug: 'parker-signet',    name: 'Parker Signet Ring',      category: 'RINGS',     priceLabel: '₹11,900', badge: 'NEW',  img: '/img/j8.jpg' },
 ];
 
 interface BestSellerCard {
@@ -351,6 +376,86 @@ export function StorefrontHome(): JSX.Element {
               </div>
             </Link>
           ))}
+        </div>
+      </section>
+
+      {/* Deals of the week — left editorial card + right 2x4 product grid.
+          Reference: Antisa / WoodMart "Deals" layout. Horizontal scroll on
+          mobile, fixed 5-col / 8-tile grid on desktop. */}
+      <section className="bg-[#FAF3EE] border-y border-[#EFE0D2]/60">
+        <div className="max-w-[1280px] mx-auto px-4 sm:px-6 py-14 sm:py-20 md:py-24 grid grid-cols-1 lg:grid-cols-[320px_1fr] gap-6 sm:gap-8 lg:gap-10 items-stretch">
+          {/* Left: editorial deal card */}
+          <aside className="relative overflow-hidden rounded-md bg-ink-900 text-ink-0 min-h-[420px] lg:min-h-full flex flex-col">
+            <img
+              src="/categories/jew3.jpg"
+              alt=""
+              aria-hidden
+              className="absolute inset-0 h-full w-full object-cover opacity-50"
+            />
+            <div className="absolute inset-0 bg-gradient-to-br from-ink-900/85 via-ink-900/60 to-ink-900/85" aria-hidden />
+            <div className="relative z-10 flex-1 flex flex-col justify-between p-7 sm:p-8 lg:p-10">
+              <div>
+                <p className="text-eyebrow uppercase text-brand-300">Deals of the week</p>
+                <h2 className="font-display text-3xl sm:text-[36px] md:text-[40px] leading-[1.1] mt-3 max-w-[14ch]">
+                  Hand-set, hallmarked, half-price.
+                </h2>
+                <p className="mt-4 text-sm text-ink-200/85 leading-relaxed max-w-[28ch]">
+                  Eight curated pieces this week — bridal, daily-wear and diamond — priced at today&apos;s live gold rate.
+                </p>
+              </div>
+              <Link
+                to="/store/collections"
+                className="mt-8 inline-flex items-center gap-2 self-start h-11 sm:h-12 px-5 sm:px-7 rounded-full bg-brand-400 text-ink-900 text-sm font-medium hover:bg-brand-300 transition-colors duration-fast"
+              >
+                Shop deals
+                <ArrowRight className="h-4 w-4" />
+              </Link>
+            </div>
+          </aside>
+
+          {/* Right: 2 x 4 deal product grid (slick-style). Horizontal scroll
+              on mobile, fixed grid on lg+. */}
+          <div className="-mx-4 sm:-mx-6 lg:mx-0">
+            <div className="px-4 sm:px-6 lg:px-0 grid grid-flow-col auto-cols-[68%] sm:auto-cols-[40%] md:auto-cols-[30%] lg:grid-flow-row lg:auto-cols-auto lg:grid-cols-4 lg:grid-rows-2 gap-3 sm:gap-4 lg:gap-5 overflow-x-auto lg:overflow-visible snap-x snap-mandatory lg:snap-none pb-2 lg:pb-0">
+              {DEALS.map((d, i) => (
+                <Link
+                  key={d.slug}
+                  to={`/store/products/${d.slug}`}
+                  className={`group relative flex flex-col bg-ink-0 rounded-md border border-[#EFE0D2]/80 overflow-hidden snap-start lg:snap-align-none animate-fade-in-up-${(i % 6) + 1}`}
+                >
+                  <div className="relative aspect-square bg-[#FAF3EE] overflow-hidden gold-shine-target">
+                    <img
+                      src={d.img}
+                      alt={d.name}
+                      className="absolute inset-0 h-full w-full object-cover group-hover:scale-[1.06] transition-transform duration-slow"
+                      loading="lazy"
+                    />
+                    {/* Badge top-left */}
+                    <span
+                      className={cn(
+                        'absolute top-2.5 left-2.5 text-[10px] font-semibold uppercase tracking-[0.14em] px-2 py-1 rounded-sm',
+                        d.badge === 'NEW' && 'bg-success-500 text-ink-0',
+                        d.badge === 'SALE' && 'bg-danger-500 text-ink-0',
+                        d.badge === 'OUT' && 'bg-ink-800 text-ink-0',
+                      )}
+                    >
+                      {d.badge === 'OUT' ? 'OUT-OF-STOCK' : d.badge}
+                    </span>
+                  </div>
+                  <div className="flex flex-col gap-1 p-3 sm:p-4">
+                    <p className="text-[10px] uppercase tracking-[0.16em] text-ink-500">{d.category}</p>
+                    <h3 className="font-display text-[15px] sm:text-base leading-tight text-ink-900 group-hover:text-brand-700 transition-colors truncate">{d.name}</h3>
+                    <div className="flex items-center gap-0.5 text-brand-500 mt-0.5">
+                      {Array.from({ length: 5 }).map((_, k) => (
+                        <Star key={k} className="h-3 w-3 fill-current" aria-hidden />
+                      ))}
+                    </div>
+                    <p className="text-sm text-ink-900 font-mono tabular-nums mt-0.5">{d.priceLabel}</p>
+                  </div>
+                </Link>
+              ))}
+            </div>
+          </div>
         </div>
       </section>
 
