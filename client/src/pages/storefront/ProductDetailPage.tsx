@@ -56,21 +56,25 @@ export function ProductDetailPage(): JSX.Element {
   // Loading + not-found states (early-return AFTER hooks so the React hooks order is stable).
   if (isLoading) {
     return (
-      <div className="max-w-[1280px] mx-auto px-4 sm:px-6 py-16 sm:py-20 text-center text-ink-500 text-sm">
-        Loading the piece…
+      <div className="bg-[#FDF8F4] min-h-[60vh]">
+        <div className="max-w-[1280px] mx-auto px-4 sm:px-6 py-16 sm:py-20 text-center text-ink-500 text-sm">
+          Loading the piece…
+        </div>
       </div>
     );
   }
   if (!product) {
     return (
-      <div className="max-w-[1280px] mx-auto px-4 sm:px-6 py-16 sm:py-20 text-center">
-        <h1 className="font-display text-2xl sm:text-[28px] leading-tight text-ink-900 mb-3">Piece not found</h1>
-        <p className="text-ink-600 mb-6 max-w-prose mx-auto">
-          We couldn&apos;t find a piece with that slug. It may have been retired or not yet published.
-        </p>
-        <Link to="/store/collections" className="inline-block text-sm text-ink-900 underline decoration-brand-500 underline-offset-4">
-          Browse the collection
-        </Link>
+      <div className="bg-[#FDF8F4] min-h-[60vh]">
+        <div className="max-w-[1280px] mx-auto px-4 sm:px-6 py-16 sm:py-20 text-center">
+          <h1 className="font-display text-2xl sm:text-[28px] leading-tight text-ink-900 mb-3">Piece not found</h1>
+          <p className="text-ink-600 mb-6 max-w-prose mx-auto">
+            We couldn&apos;t find a piece with that slug. It may have been retired or not yet published.
+          </p>
+          <Link to="/store/collections" className="inline-block text-sm text-ink-900 underline decoration-brand-500 underline-offset-4">
+            Browse the collection
+          </Link>
+        </div>
       </div>
     );
   }
@@ -132,17 +136,18 @@ export function ProductDetailPage(): JSX.Element {
     false;
 
   return (
+    <div className="bg-[#FDF8F4]">
     <div className="max-w-[1280px] mx-auto px-4 sm:px-6 py-8 sm:py-10 md:py-14 pb-28 lg:pb-14">
       <nav className="text-xs text-ink-500 mb-6" aria-label="Breadcrumb">
-        <Link to="/store" className="hover:text-ink-700">Home</Link>
+        <Link to="/store" className="hover:text-brand-700 transition-colors">Home</Link>
         <span className="mx-2 text-ink-300">/</span>
         {category ? (
-          <Link to={`/store/collections/${category.slug}`} className="hover:text-ink-700">{category.name}</Link>
+          <Link to={`/store/collections/${category.slug}`} className="hover:text-brand-700 transition-colors">{category.name}</Link>
         ) : (
-          <Link to="/store/collections" className="hover:text-ink-700">Collections</Link>
+          <Link to="/store/collections" className="hover:text-brand-700 transition-colors">Collections</Link>
         )}
         <span className="mx-2 text-ink-300">/</span>
-        <span className="text-ink-700">{product.name}</span>
+        <span className="text-ink-800">{product.name}</span>
       </nav>
 
       <div className="grid grid-cols-1 lg:grid-cols-[58%_1fr] gap-8 sm:gap-10 lg:gap-16">
@@ -155,8 +160,8 @@ export function ProductDetailPage(): JSX.Element {
                 key={src}
                 onClick={() => setImgIdx(i)}
                 className={cn(
-                  'aspect-square overflow-hidden bg-ink-50 transition-all',
-                  i === imgIdx ? 'ring-1 ring-brand-500 ring-offset-2 ring-offset-ink-0' : 'opacity-70 hover:opacity-100',
+                  'aspect-square overflow-hidden bg-[#FAF3EE] rounded-sm transition-all',
+                  i === imgIdx ? 'ring-1 ring-brand-500 ring-offset-2 ring-offset-[#FDF8F4]' : 'opacity-70 hover:opacity-100',
                 )}
                 aria-label={`View image ${i + 1}`}
               >
@@ -164,7 +169,7 @@ export function ProductDetailPage(): JSX.Element {
               </button>
             ))}
           </div>
-          <div className="order-1 lg:order-2 flex-1 aspect-square overflow-hidden bg-ink-50">
+          <div className="order-1 lg:order-2 flex-1 aspect-square overflow-hidden bg-[#FAF3EE] rounded-sm">
             <img src={product.images[imgIdx]} alt={product.name} className="h-full w-full object-cover" />
           </div>
         </section>
@@ -172,7 +177,7 @@ export function ProductDetailPage(): JSX.Element {
         {/* Info */}
         <section className="space-y-6 sm:space-y-7">
           <header>
-            <p className="text-eyebrow uppercase text-ink-500">{category?.name ?? 'Collection'} · {purity}</p>
+            <p className="text-eyebrow uppercase text-brand-700">{category?.name ?? 'Collection'} · {purity}</p>
             <h1 className="font-display text-2xl sm:text-[34px] md:text-[40px] leading-[1.1] text-ink-900 mt-2">{product.name}</h1>
             <p className="mt-2 text-sm text-ink-600">{weightG.toFixed(2)} g · {purity}</p>
           </header>
@@ -211,8 +216,8 @@ export function ProductDetailPage(): JSX.Element {
           </div>
 
           {/* Transparent price breakdown — Bluestone-grade. */}
-          <div className="rounded-md border border-ink-100 bg-ink-25 p-4 sm:p-5 space-y-2.5 text-sm">
-            <p className="text-eyebrow uppercase text-ink-500">Price breakdown</p>
+          <div className="rounded-md border border-[#EFE0D2] bg-ink-0 p-4 sm:p-5 space-y-2.5 text-sm">
+            <p className="text-eyebrow uppercase text-brand-700">Price breakdown</p>
             <Row
               label={
                 exactRate
@@ -518,6 +523,7 @@ export function ProductDetailPage(): JSX.Element {
         qty={qty}
         totalPaise={total}
       />
+    </div>
     </div>
   );
 }

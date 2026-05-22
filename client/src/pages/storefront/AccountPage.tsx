@@ -335,10 +335,11 @@ export function AccountPage(): JSX.Element {
   }
 
   return (
+    <div className="bg-[#FDF8F4]">
     <div className="max-w-5xl w-full mx-auto px-4 sm:px-6 py-8 sm:py-10 md:py-14">
       <header className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4 sm:gap-6">
         <div className="min-w-0">
-          <p className="text-eyebrow uppercase text-ink-500">Your account</p>
+          <p className="text-eyebrow uppercase text-brand-700">Your account</p>
           <h1 className="font-display text-2xl sm:text-[34px] md:text-[40px] text-ink-900 mt-2">Hi, {account.name.split(' ')[0]}</h1>
           <p className="text-sm text-ink-600 mt-2 break-words">
             Signed in as {account.phone}
@@ -348,7 +349,7 @@ export function AccountPage(): JSX.Element {
         <button
           type="button"
           onClick={() => dispatch(signOut())}
-          className="self-start sm:self-auto inline-flex items-center gap-2 h-10 px-5 rounded-full border border-ink-200 text-sm text-ink-700 hover:bg-ink-50 transition-colors shrink-0"
+          className="self-start sm:self-auto inline-flex items-center gap-2 h-10 px-5 rounded-full border border-[#EFE0D2] bg-ink-0 text-sm text-ink-700 hover:bg-[#FAF3EE] transition-colors shrink-0"
         >
           <LogOut className="h-4 w-4" />
           Sign out
@@ -363,13 +364,14 @@ export function AccountPage(): JSX.Element {
       />
 
       <section className="mt-8 sm:mt-10 rounded-md border border-ink-100 bg-ink-25 p-5 sm:p-6">
-        <p className="text-eyebrow uppercase text-ink-500">Contact details</p>
+        <p className="text-eyebrow uppercase text-brand-700">Contact details</p>
         <ul className="mt-4 space-y-3 text-sm text-ink-800">
           <li className="flex items-center gap-3"><User className="h-4 w-4 text-ink-500" />{account.name}</li>
           <li className="flex items-center gap-3"><Phone className="h-4 w-4 text-ink-500" />{account.phone}</li>
           {account.email && <li className="flex items-center gap-3"><Mail className="h-4 w-4 text-ink-500" />{account.email}</li>}
         </ul>
       </section>
+    </div>
     </div>
   );
 }
@@ -478,7 +480,7 @@ function MyOrders({
 
       <section className="mt-8 sm:mt-10">
         <header className="flex items-center justify-between mb-4">
-          <h2 className="text-eyebrow uppercase text-ink-500">My orders</h2>
+          <h2 className="text-eyebrow uppercase text-brand-700">My orders</h2>
           {orders.length > 0 && (
             <span className="text-xs text-ink-500">{orders.length} total</span>
           )}
@@ -667,7 +669,7 @@ function Field({
 }): JSX.Element {
   return (
     <label className="block">
-      <span className="text-eyebrow uppercase text-ink-500 block mb-2">{label}</span>
+      <span className="text-eyebrow uppercase text-brand-700 block mb-2">{label}</span>
       <input
         type={type}
         value={value}
@@ -684,7 +686,7 @@ function Tile({ to, icon, label, value }: { to: string; icon: React.ReactNode; l
   return (
     <Link to={to} className="block rounded-md border border-ink-100 bg-ink-0 p-5 hover:border-ink-300 transition-colors">
       <div className="h-8 w-8 rounded-full bg-brand-50 inline-flex items-center justify-center">{icon}</div>
-      <p className="mt-4 text-eyebrow uppercase text-ink-500">{label}</p>
+      <p className="mt-4 text-eyebrow uppercase text-brand-700">{label}</p>
       <p className="text-lg text-ink-900 mt-1">{value}</p>
     </Link>
   );

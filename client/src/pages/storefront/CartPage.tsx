@@ -26,28 +26,31 @@ export function CartPage(): JSX.Element {
 
   if (cart.length === 0) {
     return (
-      <div className="max-w-2xl w-full mx-auto px-4 sm:px-6 py-14 sm:py-20 text-center">
-        <div className="mx-auto h-16 w-16 rounded-full bg-ink-50 flex items-center justify-center">
-          <ShoppingBag className="h-6 w-6 text-ink-500" />
+      <div className="bg-[#FDF8F4] min-h-[60vh]">
+        <div className="max-w-2xl w-full mx-auto px-4 sm:px-6 py-14 sm:py-20 text-center">
+          <div className="mx-auto h-16 w-16 rounded-full bg-[#FAF3EE] ring-1 ring-[#EFE0D2] flex items-center justify-center">
+            <ShoppingBag className="h-6 w-6 text-brand-700" />
+          </div>
+          <h1 className="font-display text-2xl sm:text-[32px] mt-6 text-ink-900">Your bag is empty</h1>
+          <p className="mt-2 text-ink-600 text-sm">
+            Add a piece to your bag or browse our collections — every order is hand-finished in Haryana.
+          </p>
+          <Link
+            to="/store/collections/bridal"
+            className="mt-8 inline-flex h-12 px-7 rounded-full bg-ink-900 text-ink-0 text-sm font-medium hover:bg-ink-800 transition-colors"
+          >
+            Browse collections
+          </Link>
         </div>
-        <h1 className="font-display text-2xl sm:text-[32px] mt-6 text-ink-900">Your bag is empty</h1>
-        <p className="mt-2 text-ink-600 text-sm">
-          Add a piece to your bag or browse our collections — every order is hand-finished in Haryana.
-        </p>
-        <Link
-          to="/store/collections/bridal"
-          className="mt-8 inline-flex h-12 px-7 rounded-full bg-brand-400 text-ink-900 text-sm font-medium hover:bg-brand-300 transition-colors"
-        >
-          Browse collections
-        </Link>
       </div>
     );
   }
 
   return (
+    <div className="bg-[#FDF8F4]">
     <div className="max-w-[1280px] mx-auto px-4 sm:px-6 py-8 sm:py-10 md:py-14">
       <header className="mb-8 sm:mb-10">
-        <p className="text-eyebrow uppercase text-ink-500">Your bag</p>
+        <p className="text-eyebrow uppercase text-brand-700">Your bag</p>
         <h1 className="font-display text-2xl sm:text-[34px] md:text-[40px] text-ink-900 mt-2">
           {cart.length} {cart.length === 1 ? 'piece' : 'pieces'} in your bag
         </h1>
@@ -56,12 +59,12 @@ export function CartPage(): JSX.Element {
       <div className="grid grid-cols-1 lg:grid-cols-[1fr_380px] gap-8 sm:gap-10 lg:gap-16">
         <section className="space-y-5 sm:space-y-6">
           {cart.map((item) => (
-            <article key={item.slug} className="flex gap-3 sm:gap-5 pb-5 sm:pb-6 border-b border-ink-100">
-              <Link to={`/store/products/${item.slug}`} className="shrink-0 w-20 h-24 sm:w-28 sm:h-32 md:w-32 md:h-36 bg-ink-50 overflow-hidden">
+            <article key={item.slug} className="flex gap-3 sm:gap-5 pb-5 sm:pb-6 border-b border-[#EFE0D2]">
+              <Link to={`/store/products/${item.slug}`} className="shrink-0 w-20 h-24 sm:w-28 sm:h-32 md:w-32 md:h-36 bg-[#FAF3EE] rounded-sm overflow-hidden">
                 <img src={item.img} alt={item.name} className="h-full w-full object-cover" />
               </Link>
               <div className="flex-1 min-w-0 flex flex-col">
-                <Link to={`/store/products/${item.slug}`} className="font-display text-base sm:text-[20px] text-ink-900 truncate hover:underline decoration-ink-300 underline-offset-4">
+                <Link to={`/store/products/${item.slug}`} className="font-display text-base sm:text-[20px] text-ink-900 truncate hover:text-brand-700 transition-colors">
                   {item.name}
                 </Link>
                 <p className="text-xs text-ink-500 mt-1">
@@ -70,10 +73,10 @@ export function CartPage(): JSX.Element {
                 <p className="text-sm text-ink-900 font-mono tabular-nums mt-2">{item.priceLabel}</p>
 
                 <div className="mt-auto flex items-center justify-between flex-wrap gap-3 pt-3 sm:pt-4">
-                  <div className="inline-flex items-center h-10 rounded-full border border-ink-200 overflow-hidden">
+                  <div className="inline-flex items-center h-10 rounded-full border border-[#EFE0D2] bg-ink-0 overflow-hidden">
                     <button
                       onClick={() => shop.setCartQty(item.slug, item.qty - 1, item.productId)}
-                      className="h-10 w-10 inline-flex items-center justify-center text-ink-700 hover:bg-ink-50"
+                      className="h-10 w-10 inline-flex items-center justify-center text-ink-700 hover:bg-[#FAF3EE]"
                       aria-label="Decrease quantity"
                     >
                       <Minus className="h-4 w-4" />
@@ -118,19 +121,19 @@ export function CartPage(): JSX.Element {
         </section>
 
         <aside className="lg:sticky lg:top-28 self-start">
-          <div className="rounded-md border border-ink-100 bg-ink-25 p-5 sm:p-6 space-y-3 text-sm">
-            <p className="text-eyebrow uppercase text-ink-500">Order summary</p>
+          <div className="rounded-md border border-[#EFE0D2] bg-ink-0 p-5 sm:p-6 space-y-3 text-sm">
+            <p className="text-eyebrow uppercase text-brand-700">Order summary</p>
             <Row label="Subtotal" value={<Money paise={subtotal} />} />
             <Row label="GST (3%)" value={<Money paise={gst} />} />
             <Row label="Shipping" value={<span className="text-brand-700">Free</span>} />
-            <div className="border-t border-ink-100 pt-3 flex items-center justify-between">
+            <div className="border-t border-[#EFE0D2] pt-3 flex items-center justify-between">
               <span className="text-ink-900 font-medium">Total</span>
               <Money paise={total} className="text-ink-900 font-medium font-mono tabular-nums text-lg" />
             </div>
             <button
               type="button"
               onClick={() => setCheckoutOpen(true)}
-              className="w-full h-12 mt-4 rounded-full bg-brand-400 text-ink-900 text-sm font-medium hover:bg-brand-300 transition-colors"
+              className="w-full h-12 mt-4 rounded-full bg-ink-900 text-ink-0 text-sm font-medium hover:bg-ink-800 transition-colors"
             >
               Place order
             </button>
@@ -157,6 +160,7 @@ export function CartPage(): JSX.Element {
       </div>
 
       <CheckoutDialog open={checkoutOpen} onClose={() => setCheckoutOpen(false)} />
+    </div>
     </div>
   );
 }
