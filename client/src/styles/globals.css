@@ -131,6 +131,21 @@
 .animate-marquee-right { animation: marquee-right 55s linear infinite; }
 .marquee-pause:hover   { animation-play-state: paused; }
 
+/* Doors-opening reveal — two cards slide in from opposite sides when the
+   parent section enters the viewport. The `.in-view` class is toggled by
+   an IntersectionObserver in the React component. Hidden + offset by
+   default so the transition has somewhere to animate from. */
+.door-card {
+  opacity: 0;
+  transition: transform 1100ms cubic-bezier(0.2, 0.8, 0.2, 1),
+              opacity   700ms ease-out;
+  will-change: transform, opacity;
+}
+.door-left  { transform: translateX(-14%) scale(0.95); }
+.door-right { transform: translateX( 14%) scale(0.95); }
+.in-view .door-card { opacity: 1; transform: translateX(0) scale(1); }
+.in-view .door-right { transition-delay: 120ms; }
+
 /* Twinkle — for occasional sparkle accents on hero eyebrow */
 @keyframes twinkle {
   0%, 100% { opacity: 0.4; transform: scale(0.85); }
@@ -157,4 +172,5 @@
     animation: none !important;
   }
   .gold-shine-target::after { display: none; }
+  .door-card { opacity: 1 !important; transform: none !important; transition: none !important; }
 }

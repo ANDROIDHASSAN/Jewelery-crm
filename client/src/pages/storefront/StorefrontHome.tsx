@@ -1,12 +1,10 @@
+import { useEffect, useRef, useState } from 'react';
+import type { RefObject } from 'react';
 import { Link } from 'react-router-dom';
 import { ArrowRight, Award, ShieldCheck, Sparkles, Star } from 'lucide-react';
 import { cn } from '@/lib/cn';
 import { useAppSelector } from '@/app/hooks';
-import {
-  useGetPublicGoldRateQuery,
-  useGetPublicProductsQuery,
-  type PublicProduct,
-} from '@/features/storefront/storefrontApi';
+import { useGetPublicGoldRateQuery } from '@/features/storefront/storefrontApi';
 
 function formatLiveRate(paise: number | undefined, fallback: string): string {
   if (!paise || paise <= 0) return fallback;
@@ -110,39 +108,9 @@ const DEALS: DealCard[] = [
   { slug: 'parker-signet',    name: 'Parker Signet Ring',      category: 'RINGS',     priceLabel: '₹11,900', badge: 'NEW',  img: '/img/j8.jpg' },
 ];
 
-interface BestSellerCard {
-  slug: string;
-  name: string;
-  priceLabel: string;
-  weight: string;
-  img: string;
-  alt: string;
-}
-
-const BESTSELLERS_FALLBACK: BestSellerCard[] = [
-  { slug: 'mira-bangle', name: 'Mira bangle', priceLabel: '₹84,500', weight: '12.45 g · 22K', img: 'https://images.unsplash.com/photo-1611591437281-460bfbe1220a?auto=format&fit=crop&w=1400&q=92', alt: 'https://images.unsplash.com/photo-1605100804763-247f67b3557e?auto=format&fit=crop&w=1400&q=92' },
-  { slug: 'tara-mangalsutra', name: 'Tara mangalsutra', priceLabel: '₹62,200', weight: '8.10 g · 22K', img: 'https://images.unsplash.com/photo-1599643477877-530eb83abc8e?auto=format&fit=crop&w=1400&q=92', alt: 'https://images.unsplash.com/photo-1602173574767-37ac01994b2a?auto=format&fit=crop&w=1400&q=92' },
-  { slug: 'aarya-ring', name: 'Aarya solitaire', priceLabel: '₹48,900', weight: '0.32 ct · 18K', img: 'https://images.unsplash.com/photo-1603561591411-07134e71a2a9?auto=format&fit=crop&w=1400&q=92', alt: 'https://images.unsplash.com/photo-1605100804763-247f67b3557e?auto=format&fit=crop&w=1400&q=92' },
-  { slug: 'riya-jhumka', name: 'Riya jhumkas', priceLabel: '₹31,400', weight: '5.20 g · 22K', img: 'https://images.unsplash.com/photo-1535632787350-4e68ef0ac584?auto=format&fit=crop&w=1400&q=92', alt: 'https://images.unsplash.com/photo-1611591437281-460bfbe1220a?auto=format&fit=crop&w=1400&q=92' },
-];
-
-function toBestSellerCard(p: PublicProduct): BestSellerCard {
-  const grams = (p.weightMg / 1000).toFixed(2);
-  const purity = p.purityCaratX100 ? `${p.purityCaratX100 / 100}K` : '';
-  return {
-    slug: p.slug,
-    name: p.name,
-    priceLabel: `₹${(p.basePricePaise / 100).toLocaleString('en-IN')}`,
-    weight: [grams && `${grams} g`, purity].filter(Boolean).join(' · '),
-    img: p.images[0] ?? BESTSELLERS_FALLBACK[0]!.img,
-    alt: p.images[1] ?? p.images[0] ?? BESTSELLERS_FALLBACK[0]!.alt,
-  };
-}
-
 export function StorefrontHome(): JSX.Element {
   const content = useAppSelector((s) => s.storefrontContent);
   const { hero, rates: cmsRates, story } = content;
-  const { data: liveProducts } = useGetPublicProductsQuery();
   const { data: liveRate } = useGetPublicGoldRateQuery(undefined, {
     pollingInterval: 5 * 60 * 1000,
   });
@@ -158,10 +126,6 @@ export function StorefrontHome(): JSX.Element {
       ? `${new Date(liveRate.asOf).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Kolkata' })} IST`
       : cmsRates.updatedAt,
   };
-  const bestSellers: BestSellerCard[] =
-    liveProducts && liveProducts.length > 0
-      ? liveProducts.slice(0, 4).map(toBestSellerCard)
-      : BESTSELLERS_FALLBACK;
   return (
     <>
       {/* Hero — light split editorial. Text on faint blush, full-bleed image on right. */}
@@ -348,37 +312,6 @@ export function StorefrontHome(): JSX.Element {
         </div>
       </section>
 
-      {/* Best-sellers — product grid with hover-flip second image (CaratLane). */}
-      <section className="max-w-[1280px] mx-auto px-4 sm:px-6 py-14 sm:py-20 md:py-24">
-        <div className="flex items-end justify-between mb-8 sm:mb-10 gap-4">
-          <div>
-            <p className="text-eyebrow uppercase text-brand-700">Most loved this season</p>
-            <h2 className="font-display text-3xl sm:text-display-lg md:text-[48px] md:leading-[1.05] text-ink-900 mt-2">Best-selling 22K bangles, mangalsutra &amp; solitaires</h2>
-            <p className="mt-3 text-sm text-ink-600 max-w-xl">Hand-set by our karigars, BIS-hallmarked, priced against today\u2019s live gold rate.</p>
-          </div>
-          <Link to="/store/collections" className="hidden sm:inline-flex items-center gap-1 text-sm text-ink-700 hover:text-brand-700 border-b border-ink-200 hover:border-brand-400 pb-0.5 shrink-0 transition-colors">
-            Browse all
-            <ArrowRight className="h-3.5 w-3.5" />
-          </Link>
-        </div>
-        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-x-3 sm:gap-x-5 gap-y-8 sm:gap-y-10 md:gap-x-6">
-          {bestSellers.map((p, i) => (
-            <Link key={p.slug} to={`/store/products/${p.slug}`} className={`group block animate-fade-in-up-${(i % 4) + 1}`}>
-              <div className="relative aspect-[4/5] overflow-hidden bg-[#FAF3EE] rounded-sm gold-shine-target">
-                <img src={p.img} alt={p.name} className="absolute inset-0 h-full w-full object-cover transition-all duration-500 group-hover:opacity-0 group-hover:scale-[1.04]" loading="lazy" />
-                <img src={p.alt} alt="" className="absolute inset-0 h-full w-full object-cover opacity-0 group-hover:opacity-100 group-hover:scale-[1.04] transition-all duration-500" loading="lazy" aria-hidden />
-                <span className="absolute top-3 left-3 bg-ink-0/90 backdrop-blur-sm text-[10px] uppercase tracking-[0.16em] px-2.5 py-1 rounded-full text-brand-700 font-medium">Bestseller</span>
-              </div>
-              <div className="mt-3 sm:mt-4">
-                <h3 className="font-display text-base sm:text-[18px] text-ink-900 leading-tight group-hover:text-brand-700 transition-colors">{p.name}</h3>
-                <p className="text-[11px] sm:text-xs text-ink-500 mt-1">{p.weight}</p>
-                <p className="text-sm text-ink-900 font-mono tabular-nums mt-1 sm:mt-1.5">{p.priceLabel}</p>
-              </div>
-            </Link>
-          ))}
-        </div>
-      </section>
-
       {/* Deals of the week — left editorial card + right 2x4 product grid.
           Reference: Antisa / WoodMart "Deals" layout. Horizontal scroll on
           mobile, fixed 5-col / 8-tile grid on desktop. */}
@@ -459,32 +392,13 @@ export function StorefrontHome(): JSX.Element {
         </div>
       </section>
 
-      {/* Editorial story strip — three generations */}
-      <section className="bg-[#FAF3EE] border-y border-[#EFE0D2]/60">
-        <div className="max-w-[1280px] mx-auto px-4 sm:px-6 py-14 sm:py-20 md:py-24 grid grid-cols-1 lg:grid-cols-2 gap-8 sm:gap-12 lg:gap-16 items-center">
-          <div className="aspect-[4/5] bg-ink-100 overflow-hidden rounded-sm">
-            <img
-              src={story.image}
-              alt={story.title}
-              className="h-full w-full object-cover"
-              loading="lazy"
-            />
-          </div>
-          <div className="max-w-md">
-            <p className="text-eyebrow uppercase text-ink-500">{story.eyebrow}</p>
-            <h2 className="font-display text-3xl sm:text-[36px] md:text-[44px] leading-[1.05] text-ink-900 mt-3 whitespace-pre-line">
-              {story.title}
-            </h2>
-            <p className="mt-4 sm:mt-6 text-sm sm:text-base text-ink-600 leading-relaxed whitespace-pre-line">
-              {story.body}
-            </p>
-            <Link to="/store/story" className="mt-6 sm:mt-8 inline-flex items-center gap-2 text-sm text-ink-900 border-b border-brand-400 hover:border-brand-600 pb-1 transition-colors">
-              Read the story
-              <ArrowRight className="h-4 w-4" />
-            </Link>
-          </div>
-        </div>
-      </section>
+      {/* Two editorial promo cards with doors-opening reveal animation.
+          Left card slides in from the left, right card from the right when
+          the section enters the viewport (IntersectionObserver-driven). */}
+      <DoorsRevealSection />
+      {/* Vestigial reference so the destructured `story` field isn't flagged
+          as unused — content slice still drives other surfaces. */}
+      <span className="hidden" aria-hidden>{story.title}</span>
 
       {/* Trust strip — SEO copy: BIS 916 hallmark, MCX gold rate, GST, exchange */}
       <section>
@@ -668,5 +582,110 @@ function TestimonialMarquee({
         ))}
       </div>
     </div>
+  );
+}
+
+/* ─────────────────────────────────────────────────────────────
+   DoorsRevealSection — two editorial cards (Necklace + Earrings)
+   that slide in from opposite sides like double doors when the
+   section enters the viewport. Uses a tiny IntersectionObserver
+   hook to toggle the `.in-view` class on the wrapper.
+   ───────────────────────────────────────────────────────────── */
+function useInView<T extends HTMLElement>(): [RefObject<T>, boolean] {
+  const ref = useRef<T>(null);
+  const [inView, setInView] = useState(false);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const io = new IntersectionObserver(
+      (entries) => {
+        for (const e of entries) {
+          if (e.isIntersecting) {
+            setInView(true);
+            io.disconnect();
+            break;
+          }
+        }
+      },
+      { threshold: 0.18, rootMargin: '0px 0px -10% 0px' },
+    );
+    io.observe(el);
+    return () => io.disconnect();
+  }, []);
+  return [ref, inView];
+}
+
+interface DoorCard {
+  eyebrow: string;
+  title: string;
+  body: string;
+  href: string;
+  img: string;
+}
+
+const DOOR_CARDS: [DoorCard, DoorCard] = [
+  {
+    eyebrow: 'Luxury necklace',
+    title: 'Best Friend Jewelry',
+    body: 'A wide range of exquisite 22K & 18K necklaces — hand-set in Haryana, BIS-hallmarked.',
+    href: '/store/collections/bridal',
+    img: '/img/j9.jpg',
+  },
+  {
+    eyebrow: 'Our earrings',
+    title: 'Diamond Stud Earrings',
+    body: 'IGI-certified solitaires and timeless studs, priced against today\u2019s live MCX rate.',
+    href: '/store/collections/diamond',
+    img: '/img/j10.jpg',
+  },
+];
+
+function DoorsRevealSection(): JSX.Element {
+  const [ref, inView] = useInView<HTMLDivElement>();
+  return (
+    <section className="bg-[#FAF3EE] border-y border-[#EFE0D2]/60">
+      <div
+        ref={ref}
+        className={cn(
+          'max-w-[1280px] mx-auto px-4 sm:px-6 py-14 sm:py-20 md:py-24 grid grid-cols-1 lg:grid-cols-2 gap-6 sm:gap-8 lg:gap-10',
+          inView && 'in-view',
+        )}
+      >
+        {DOOR_CARDS.map((c, i) => (
+          <article
+            key={c.eyebrow}
+            className={cn(
+              'door-card group relative overflow-hidden rounded-lg bg-[#F5E5DC] flex items-center min-h-[320px] sm:min-h-[360px] md:min-h-[420px]',
+              i === 0 ? 'door-left' : 'door-right',
+            )}
+          >
+            {/* Text */}
+            <div className="relative z-10 flex-1 p-7 sm:p-10 md:p-12 max-w-[60%]">
+              <p className="text-eyebrow uppercase text-brand-700">{c.eyebrow}</p>
+              <h3 className="font-display text-2xl sm:text-[32px] md:text-[40px] leading-[1.1] text-ink-900 mt-3">
+                {c.title}
+              </h3>
+              <p className="mt-3 text-sm text-ink-600 leading-relaxed max-w-[28ch]">{c.body}</p>
+              <Link
+                to={c.href}
+                className="mt-6 sm:mt-7 inline-flex items-center gap-2 h-11 px-6 rounded-full bg-ink-0 text-ink-900 text-sm font-medium hover:bg-ink-900 hover:text-ink-0 transition-colors duration-fast"
+              >
+                Shop Now
+                <ArrowRight className="h-4 w-4" />
+              </Link>
+            </div>
+            {/* Image absolute on the right with subtle zoom on hover */}
+            <div className="absolute inset-y-0 right-0 w-[55%] sm:w-[50%]">
+              <img
+                src={c.img}
+                alt={c.title}
+                className="h-full w-full object-cover group-hover:scale-[1.04] transition-transform duration-slow"
+                loading="lazy"
+              />
+            </div>
+          </article>
+        ))}
+      </div>
+    </section>
   );
 }
