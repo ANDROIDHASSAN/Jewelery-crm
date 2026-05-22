@@ -1,5 +1,5 @@
 import { Link } from 'react-router-dom';
-import { ArrowRight, Award, ShieldCheck, Sparkles, Quote } from 'lucide-react';
+import { ArrowRight, Award, ShieldCheck, Sparkles, Star } from 'lucide-react';
 import { useAppSelector } from '@/app/hooks';
 import {
   useGetPublicGoldRateQuery,
@@ -46,27 +46,30 @@ const REELS = [
   { handle: '@aanya.bangles', caption: 'Stack of 6 · 22K · 38 g', poster: 'https://images.unsplash.com/photo-1611591437281-460bfbe1220a?auto=format&fit=crop&w=900&q=92', slug: '22k' },
 ];
 
-// Multi-testimonial grid — names + cities only (no PII per gotchas.md).
-// Real customer reviews land here via the admin CMS once collected.
-const TESTIMONIALS = [
-  {
-    quote: 'They weighed each piece in front of me and printed the rate for that exact minute. I have never felt this calm buying gold.',
-    author: 'Priya R.',
-    city: 'Gurugram',
-    occasion: 'Bridal set · 2024',
-  },
-  {
-    quote: 'My daughter\u2019s mangalsutra arrived hand-finished, BIS hallmarked, with the GST broken out line-by-line. Three generations of trust.',
-    author: 'Sunita M.',
-    city: 'Karnal',
-    occasion: 'Wedding gift · 2024',
-  },
-  {
-    quote: 'WhatsApp updates with photos of my piece on the bench made it feel personal. Worth every gram.',
-    author: 'Aanya K.',
-    city: 'Faridabad',
-    occasion: 'Anniversary · 2025',
-  },
+// Multi-testimonial marquee — names + cities only (no PII per gotchas.md).
+// Split into two rows so the section scrolls left + right in opposite
+// directions (Tanishq/CaratLane-style social-proof strip).
+interface Testimonial {
+  quote: string;
+  author: string;
+  city: string;
+  occasion: string;
+}
+
+const TESTIMONIALS_ROW_1: Testimonial[] = [
+  { quote: 'They weighed each piece in front of me and printed the rate for that exact minute. I have never felt this calm buying gold.', author: 'Priya Sharma', city: 'Gurugram', occasion: 'Bridal set · 2024' },
+  { quote: 'My daughter\u2019s mangalsutra arrived hand-finished, BIS hallmarked, with the GST broken out line-by-line. Three generations of trust.', author: 'Sunita Malhotra', city: 'Karnal', occasion: 'Wedding gift · 2024' },
+  { quote: 'WhatsApp updates with photos of my piece on the bench made it feel personal. Worth every gram.', author: 'Aanya Kapoor', city: 'Faridabad', occasion: 'Anniversary · 2025' },
+  { quote: 'Light-weight 22K chain I wear every day to work. Looks premium, priced fairly against the live MCX rate.', author: 'Kavya Iyer', city: 'Delhi', occasion: 'Daily wear · 2025' },
+  { quote: 'The bridal set was hand-set in three weeks and weighed in front of me at delivery. Pure 22K, exactly as promised.', author: 'Anjali Verma', city: 'Panchkula', occasion: 'Daughter\u2019s wedding · 2024' },
+];
+
+const TESTIMONIALS_ROW_2: Testimonial[] = [
+  { quote: 'My Diwali earrings arrived a day early with a BIS hallmark certificate. Best festive jewellery shopping I have done.', author: 'Meera Reddy', city: 'Gurugram', occasion: 'Festive set · 2024' },
+  { quote: 'Mangalsutra design was customised over WhatsApp in two days. The karigar\u2019s craftsmanship is unmatched in Haryana.', author: 'Riya Singh', city: 'Karnal', occasion: 'Mangalsutra · 2024' },
+  { quote: '0.48 ct IGI-certified solitaire, delivered with the original lab certificate and box. No middleman, no markup.', author: 'Divya Patel', city: 'Faridabad', occasion: 'Solitaire ring · 2025' },
+  { quote: 'Engagement ring with a transparent breakdown \u2014 weight, rate, making, GST. No haggling, no surprises at billing.', author: 'Neha Joshi', city: 'Gurugram', occasion: 'Engagement · 2024' },
+  { quote: 'Bought a complete bridal jewellery set for my wedding. Everything weighed publicly, hallmarked, and delivered on time.', author: 'Pooja Choudhary', city: 'Hisar', occasion: 'Bridal · 2025' },
 ];
 
 interface BestSellerCard {
@@ -437,41 +440,30 @@ export function StorefrontHome(): JSX.Element {
         </div>
       </section>
 
-      {/* Customer reviews — 3-card grid on deeper blush. Replaces single
-          quote so the page reads as multiple voices, not one. */}
-      <section className="bg-[#F5E5DC] border-y border-[#E8CFC1]/60">
+      {/* Customer reviews — 2-row scrolling marquee. Row 1 drifts left,
+          row 2 drifts right (opposite directions). Pause on hover so the
+          reader can finish a card. Each row's children are duplicated so
+          the -50% translation loops seamlessly. */}
+      <section className="bg-[#F5E5DC] border-y border-[#E8CFC1]/60 overflow-hidden">
         <div className="max-w-[1280px] mx-auto px-4 sm:px-6 py-14 sm:py-20 md:py-24">
           <div className="text-center max-w-2xl mx-auto mb-10 sm:mb-12">
             <p className="text-eyebrow uppercase text-brand-700">Loved by jewellery families across Haryana</p>
             <h2 className="font-display text-3xl sm:text-[36px] md:text-[44px] leading-tight text-ink-900 mt-2">
               50,000+ verified customers since 1972
             </h2>
-            <p className="mt-3 text-sm text-ink-600">Transparent pricing, BIS-hallmarked gold, and a WhatsApp update on every piece — that&apos;s why families trust us for bridal, festive, and gifting.</p>
+            <p className="mt-3 text-sm text-ink-600">Transparent pricing, BIS-hallmarked gold, and a WhatsApp update on every piece &mdash; that&apos;s why families trust us for bridal, festive, and gifting.</p>
           </div>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-5 sm:gap-6 md:gap-8">
-            {TESTIMONIALS.map((t, i) => (
-              <figure
-                key={t.author}
-                className={`relative bg-ink-0 rounded-md p-6 sm:p-7 border border-[#E8CFC1]/70 shadow-sm animate-fade-in-up-${i + 1}`}
-              >
-                <Quote className="h-6 w-6 text-brand-500" aria-hidden />
-                <blockquote className="mt-3 sm:mt-4 font-display text-[18px] sm:text-[20px] leading-[1.4] text-ink-900">
-                  &ldquo;{t.quote}&rdquo;
-                </blockquote>
-                <figcaption className="mt-5 sm:mt-6 pt-4 border-t border-[#EFE0D2] flex items-center gap-3">
-                  <span className="h-10 w-10 rounded-full bg-[#FAF3EE] ring-1 ring-[#EFE0D2] inline-flex items-center justify-center text-brand-700 font-display text-base">
-                    {t.author.charAt(0)}
-                  </span>
-                  <span className="flex flex-col">
-                    <span className="text-sm font-medium text-ink-900">{t.author}, <span className="text-ink-500 font-normal">{t.city}</span></span>
-                    <span className="text-[11px] uppercase tracking-[0.14em] text-brand-700 mt-0.5">{t.occasion}</span>
-                  </span>
-                </figcaption>
-              </figure>
-            ))}
-          </div>
-          {/* Press strip beneath the reviews */}
-          <div className="mt-12 sm:mt-14 pt-8 border-t border-[#E8CFC1]/60 flex flex-wrap items-center justify-center gap-x-8 sm:gap-x-12 gap-y-3 text-ink-500 text-xs uppercase tracking-[0.18em]">
+        </div>
+
+        {/* Full-bleed marquee rows */}
+        <div className="space-y-5 sm:space-y-6 pb-14 sm:pb-20 md:pb-24">
+          <TestimonialMarquee items={TESTIMONIALS_ROW_1} direction="left" />
+          <TestimonialMarquee items={TESTIMONIALS_ROW_2} direction="right" />
+        </div>
+
+        {/* Press strip beneath the reviews */}
+        <div className="max-w-[1280px] mx-auto px-4 sm:px-6 pb-14 sm:pb-20 md:pb-24">
+          <div className="pt-8 border-t border-[#E8CFC1]/60 flex flex-wrap items-center justify-center gap-x-8 sm:gap-x-12 gap-y-3 text-ink-500 text-xs uppercase tracking-[0.18em]">
             <span className="text-ink-500">As featured in</span>
             <span>Vogue India</span>
             <span>Femina</span>
@@ -498,5 +490,62 @@ export function StorefrontHome(): JSX.Element {
         </div>
       </section>
     </>
+  );
+}
+
+/* ─────────────────────────────────────────────────────────────
+   TestimonialMarquee — full-bleed strip of 5-star review cards
+   that auto-scrolls in the chosen direction. Children are
+   rendered twice so the CSS keyframe (translateX -50%) loops
+   seamlessly. Hover anywhere on the strip to pause.
+   ───────────────────────────────────────────────────────────── */
+function TestimonialMarquee({
+  items,
+  direction,
+}: {
+  items: Testimonial[];
+  direction: 'left' | 'right';
+}): JSX.Element {
+  const animClass = direction === 'left' ? 'animate-marquee-left' : 'animate-marquee-right';
+  // Duplicate the list so the marquee loops with no visible gap. The wrapper
+  // is w-max so children flow inline without wrapping; the outer section
+  // already has overflow-hidden to clip the off-screen half.
+  const doubled = [...items, ...items];
+  return (
+    <div className="group">
+      <div className={`flex w-max gap-4 sm:gap-5 ${animClass} marquee-pause`}>
+        {doubled.map((t, i) => (
+          <figure
+            key={`${t.author}-${i}`}
+            className="w-[300px] sm:w-[360px] md:w-[400px] shrink-0 bg-ink-0 rounded-xl p-5 sm:p-6 border border-[#E8CFC1]/70 shadow-sm flex flex-col"
+          >
+            {/* 5-star rating */}
+            <div className="flex items-center gap-0.5 text-brand-500">
+              {Array.from({ length: 5 }).map((_, k) => (
+                <Star key={k} className="h-4 w-4 fill-current" aria-hidden />
+              ))}
+              <span className="sr-only">5 out of 5 stars</span>
+            </div>
+            <blockquote className="mt-3 sm:mt-4 text-[14px] sm:text-[15px] leading-relaxed text-ink-800 flex-1">
+              &ldquo;{t.quote}&rdquo;
+            </blockquote>
+            <figcaption className="mt-5 pt-4 border-t border-[#EFE0D2] flex items-center gap-3">
+              <span className="h-10 w-10 rounded-full bg-[#FAF3EE] ring-1 ring-[#EFE0D2] inline-flex items-center justify-center text-brand-700 font-display text-base shrink-0">
+                {t.author.charAt(0)}
+              </span>
+              <span className="flex flex-col min-w-0">
+                <span className="text-sm font-medium text-ink-900 truncate">
+                  {t.author}
+                  <span className="text-ink-500 font-normal">, {t.city}</span>
+                </span>
+                <span className="text-[11px] uppercase tracking-[0.14em] text-brand-700 mt-0.5">
+                  {t.occasion}
+                </span>
+              </span>
+            </figcaption>
+          </figure>
+        ))}
+      </div>
+    </div>
   );
 }

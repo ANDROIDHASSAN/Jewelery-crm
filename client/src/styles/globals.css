@@ -116,6 +116,21 @@
   animation: float-bob 4s ease-in-out infinite;
 }
 
+/* Marquee — auto-scrolling testimonial rows. Duplicate the children in JSX
+   so the strip is rendered twice; -50% translation makes the loop seamless.
+   Pause on hover so users can read a card that catches their eye. */
+@keyframes marquee-left {
+  0%   { transform: translateX(0); }
+  100% { transform: translateX(-50%); }
+}
+@keyframes marquee-right {
+  0%   { transform: translateX(-50%); }
+  100% { transform: translateX(0); }
+}
+.animate-marquee-left  { animation: marquee-left  55s linear infinite; }
+.animate-marquee-right { animation: marquee-right 55s linear infinite; }
+.marquee-pause:hover   { animation-play-state: paused; }
+
 /* Twinkle — for occasional sparkle accents on hero eyebrow */
 @keyframes twinkle {
   0%, 100% { opacity: 0.4; transform: scale(0.85); }
@@ -136,7 +151,9 @@
   .animate-fade-in-up-5,
   .animate-fade-in-up-6,
   .animate-float-bob,
-  .animate-twinkle {
+  .animate-twinkle,
+  .animate-marquee-left,
+  .animate-marquee-right {
     animation: none !important;
   }
   .gold-shine-target::after { display: none; }
