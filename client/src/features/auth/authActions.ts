@@ -33,12 +33,14 @@ export function signInWithFreshCache(payload: {
 }) {
   return (dispatch: AppDispatch, getState: () => RootState): void => {
     const previousUserId = getState().auth.user?.id ?? null;
-    const isDifferentUser = previousUserId !== null && previousUserId !== payload.user.id;
+    const isSameUser = previousUserId !== null && previousUserId === payload.user.id;
     dispatch(setSession(payload));
-    if (isDifferentUser) {
-      // Nuke every cached query. The next render's hooks will re-issue
-      // their underlying fetches with the new bearer token, so the user
-      // sees their own data — not the previous user's.
+    // Reset RTK Query cache UNLESS this is the exact same user re-authenticating
+    // (e.g. silent refresh). That protects against:
+    //   1. Role switch (admin logs out → accountant logs in)
+    //   2. signOut bypassed (logout via reducer not the thunk) leaving stale cache
+    //   3. Stale localStorage/session rehydrate
+    if (!isSameUser) {
       dispatch(baseApi.util.resetApiState());
     }
   };
