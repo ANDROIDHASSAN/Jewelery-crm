@@ -244,7 +244,48 @@ export function LoginPage(): JSX.Element {
             )}
           </form>
 
-          <footer className="pt-8 border-t border-ink-100 text-xs text-ink-500 space-y-2">
+          {/* Demo logins — visible on the showcase deployment so reviewers
+              can try each role without setup. Each row autofills the email +
+              password when clicked. */}
+          {/* SECURITY NOTE: this block exposes seeded credentials on the
+              login page. Acceptable for the current showcase deployment;
+              REMOVE this block (or re-gate on `import.meta.env.DEV`) before
+              shipping to a real tenant with real customer data. */}
+          <div className="pt-6 mt-6 border-t border-ink-100">
+            <p className="text-[11px] uppercase tracking-[0.16em] text-ink-500 mb-4">
+              Demo logins
+            </p>
+            <ul className="space-y-2.5 text-sm">
+              {[
+                { role: 'Super Admin',   email: 'owner@goldos.dev',      password: 'Owner@2026demo' },
+                { role: 'Accountant',    email: 'accountant@goldos.dev', password: 'Account@2026' },
+                { role: 'Employee',      email: 'employee@goldos.dev',   password: 'Staff@2026demo' },
+                { role: 'POS Cashier',   email: 'cashier@goldos.dev',    password: 'Cashier@2026' },
+              ].map((cred) => (
+                <li key={cred.email} className="flex items-center justify-between gap-3">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setEmail(cred.email);
+                      setPassword(cred.password);
+                    }}
+                    className="font-medium text-ink-900 hover:text-brand-700 transition-colors text-left shrink-0"
+                    title="Click to autofill"
+                  >
+                    {cred.role}
+                  </button>
+                  <span className="text-ink-500 font-mono text-xs truncate">
+                    {cred.email}
+                  </span>
+                </li>
+              ))}
+            </ul>
+            <p className="mt-3 text-[11px] text-ink-400">
+              Click a role to autofill the form. Each password is shown when you click.
+            </p>
+          </div>
+
+          <footer className="pt-8 border-t border-ink-100 text-xs text-ink-500 space-y-2 mt-6">
             <p>
               Looking for the store?{' '}
               <Link to="/" className="text-ink-800 underline decoration-ink-200 underline-offset-4 hover:decoration-ink-500">
