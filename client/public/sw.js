@@ -15,7 +15,10 @@
 // Versioning: bump CACHE_VERSION whenever the shell URL list changes; the
 // activate handler clears stale caches.
 
-const CACHE_VERSION = 'goldos-pos-v3';
+// v4: fixes "stale admin data shown to next user" and "old shell on first
+// visit" bugs. Authenticated /api responses are now bypassed entirely, and
+// HTML navigations are network-first.
+const CACHE_VERSION = 'goldos-pos-v4';
 
 // Vite emits hashed asset filenames, so we can't list them statically here —
 // we cache them lazily on first fetch. The few stable URLs we *can* precache
@@ -47,9 +50,16 @@ self.addEventListener('activate', (event) => {
   self.clients.claim();
 });
 
-// Network-first for /api (we want fresh data, fall back to a clear offline
-// JSON), cache-first for everything else (the bundle is hashed so safe to
-// serve from cache forever — busted by a new SW install).
+// Strategy:
+//  • Authenticated /api responses (Authorization header OR cookie) are
+//    NEVER cached — they're per-user and per-token. Caching them poisons
+//    role switches and tenant boundaries.
+//  • Public /api responses (no auth) are cached opportunistically so a
+//    backgrounded POS can fall back when offline.
+//  • HTML / navigation requests are network-first so a fresh deploy is
+//    visible on the next visit. Fallback to cached '/' when offline.
+//  • Hashed JS / CSS / image assets are cache-first (Vite hashes the
+//    filename, so cache invalidation comes from the new bundle name).
 self.addEventListener('fetch', (event) => {
   const req = event.request;
   if (req.method !== 'GET') return; // never cache mutations
@@ -57,14 +67,21 @@ self.addEventListener('fetch', (event) => {
   const url = new URL(req.url);
   if (url.origin !== self.location.origin) return;
 
+  // --- API requests ---
   if (url.pathname.startsWith('/api/')) {
+    const isAuthenticated =
+      req.headers.has('authorization') ||
+      req.credentials === 'include';
+    if (isAuthenticated) {
+      // Bypass SW completely for authenticated requests — let the browser
+      // hit the network directly. Avoids serving User A's cached data to
+      // User B after a role switch.
+      return;
+    }
+    // Public APIs (gold rate, storefront content) — network-first w/ cache fallback.
     event.respondWith(
       fetch(req)
         .then((res) => {
-          // Cache GET responses briefly so a quick POS navigation while
-          // offline still shows the last-seen catalog. We don't store
-          // tenant-sensitive data in here for long — the cache version
-          // resets on every deploy.
           if (res.ok) {
             const clone = res.clone();
             void caches.open(CACHE_VERSION).then((c) => c.put(req, clone));
@@ -85,6 +102,23 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
+  // --- HTML navigations: NETWORK-FIRST so deploys are immediately visible ---
+  if (req.mode === 'navigate' || req.destination === 'document') {
+    event.respondWith(
+      fetch(req)
+        .then((res) => {
+          if (res.ok) {
+            const clone = res.clone();
+            void caches.open(CACHE_VERSION).then((c) => c.put(req, clone));
+          }
+          return res;
+        })
+        .catch(() => caches.match(req).then((c) => c ?? caches.match('/') ?? Response.error())),
+    );
+    return;
+  }
+
+  // --- Hashed static assets: cache-first ---
   event.respondWith(
     caches.match(req).then((cached) => {
       if (cached) return cached;
@@ -99,6 +133,14 @@ self.addEventListener('fetch', (event) => {
         .catch(() => caches.match('/') ?? Response.error());
     }),
   );
+});
+
+// When a NEW SW takes control (after deploy), reload all open tabs once so
+// users on stale bundles see the fresh shell without having to hard-refresh.
+self.addEventListener('message', (event) => {
+  if (event.data?.type === 'SKIP_WAITING') {
+    self.skipWaiting();
+  }
 });
 
 // Background sync — fires when connectivity returns AFTER the tab is

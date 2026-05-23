@@ -26,6 +26,7 @@ import {
   setContent,
   setDefaultFilterKeys,
   setFiltersForCollection,
+  type StorefrontContent,
   updateBrand,
   updateCollection,
   updateFilterGroup,
@@ -50,7 +51,10 @@ type TabKey =
   | 'testimonial'
   | 'locations'
   | 'contact'
-  | 'filters';
+  | 'filters'
+  | 'homepage'
+  | 'labels'
+  | 'footer';
 
 const TABS: Array<{ key: TabKey; label: string }> = [
   { key: 'brand', label: 'Brand' },
@@ -62,6 +66,9 @@ const TABS: Array<{ key: TabKey; label: string }> = [
   { key: 'testimonial', label: 'Testimonial' },
   { key: 'locations', label: 'Stores' },
   { key: 'contact', label: 'Contact' },
+  { key: 'homepage', label: 'Homepage sections' },
+  { key: 'labels', label: 'Section labels' },
+  { key: 'footer', label: 'Footer' },
 ];
 
 export function WebsiteAdminPage(): JSX.Element {
@@ -689,6 +696,21 @@ export function WebsiteAdminPage(): JSX.Element {
               }}
             />
           )}
+
+          {tab === 'homepage' && (
+            <HomepageSectionsTab content={content} onPatch={(patch) => { dispatch(setContent({ ...content, ...patch })); notify(); }} />
+          )}
+          {tab === 'labels' && (
+            <Card title="Section labels & headlines" desc="Eyebrows, titles and sub-copy for every homepage section. Edit as JSON.">
+              <JsonSectionEditor
+                value={content.sectionLabels}
+                onSave={(next) => { dispatch(setContent({ ...content, sectionLabels: next })); notify(); }}
+              />
+            </Card>
+          )}
+          {tab === 'footer' && (
+            <FooterSectionsTab content={content} onPatch={(patch) => { dispatch(setContent({ ...content, ...patch })); notify(); }} />
+          )}
         </div>
 
         {/* Live preview panel */}
@@ -1068,3 +1090,160 @@ const Textarea = (props: React.TextareaHTMLAttributes<HTMLTextAreaElement>): JSX
     }
   />
 );
+
+/* ─────────────────────────────────────────────────────────────────────────
+ * Phase-1 CMS editors for the new homepage sections. JSON-textarea based —
+ * pragmatic; gives the client full control without 12 bespoke forms. A
+ * Phase-2 pass can replace each section with a proper repeater UI.
+ * ────────────────────────────────────────────────────────────────────── */
+
+function JsonSectionEditor<T>({
+  value,
+  onSave,
+  rows = 12,
+}: {
+  value: T;
+  onSave: (next: T) => void;
+  rows?: number;
+}): JSX.Element {
+  const [draft, setDraft] = useState(() => JSON.stringify(value, null, 2));
+  const [err, setErr] = useState<string | null>(null);
+  // Refresh the draft when the source value changes (e.g. after publish).
+  useEffect(() => {
+    setDraft(JSON.stringify(value, null, 2));
+    setErr(null);
+  }, [value]);
+  function save(): void {
+    try {
+      const parsed = JSON.parse(draft) as T;
+      setErr(null);
+      onSave(parsed);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : 'Invalid JSON');
+    }
+  }
+  return (
+    <div className="space-y-3">
+      <Textarea
+        rows={rows}
+        value={draft}
+        onChange={(e) => setDraft(e.target.value)}
+        className="font-mono text-xs"
+        spellCheck={false}
+      />
+      <div className="flex items-center justify-between gap-3">
+        <p className="text-xs text-ink-500">Edit the JSON above, then click <strong>Apply</strong>. The changes save to the database when you click <strong>Publish changes</strong> at the top.</p>
+        <button
+          type="button"
+          onClick={save}
+          className="h-8 px-4 rounded-md bg-ink-900 text-ink-0 text-sm hover:bg-ink-800 transition-colors shrink-0"
+        >
+          Apply
+        </button>
+      </div>
+      {err && <p className="text-xs text-danger-700">JSON error: {err}</p>}
+    </div>
+  );
+}
+
+function HomepageSectionsTab({
+  content,
+  onPatch,
+}: {
+  content: StorefrontContent;
+  onPatch: (patch: Partial<StorefrontContent>) => void;
+}): JSX.Element {
+  return (
+    <div className="space-y-6">
+      <Card title="Hero video" desc="MP4/WebM URL that plays in the right hero panel. Leave empty to show the static hero image only.">
+        <Field label="Video URL">
+          <Input
+            value={content.hero.videoSrc}
+            placeholder="/img/hero.mp4 or https://…"
+            onChange={(e) => onPatch({ hero: { ...content.hero, videoSrc: e.target.value } })}
+          />
+        </Field>
+      </Card>
+
+      <Card title="Shop by occasion (6-tile body-shot grid)" desc="Each tile: name, slug (existing collection), product count, image URL.">
+        <JsonSectionEditor value={content.shopByOccasion} onSave={(v) => onPatch({ shopByOccasion: v })} />
+      </Card>
+
+      <Card title="Browse by category (circular marquee)" desc="Each tile: label, slug, image URL. 6–12 tiles recommended.">
+        <JsonSectionEditor value={content.browseCategories} onSave={(v) => onPatch({ browseCategories: v })} />
+      </Card>
+
+      <Card title="Watch & wear reels" desc="Up to 12 vertical 9:16 reel tiles. Each: @handle, caption, poster image, collection slug.">
+        <JsonSectionEditor value={content.reels} onSave={(v) => onPatch({ reels: v })} />
+      </Card>
+
+      <Card title="Deals of the week" desc="Up to 8 product cards. Each: slug, name, category, price label, badge (NEW/SALE/OUT), image URL.">
+        <JsonSectionEditor value={content.deals} onSave={(v) => onPatch({ deals: v })} />
+      </Card>
+
+      <Card title="Customer reviews — row 1 (scrolls left)" desc="Each review: quote, author, city, occasion.">
+        <JsonSectionEditor value={content.testimonialsRow1} onSave={(v) => onPatch({ testimonialsRow1: v })} />
+      </Card>
+
+      <Card title="Customer reviews — row 2 (scrolls right)" desc="Each review: quote, author, city, occasion.">
+        <JsonSectionEditor value={content.testimonialsRow2} onSave={(v) => onPatch({ testimonialsRow2: v })} />
+      </Card>
+
+      <Card title="Press logos (under the reviews)" desc="Array of strings — magazine / newspaper names.">
+        <JsonSectionEditor value={content.pressLogos} onSave={(v) => onPatch({ pressLogos: v })} rows={6} />
+      </Card>
+
+      <Card title="Doors-opening promo cards (2)" desc="Each: eyebrow, title, body, link href, image URL.">
+        <JsonSectionEditor value={content.doorCards} onSave={(v) => onPatch({ doorCards: v })} />
+      </Card>
+
+      <Card title="Trust badges (3)" desc="Each badge: icon (one of: shield, sparkles, award), title, body.">
+        <JsonSectionEditor value={content.trustBadges} onSave={(v) => onPatch({ trustBadges: v })} rows={10} />
+      </Card>
+    </div>
+  );
+}
+
+function FooterSectionsTab({
+  content,
+  onPatch,
+}: {
+  content: StorefrontContent;
+  onPatch: (patch: Partial<StorefrontContent>) => void;
+}): JSX.Element {
+  return (
+    <div className="space-y-6">
+      <Card title="Footer email" desc="Contact email shown in the footer left column.">
+        <Field label="Email">
+          <Input
+            value={content.footerEmail}
+            placeholder="hello@yourjewellers.in"
+            onChange={(e) => onPatch({ footerEmail: e.target.value })}
+          />
+        </Field>
+      </Card>
+
+      <Card title="Copyright line" desc="Text shown after the © year and brand name. Use for hallmark numbers, GSTIN etc.">
+        <Field label="Copyright text">
+          <Input
+            value={content.copyrightLine}
+            placeholder="BIS Hallmark #IND-916 · GSTIN 27ABCDE1234F1Z5"
+            onChange={(e) => onPatch({ copyrightLine: e.target.value })}
+          />
+        </Field>
+      </Card>
+
+      <Card title="Footer — Shop column" desc="Each link: label and href.">
+        <JsonSectionEditor value={content.footerShop} onSave={(v) => onPatch({ footerShop: v })} rows={8} />
+      </Card>
+
+      <Card title="Footer — Visit column" desc="Each link: label and href.">
+        <JsonSectionEditor value={content.footerVisit} onSave={(v) => onPatch({ footerVisit: v })} rows={8} />
+      </Card>
+
+      <Card title="Footer — Help column" desc="Each link: label and href.">
+        <JsonSectionEditor value={content.footerHelp} onSave={(v) => onPatch({ footerHelp: v })} rows={8} />
+      </Card>
+    </div>
+  );
+}

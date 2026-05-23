@@ -45,6 +45,45 @@ export interface StorefrontFiltersConfig {
   defaultGroupKeys: string[];
 }
 
+// New CMS-editable sub-types (match shared/schemas.ts)
+export interface ShopByOccasionTile { name: string; slug: string; count: number; img: string; }
+export interface BrowseCategoryTile { label: string; slug: string; img: string; }
+export interface ReelTile { handle: string; caption: string; poster: string; slug: string; }
+export interface DealCard { slug: string; name: string; category: string; priceLabel: string; badge: 'NEW' | 'SALE' | 'OUT'; img: string; }
+export interface TestimonialCard { quote: string; author: string; city: string; occasion: string; }
+export interface DoorCard { eyebrow: string; title: string; body: string; href: string; img: string; }
+export interface TrustBadge { icon: 'shield' | 'sparkles' | 'award'; title: string; body: string; }
+export interface FooterLink { label: string; href: string; }
+
+export interface SectionLabels {
+  categoriesEyebrow?: string;
+  categoriesTitle?: string;
+  categoriesSub?: string;
+  occasionEyebrow?: string;
+  occasionTitle?: string;
+  occasionSub?: string;
+  reelsEyebrow?: string;
+  reelsTitle?: string;
+  reelsSub?: string;
+  reviewsEyebrow?: string;
+  reviewsTitle?: string;
+  reviewsSub?: string;
+  trustEyebrow?: string;
+  visitEyebrow?: string;
+  visitTitle?: string;
+  visitSub?: string;
+  visitCtaLabel?: string;
+  visitCtaHref?: string;
+  dealsEyebrow?: string;
+  dealsTitle?: string;
+  dealsSub?: string;
+  dealsCtaLabel?: string;
+  dealsCtaHref?: string;
+  newsletterEyebrow?: string;
+  newsletterTitle?: string;
+  newsletterSub?: string;
+}
+
 export interface StorefrontContent {
   brand: {
     name: string;
@@ -61,6 +100,8 @@ export interface StorefrontContent {
     secondaryCtaLabel: string;
     secondaryCtaHref: string;
     image: string;
+    /** Optional MP4/WebM URL that plays on the right hero panel. Empty string = static image only. */
+    videoSrc: string;
   };
   rates: {
     g22: string;
@@ -82,6 +123,23 @@ export interface StorefrontContent {
   locations: StoreLocation[];
   whatsappNumber: string;
   filters: StorefrontFiltersConfig;
+
+  // --- New CMS-editable sections ---
+  shopByOccasion: ShopByOccasionTile[];
+  browseCategories: BrowseCategoryTile[];
+  reels: ReelTile[];
+  deals: DealCard[];
+  testimonialsRow1: TestimonialCard[];
+  testimonialsRow2: TestimonialCard[];
+  doorCards: DoorCard[];
+  trustBadges: TrustBadge[];
+  pressLogos: string[];
+  footerShop: FooterLink[];
+  footerVisit: FooterLink[];
+  footerHelp: FooterLink[];
+  footerEmail: string;
+  copyrightLine: string;
+  sectionLabels: SectionLabels;
 }
 
 export const DEFAULT_CONTENT: StorefrontContent = {
@@ -101,6 +159,7 @@ export const DEFAULT_CONTENT: StorefrontContent = {
     secondaryCtaHref: '/store/locations',
     image:
       'https://images.unsplash.com/photo-1602173574767-37ac01994b2a?auto=format&fit=crop&w=2400&q=95',
+    videoSrc: '',
   },
   rates: {
     g22: '₹6,420/g',
@@ -188,6 +247,120 @@ export const DEFAULT_CONTENT: StorefrontContent = {
     },
     defaultGroupKeys: ['metal', 'weight', 'price'],
   },
+
+  // --- New CMS-editable sections (defaults match the hand-tuned design) ---
+  shopByOccasion: [
+    { name: 'Bracelets',  slug: '22k',        count: 16, img: '/categories/jewl1.jpg' },
+    { name: 'Earrings',   slug: 'daily-wear', count: 16, img: '/categories/jewl2.jpg' },
+    { name: 'Gold Set',   slug: 'bridal',     count: 4,  img: '/categories/jew3.jpg'  },
+    { name: 'Necklaces',  slug: 'festive',    count: 12, img: '/categories/jewl4.jpg' },
+    { name: 'Rings',      slug: 'diamond',    count: 13, img: '/categories/jewl6.jpg' },
+    { name: 'Silver Set', slug: 'silver',     count: 3,  img: '/categories/jewl7.jpg' },
+  ],
+  browseCategories: [
+    { label: 'Diamond rings',    slug: 'diamond',    img: 'https://images.unsplash.com/photo-1605100804763-247f67b3557e?auto=format&fit=crop&w=800&q=92' },
+    { label: 'Bridal necklaces', slug: 'bridal',     img: 'https://images.unsplash.com/photo-1599643477877-530eb83abc8e?auto=format&fit=crop&w=800&q=92' },
+    { label: 'Gold earrings',    slug: 'daily-wear', img: 'https://images.unsplash.com/photo-1535632787350-4e68ef0ac584?auto=format&fit=crop&w=800&q=92' },
+    { label: '22K bangles',      slug: '22k',        img: 'https://images.unsplash.com/photo-1611591437281-460bfbe1220a?auto=format&fit=crop&w=800&q=92' },
+    { label: 'Pendants',         slug: '18k',        img: 'https://images.unsplash.com/photo-1602173574767-37ac01994b2a?auto=format&fit=crop&w=800&q=92' },
+    { label: 'Mangalsutra',      slug: 'festive',    img: 'https://images.unsplash.com/photo-1603561591411-07134e71a2a9?auto=format&fit=crop&w=800&q=92' },
+    { label: 'Solitaires',       slug: 'diamond',    img: '/categories/jewl6.jpg' },
+    { label: '18K rings',        slug: '18k',        img: '/categories/jewl1.jpg' },
+    { label: 'Chains',           slug: 'daily-wear', img: '/categories/jewl4.jpg' },
+    { label: 'Festive sets',     slug: 'festive',    img: '/categories/jew3.jpg'  },
+    { label: 'Silver pieces',    slug: 'silver',     img: '/categories/jewl7.jpg' },
+    { label: 'Gifting',          slug: 'gifting',    img: '/categories/jewl2.jpg' },
+  ],
+  reels: [
+    { handle: '@priya.bridal',    caption: 'Day-of-wedding bridal set · 22K',  poster: 'https://images.unsplash.com/photo-1602173574767-37ac01994b2a?auto=format&fit=crop&w=900&q=92', slug: 'bridal' },
+    { handle: '@diya.daily',      caption: 'Light-weight 22K chain · 8.2 g',    poster: 'https://images.unsplash.com/photo-1599643477877-530eb83abc8e?auto=format&fit=crop&w=900&q=92', slug: 'daily-wear' },
+    { handle: '@aisha.studio',    caption: 'Festive jhumka stack',              poster: 'https://images.unsplash.com/photo-1535632787350-4e68ef0ac584?auto=format&fit=crop&w=900&q=92', slug: 'festive' },
+    { handle: '@meera.solitaire', caption: 'IGI-certified solitaire · 0.48 ct', poster: 'https://images.unsplash.com/photo-1603561591411-07134e71a2a9?auto=format&fit=crop&w=900&q=92', slug: 'diamond' },
+    { handle: '@aanya.bangles',   caption: 'Stack of 6 · 22K · 38 g',           poster: 'https://images.unsplash.com/photo-1611591437281-460bfbe1220a?auto=format&fit=crop&w=900&q=92', slug: '22k' },
+  ],
+  deals: [
+    { slug: 'aurelia-pendant',   name: 'Aurelia Diamond Pendant', category: 'NECKLACES', priceLabel: '₹29,000', badge: 'NEW',  img: '/img/j1.jpg' },
+    { slug: 'mira-bangle-set',   name: 'Mira 22K Bangle Stack',   category: 'BANGLES',   priceLabel: '₹84,500', badge: 'NEW',  img: '/img/j2.jpg' },
+    { slug: 'tara-mangalsutra',  name: 'Tara Mangalsutra',        category: 'NECKLACES', priceLabel: '₹62,200', badge: 'NEW',  img: '/img/j3.jpg' },
+    { slug: 'aarya-pearl-drop',  name: 'Aarya Pearl Drops',       category: 'EARRINGS',  priceLabel: '₹19,400', badge: 'OUT',  img: '/img/j4.jpg' },
+    { slug: 'forever-solitaire', name: 'Forever Solitaire Ring',  category: 'RINGS',     priceLabel: '₹48,900', badge: 'NEW',  img: '/img/j5.jpg' },
+    { slug: 'meera-jhumka',      name: 'Meera Festive Jhumkas',   category: 'EARRINGS',  priceLabel: '₹31,400', badge: 'SALE', img: '/img/j6.jpg' },
+    { slug: 'kavya-chain',       name: 'Kavya Light Chain',       category: 'NECKLACES', priceLabel: '₹18,900', badge: 'NEW',  img: '/img/j7.jpg' },
+    { slug: 'parker-signet',     name: 'Parker Signet Ring',      category: 'RINGS',     priceLabel: '₹11,900', badge: 'NEW',  img: '/img/j8.jpg' },
+  ],
+  testimonialsRow1: [
+    { quote: 'They weighed each piece in front of me and printed the rate for that exact minute. I have never felt this calm buying gold.', author: 'Priya Sharma',    city: 'Gurugram',   occasion: 'Bridal set · 2024' },
+    { quote: 'My daughter\u2019s mangalsutra arrived hand-finished, BIS hallmarked, with the GST broken out line-by-line. Three generations of trust.', author: 'Sunita Malhotra', city: 'Karnal',     occasion: 'Wedding gift · 2024' },
+    { quote: 'WhatsApp updates with photos of my piece on the bench made it feel personal. Worth every gram.',                              author: 'Aanya Kapoor',    city: 'Faridabad',  occasion: 'Anniversary · 2025' },
+    { quote: 'Light-weight 22K chain I wear every day to work. Looks premium, priced fairly against the live MCX rate.',                    author: 'Kavya Iyer',      city: 'Delhi',      occasion: 'Daily wear · 2025' },
+    { quote: 'The bridal set was hand-set in three weeks and weighed in front of me at delivery. Pure 22K, exactly as promised.',           author: 'Anjali Verma',    city: 'Panchkula',  occasion: 'Daughter\u2019s wedding · 2024' },
+  ],
+  testimonialsRow2: [
+    { quote: 'My Diwali earrings arrived a day early with a BIS hallmark certificate. Best festive jewellery shopping I have done.',        author: 'Meera Reddy',     city: 'Gurugram',   occasion: 'Festive set · 2024' },
+    { quote: 'Mangalsutra design was customised over WhatsApp in two days. The karigar\u2019s craftsmanship is unmatched in Haryana.',      author: 'Riya Singh',      city: 'Karnal',     occasion: 'Mangalsutra · 2024' },
+    { quote: '0.48 ct IGI-certified solitaire, delivered with the original lab certificate and box. No middleman, no markup.',              author: 'Divya Patel',     city: 'Faridabad',  occasion: 'Solitaire ring · 2025' },
+    { quote: 'Engagement ring with a transparent breakdown \u2014 weight, rate, making, GST. No haggling, no surprises at billing.',        author: 'Neha Joshi',      city: 'Gurugram',   occasion: 'Engagement · 2024' },
+    { quote: 'Bought a complete bridal jewellery set for my wedding. Everything weighed publicly, hallmarked, and delivered on time.',      author: 'Pooja Choudhary', city: 'Hisar',      occasion: 'Bridal · 2025' },
+  ],
+  doorCards: [
+    { eyebrow: 'Luxury necklace', title: 'Best Friend Jewelry',     body: 'A wide range of exquisite 22K & 18K necklaces — hand-set in Haryana, BIS-hallmarked.',     href: '/store/collections/bridal',  img: '/img/j9.jpg'  },
+    { eyebrow: 'Our earrings',    title: 'Diamond Stud Earrings',   body: 'IGI-certified solitaires and timeless studs, priced against today\u2019s live MCX rate.', href: '/store/collections/diamond', img: '/img/j10.jpg' },
+  ],
+  trustBadges: [
+    { icon: 'shield',   title: 'BIS 916 hallmarked gold',         body: 'Every gram of our 22K and 18K jewellery is BIS-hallmarked and audited monthly by an independent assay lab.' },
+    { icon: 'sparkles', title: 'Live MCX rate · transparent GST', body: 'Weight \u00d7 today\u2019s MCX gold rate + making charges + 3% GST, itemised on every bill. No hidden margins.' },
+    { icon: 'award',    title: 'Lifetime exchange on pure gold',  body: 'Trade in any piece against pure-gold value at the current rate \u2014 no time limit, no deduction beyond stones.' },
+  ],
+  pressLogos: ['Vogue India', 'Femina', 'The Hindu', 'Times of India'],
+  footerShop: [
+    { label: 'Bridal',     href: '/store/collections/bridal' },
+    { label: 'Daily wear', href: '/store/collections/daily-wear' },
+    { label: 'Festive',    href: '/store/collections/festive' },
+    { label: 'Diamond',    href: '/store/collections/diamond' },
+    { label: 'Silver',     href: '/store/collections/silver' },
+  ],
+  footerVisit: [
+    { label: 'Stores',          href: '/store/locations' },
+    { label: 'Our story',       href: '/store/story' },
+    { label: 'Workshop tours',  href: '/store/workshop' },
+    { label: 'Contact',         href: '/store/contact' },
+  ],
+  footerHelp: [
+    { label: 'Track order',          href: '/store/track' },
+    { label: 'Shipping & returns',   href: '/store/help' },
+    { label: 'Care guide',           href: '/store/care' },
+    { label: 'Hallmark guide',       href: '/store/hallmark' },
+  ],
+  footerEmail: 'hello@anantjewellers.in',
+  copyrightLine: 'BIS Hallmark #IND-916 · GSTIN 27ABCDE1234F1Z5',
+  sectionLabels: {
+    categoriesEyebrow: 'Browse by category',
+    categoriesTitle: 'Rings, necklaces, earrings & more',
+    categoriesSub: 'From diamond solitaires to 22K bridal necklaces — shop every category in one hallmarked workshop.',
+    occasionEyebrow: 'Shop by occasion',
+    occasionTitle: 'Indian bridal & festive jewellery, by collection',
+    occasionSub: 'Hand-crafted 22K and 18K pieces — bridal, daily-wear, festive, diamond and silver — from our family workshop in Haryana.',
+    reelsEyebrow: 'Watch & wear',
+    reelsTitle: 'Styling reels from our customers',
+    reelsSub: 'Real brides, real jhumka stacks, real solitaires. Tap any reel to shop the look.',
+    reviewsEyebrow: 'Loved by jewellery families across Haryana',
+    reviewsTitle: '50,000+ verified customers since 1972',
+    reviewsSub: 'Transparent pricing, BIS-hallmarked gold, and a WhatsApp update on every piece — that\u2019s why families trust us for bridal, festive, and gifting.',
+    trustEyebrow: '',
+    visitEyebrow: 'Visit our jewellery showrooms',
+    visitTitle: 'Two BIS-certified showrooms in Gurugram & Karnal. Walk in, weigh, decide.',
+    visitSub: 'In-person rate matching, free try-on, lifetime exchange — and a chai on the house while you decide.',
+    visitCtaLabel: 'Find a store',
+    visitCtaHref: '/store/locations',
+    dealsEyebrow: 'Deals of the week',
+    dealsTitle: 'Hand-set, hallmarked, half-price.',
+    dealsSub: 'Eight curated pieces this week — bridal, daily-wear and diamond — priced at today\u2019s live gold rate.',
+    dealsCtaLabel: 'Shop deals',
+    dealsCtaHref: '/store/collections',
+    newsletterEyebrow: 'Stay in the loop',
+    newsletterTitle: 'New collections, in your inbox.',
+    newsletterSub: 'Quiet, once a month. Unsubscribe anytime.',
+  },
 };
 
 // Initialise state.filters on demand if a legacy payload hydrated without
@@ -212,9 +385,27 @@ const slice = createSlice({
       >,
     ) {
       const incoming = action.payload;
+      // Defensively fill in any new fields the API doesn't yet send so we
+      // never render `undefined.map(...)` after the CMS schema expanded.
       return {
+        ...DEFAULT_CONTENT,
         ...incoming,
         filters: incoming.filters ?? DEFAULT_CONTENT.filters,
+        shopByOccasion: incoming.shopByOccasion?.length ? incoming.shopByOccasion : DEFAULT_CONTENT.shopByOccasion,
+        browseCategories: incoming.browseCategories?.length ? incoming.browseCategories : DEFAULT_CONTENT.browseCategories,
+        reels: incoming.reels?.length ? incoming.reels : DEFAULT_CONTENT.reels,
+        deals: incoming.deals?.length ? incoming.deals : DEFAULT_CONTENT.deals,
+        testimonialsRow1: incoming.testimonialsRow1?.length ? incoming.testimonialsRow1 : DEFAULT_CONTENT.testimonialsRow1,
+        testimonialsRow2: incoming.testimonialsRow2?.length ? incoming.testimonialsRow2 : DEFAULT_CONTENT.testimonialsRow2,
+        doorCards: incoming.doorCards?.length ? incoming.doorCards : DEFAULT_CONTENT.doorCards,
+        trustBadges: incoming.trustBadges?.length ? incoming.trustBadges : DEFAULT_CONTENT.trustBadges,
+        pressLogos: incoming.pressLogos?.length ? incoming.pressLogos : DEFAULT_CONTENT.pressLogos,
+        footerShop: incoming.footerShop?.length ? incoming.footerShop : DEFAULT_CONTENT.footerShop,
+        footerVisit: incoming.footerVisit?.length ? incoming.footerVisit : DEFAULT_CONTENT.footerVisit,
+        footerHelp: incoming.footerHelp?.length ? incoming.footerHelp : DEFAULT_CONTENT.footerHelp,
+        footerEmail: incoming.footerEmail || DEFAULT_CONTENT.footerEmail,
+        copyrightLine: incoming.copyrightLine || DEFAULT_CONTENT.copyrightLine,
+        sectionLabels: { ...DEFAULT_CONTENT.sectionLabels, ...(incoming.sectionLabels ?? {}) },
       };
     },
     updateBrand(state, action: PayloadAction<Partial<StorefrontContent['brand']>>) {

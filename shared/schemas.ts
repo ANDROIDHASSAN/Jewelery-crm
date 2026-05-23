@@ -529,6 +529,93 @@ export const CollectionTileSchema = z.object({
   img: z.string().min(1).max(2048),
 });
 
+// New homepage section sub-schemas (CMS-editable). All optional with sensible
+// defaults so existing DB rows continue to validate after this expansion.
+
+export const ShopByOccasionTileSchema = z.object({
+  name: z.string().min(1).max(60),
+  slug: z.string().min(1).max(80),
+  count: z.number().int().nonnegative().max(99999),
+  img: z.string().min(1).max(2048),
+});
+
+export const BrowseCategoryTileSchema = z.object({
+  label: z.string().min(1).max(60),
+  slug: z.string().min(1).max(80),
+  img: z.string().min(1).max(2048),
+});
+
+export const ReelTileSchema = z.object({
+  handle: z.string().min(1).max(60),
+  caption: z.string().min(1).max(160),
+  poster: z.string().min(1).max(2048),
+  slug: z.string().min(1).max(80),
+});
+
+export const DealCardSchema = z.object({
+  slug: z.string().min(1).max(80),
+  name: z.string().min(1).max(120),
+  category: z.string().min(1).max(60),
+  priceLabel: z.string().min(1).max(40),
+  badge: z.enum(['NEW', 'SALE', 'OUT']),
+  img: z.string().min(1).max(2048),
+});
+
+export const TestimonialCardSchema = z.object({
+  quote: z.string().min(1).max(800),
+  author: z.string().min(1).max(120),
+  city: z.string().min(1).max(80),
+  occasion: z.string().min(1).max(120),
+});
+
+export const DoorCardSchema = z.object({
+  eyebrow: z.string().min(1).max(80),
+  title: z.string().min(1).max(160),
+  body: z.string().min(1).max(400),
+  href: z.string().min(1).max(2048),
+  img: z.string().min(1).max(2048),
+});
+
+export const TrustBadgeSchema = z.object({
+  icon: z.enum(['shield', 'sparkles', 'award']),
+  title: z.string().min(1).max(80),
+  body: z.string().min(1).max(400),
+});
+
+export const FooterLinkSchema = z.object({
+  label: z.string().min(1).max(60),
+  href: z.string().min(1).max(2048),
+});
+
+export const SectionLabelsSchema = z.object({
+  categoriesEyebrow: z.string().max(80),
+  categoriesTitle: z.string().max(240),
+  categoriesSub: z.string().max(400),
+  occasionEyebrow: z.string().max(80),
+  occasionTitle: z.string().max(240),
+  occasionSub: z.string().max(400),
+  reelsEyebrow: z.string().max(80),
+  reelsTitle: z.string().max(240),
+  reelsSub: z.string().max(400),
+  reviewsEyebrow: z.string().max(80),
+  reviewsTitle: z.string().max(240),
+  reviewsSub: z.string().max(400),
+  trustEyebrow: z.string().max(80),
+  visitEyebrow: z.string().max(80),
+  visitTitle: z.string().max(240),
+  visitSub: z.string().max(400),
+  visitCtaLabel: z.string().max(60),
+  visitCtaHref: z.string().max(2048),
+  dealsEyebrow: z.string().max(80),
+  dealsTitle: z.string().max(240),
+  dealsSub: z.string().max(400),
+  dealsCtaLabel: z.string().max(60),
+  dealsCtaHref: z.string().max(2048),
+  newsletterEyebrow: z.string().max(80),
+  newsletterTitle: z.string().max(240),
+  newsletterSub: z.string().max(400),
+});
+
 export const StorefrontContentSchema = z.object({
   brand: z.object({
     name: z.string().min(1).max(120),
@@ -544,6 +631,9 @@ export const StorefrontContentSchema = z.object({
     secondaryCtaLabel: z.string().max(60),
     secondaryCtaHref: z.string().max(2048),
     image: z.string().max(2048),
+    // New: optional video that plays on the right hero panel (falls back
+    // to `image` as the poster + when not provided).
+    videoSrc: z.string().max(2048).optional().default(''),
   }),
   rates: z.object({
     g22: z.string().max(40),
@@ -564,6 +654,23 @@ export const StorefrontContentSchema = z.object({
   }),
   locations: z.array(StoreLocationSchema).max(20),
   whatsappNumber: z.string().regex(/^\d{0,15}$/, 'Digits only, up to 15'),
+
+  // --- New CMS-editable sections (all optional with defaults) ---
+  shopByOccasion: z.array(ShopByOccasionTileSchema).max(12).optional().default([]),
+  browseCategories: z.array(BrowseCategoryTileSchema).max(24).optional().default([]),
+  reels: z.array(ReelTileSchema).max(12).optional().default([]),
+  deals: z.array(DealCardSchema).max(16).optional().default([]),
+  testimonialsRow1: z.array(TestimonialCardSchema).max(12).optional().default([]),
+  testimonialsRow2: z.array(TestimonialCardSchema).max(12).optional().default([]),
+  doorCards: z.array(DoorCardSchema).max(2).optional().default([]),
+  trustBadges: z.array(TrustBadgeSchema).max(6).optional().default([]),
+  pressLogos: z.array(z.string().min(1).max(80)).max(10).optional().default([]),
+  footerShop: z.array(FooterLinkSchema).max(10).optional().default([]),
+  footerVisit: z.array(FooterLinkSchema).max(10).optional().default([]),
+  footerHelp: z.array(FooterLinkSchema).max(10).optional().default([]),
+  footerEmail: z.string().max(160).optional().default(''),
+  copyrightLine: z.string().max(400).optional().default(''),
+  sectionLabels: SectionLabelsSchema.partial().optional().default({}),
 });
 
 export type StorefrontContent = z.infer<typeof StorefrontContentSchema>;

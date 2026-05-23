@@ -27,6 +27,29 @@ if ('serviceWorker' in navigator && import.meta.env.PROD) {
   window.addEventListener('load', () => {
     navigator.serviceWorker
       .register('/sw.js', { scope: '/' })
+      .then((reg) => {
+        // When a new SW version is found and finishes installing in the
+        // background, tell it to skip waiting and immediately take over.
+        // This eliminates the "user sees old version on first visit"
+        // bug — the next navigation gets the fresh shell.
+        reg.addEventListener('updatefound', () => {
+          const installing = reg.installing;
+          if (!installing) return;
+          installing.addEventListener('statechange', () => {
+            if (installing.state === 'installed' && navigator.serviceWorker.controller) {
+              installing.postMessage({ type: 'SKIP_WAITING' });
+            }
+          });
+        });
+        // Reload the page once a fresh SW takes control so the user gets
+        // the latest bundle without a manual hard-refresh.
+        let didReload = false;
+        navigator.serviceWorker.addEventListener('controllerchange', () => {
+          if (didReload) return;
+          didReload = true;
+          window.location.reload();
+        });
+      })
       .catch(() => {
         // SW failure is non-fatal — the app works without offline support.
       });

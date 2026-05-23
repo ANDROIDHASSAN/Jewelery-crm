@@ -5,6 +5,7 @@ import { ArrowRight, Award, ShieldCheck, Sparkles, Star } from 'lucide-react';
 import { cn } from '@/lib/cn';
 import { useAppSelector } from '@/app/hooks';
 import { useGetPublicGoldRateQuery } from '@/features/storefront/storefrontApi';
+import type { DoorCard, TestimonialCard, TrustBadge } from '@/features/storefront/storefrontContentSlice';
 
 function formatLiveRate(paise: number | undefined, fallback: string): string {
   if (!paise || paise <= 0) return fallback;
@@ -14,6 +15,8 @@ function formatLiveRate(paise: number | undefined, fallback: string): string {
     : `₹${rupees.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}/g`;
 }
 
+// Fixed "Shop by" pill row — these slugs are part of the router's collection
+// taxonomy, so they belong in code rather than the CMS.
 const SHOP_BY = [
   { label: '22K Gold', to: '/store/collections/22k' },
   { label: '18K Gold', to: '/store/collections/18k' },
@@ -23,101 +26,33 @@ const SHOP_BY = [
   { label: 'Gifting', to: '/store/collections/gifting' },
 ];
 
-// Shop-by-occasion 6-tile body-shot grid (reference: Antisa / CaratLane
-// category strip). Tall portrait tiles with a dark gradient overlay
-// showing category name + product count. Counts are placeholders until
-// wired to the live products query.
-const SHOP_BY_OCCASION = [
-  { name: 'Bracelets',  slug: '22k',        count: 16, img: '/categories/jewl1.jpg' },
-  { name: 'Earrings',   slug: 'daily-wear', count: 16, img: '/categories/jewl2.jpg' },
-  { name: 'Gold Set',   slug: 'bridal',     count: 4,  img: '/categories/jew3.jpg'  },
-  { name: 'Necklaces',  slug: 'festive',    count: 12, img: '/categories/jewl4.jpg' },
-  { name: 'Rings',      slug: 'diamond',    count: 13, img: '/categories/jewl6.jpg' },
-  { name: 'Silver Set', slug: 'silver',     count: 3,  img: '/categories/jewl7.jpg' },
-];
-
-// Tanishq-signature: circular portrait tiles for browse-by-category.
-// Each links to an existing collection slug already wired in the router.
-// SEO-friendly labels with metal/style hint.
-const CATEGORY_TILES = [
-  { label: 'Diamond rings',    slug: 'diamond',    img: 'https://images.unsplash.com/photo-1605100804763-247f67b3557e?auto=format&fit=crop&w=800&q=92' },
-  { label: 'Bridal necklaces', slug: 'bridal',     img: 'https://images.unsplash.com/photo-1599643477877-530eb83abc8e?auto=format&fit=crop&w=800&q=92' },
-  { label: 'Gold earrings',    slug: 'daily-wear', img: 'https://images.unsplash.com/photo-1535632787350-4e68ef0ac584?auto=format&fit=crop&w=800&q=92' },
-  { label: '22K bangles',      slug: '22k',        img: 'https://images.unsplash.com/photo-1611591437281-460bfbe1220a?auto=format&fit=crop&w=800&q=92' },
-  { label: 'Pendants',         slug: '18k',        img: 'https://images.unsplash.com/photo-1602173574767-37ac01994b2a?auto=format&fit=crop&w=800&q=92' },
-  { label: 'Mangalsutra',      slug: 'festive',    img: 'https://images.unsplash.com/photo-1603561591411-07134e71a2a9?auto=format&fit=crop&w=800&q=92' },
-  // Additional tiles to enrich the marquee (uses user-uploaded /categories images)
-  { label: 'Solitaires',       slug: 'diamond',    img: '/categories/jewl6.jpg' },
-  { label: '18K rings',        slug: '18k',        img: '/categories/jewl1.jpg' },
-  { label: 'Chains',           slug: 'daily-wear', img: '/categories/jewl4.jpg' },
-  { label: 'Festive sets',     slug: 'festive',    img: '/categories/jew3.jpg'  },
-  { label: 'Silver pieces',    slug: 'silver',     img: '/categories/jewl7.jpg' },
-  { label: 'Gifting',          slug: 'gifting',    img: '/categories/jewl2.jpg' },
-];
-
-// Instagram-reel-style 9:16 video tiles. Posters are still images today;
-// swap to actual <video> via CMS once real branded reels are shot.
-const REELS = [
-  { handle: '@priya.bridal', caption: 'Day-of-wedding bridal set · 22K', poster: 'https://images.unsplash.com/photo-1602173574767-37ac01994b2a?auto=format&fit=crop&w=900&q=92', slug: 'bridal' },
-  { handle: '@diya.daily', caption: 'Light-weight 22K chain · 8.2 g', poster: 'https://images.unsplash.com/photo-1599643477877-530eb83abc8e?auto=format&fit=crop&w=900&q=92', slug: 'daily-wear' },
-  { handle: '@aisha.studio', caption: 'Festive jhumka stack', poster: 'https://images.unsplash.com/photo-1535632787350-4e68ef0ac584?auto=format&fit=crop&w=900&q=92', slug: 'festive' },
-  { handle: '@meera.solitaire', caption: 'IGI-certified solitaire · 0.48 ct', poster: 'https://images.unsplash.com/photo-1603561591411-07134e71a2a9?auto=format&fit=crop&w=900&q=92', slug: 'diamond' },
-  { handle: '@aanya.bangles', caption: 'Stack of 6 · 22K · 38 g', poster: 'https://images.unsplash.com/photo-1611591437281-460bfbe1220a?auto=format&fit=crop&w=900&q=92', slug: '22k' },
-];
-
-// Multi-testimonial marquee — names + cities only (no PII per gotchas.md).
-// Split into two rows so the section scrolls left + right in opposite
-// directions (Tanishq/CaratLane-style social-proof strip).
-interface Testimonial {
-  quote: string;
-  author: string;
-  city: string;
-  occasion: string;
-}
-
-const TESTIMONIALS_ROW_1: Testimonial[] = [
-  { quote: 'They weighed each piece in front of me and printed the rate for that exact minute. I have never felt this calm buying gold.', author: 'Priya Sharma', city: 'Gurugram', occasion: 'Bridal set · 2024' },
-  { quote: 'My daughter\u2019s mangalsutra arrived hand-finished, BIS hallmarked, with the GST broken out line-by-line. Three generations of trust.', author: 'Sunita Malhotra', city: 'Karnal', occasion: 'Wedding gift · 2024' },
-  { quote: 'WhatsApp updates with photos of my piece on the bench made it feel personal. Worth every gram.', author: 'Aanya Kapoor', city: 'Faridabad', occasion: 'Anniversary · 2025' },
-  { quote: 'Light-weight 22K chain I wear every day to work. Looks premium, priced fairly against the live MCX rate.', author: 'Kavya Iyer', city: 'Delhi', occasion: 'Daily wear · 2025' },
-  { quote: 'The bridal set was hand-set in three weeks and weighed in front of me at delivery. Pure 22K, exactly as promised.', author: 'Anjali Verma', city: 'Panchkula', occasion: 'Daughter\u2019s wedding · 2024' },
-];
-
-const TESTIMONIALS_ROW_2: Testimonial[] = [
-  { quote: 'My Diwali earrings arrived a day early with a BIS hallmark certificate. Best festive jewellery shopping I have done.', author: 'Meera Reddy', city: 'Gurugram', occasion: 'Festive set · 2024' },
-  { quote: 'Mangalsutra design was customised over WhatsApp in two days. The karigar\u2019s craftsmanship is unmatched in Haryana.', author: 'Riya Singh', city: 'Karnal', occasion: 'Mangalsutra · 2024' },
-  { quote: '0.48 ct IGI-certified solitaire, delivered with the original lab certificate and box. No middleman, no markup.', author: 'Divya Patel', city: 'Faridabad', occasion: 'Solitaire ring · 2025' },
-  { quote: 'Engagement ring with a transparent breakdown \u2014 weight, rate, making, GST. No haggling, no surprises at billing.', author: 'Neha Joshi', city: 'Gurugram', occasion: 'Engagement · 2024' },
-  { quote: 'Bought a complete bridal jewellery set for my wedding. Everything weighed publicly, hallmarked, and delivered on time.', author: 'Pooja Choudhary', city: 'Hisar', occasion: 'Bridal · 2025' },
-];
-
-// Deals-of-the-week strip — left editorial card + right 2x4 product grid
-// (reference: Antisa / WoodMart "Deals" layout). NEW / SALE / OUT badges,
-// 5-star rating row, price under each card. Uses user-uploaded photos in
-// /img/j1.jpg ... j8.jpg.
-interface DealCard {
-  slug: string;
-  name: string;
-  category: string;
-  priceLabel: string;
-  badge: 'NEW' | 'SALE' | 'OUT';
-  img: string;
-}
-
-const DEALS: DealCard[] = [
-  { slug: 'aurelia-pendant',  name: 'Aurelia Diamond Pendant', category: 'NECKLACES', priceLabel: '₹29,000', badge: 'NEW',  img: '/img/j1.jpg' },
-  { slug: 'mira-bangle-set',  name: 'Mira 22K Bangle Stack',   category: 'BANGLES',   priceLabel: '₹84,500', badge: 'NEW',  img: '/img/j2.jpg' },
-  { slug: 'tara-mangalsutra', name: 'Tara Mangalsutra',        category: 'NECKLACES', priceLabel: '₹62,200', badge: 'NEW',  img: '/img/j3.jpg' },
-  { slug: 'aarya-pearl-drop', name: 'Aarya Pearl Drops',       category: 'EARRINGS',  priceLabel: '₹19,400', badge: 'OUT',  img: '/img/j4.jpg' },
-  { slug: 'forever-solitaire',name: 'Forever Solitaire Ring',  category: 'RINGS',     priceLabel: '₹48,900', badge: 'NEW',  img: '/img/j5.jpg' },
-  { slug: 'meera-jhumka',     name: 'Meera Festive Jhumkas',   category: 'EARRINGS',  priceLabel: '₹31,400', badge: 'SALE', img: '/img/j6.jpg' },
-  { slug: 'kavya-chain',      name: 'Kavya Light Chain',       category: 'NECKLACES', priceLabel: '₹18,900', badge: 'NEW',  img: '/img/j7.jpg' },
-  { slug: 'parker-signet',    name: 'Parker Signet Ring',      category: 'RINGS',     priceLabel: '₹11,900', badge: 'NEW',  img: '/img/j8.jpg' },
-];
+// Trust-badge icon registry — keys must match TrustBadge['icon'] in the slice.
+// The CMS persists `icon: 'shield' | 'sparkles' | 'award'`; the JSX resolves
+// the actual Lucide component via this map so we never serialise React nodes
+// to JSON.
+const TRUST_ICONS: Record<TrustBadge['icon'], React.ComponentType<{ className?: string }>> = {
+  shield: ShieldCheck,
+  sparkles: Sparkles,
+  award: Award,
+};
 
 export function StorefrontHome(): JSX.Element {
   const content = useAppSelector((s) => s.storefrontContent);
-  const { hero, rates: cmsRates, story } = content;
+  const {
+    hero,
+    rates: cmsRates,
+    shopByOccasion,
+    browseCategories,
+    reels,
+    deals,
+    testimonialsRow1,
+    testimonialsRow2,
+    doorCards,
+    trustBadges,
+    pressLogos,
+    sectionLabels,
+  } = content;
+  const L = sectionLabels;
   const { data: liveRate } = useGetPublicGoldRateQuery(undefined, {
     pollingInterval: 5 * 60 * 1000,
   });
@@ -182,7 +117,7 @@ export function StorefrontHome(): JSX.Element {
               panel so the fold reads balanced (not too short, not dominant). */}
           <div className="relative aspect-[4/5] sm:aspect-[16/10] lg:aspect-auto lg:h-[680px] xl:h-[720px] bg-ink-100 order-1 lg:order-2 overflow-hidden">
             <video
-              src="/img/hero.mp4"
+              src={hero.videoSrc || '/img/hero.mp4'}
               poster={hero.image}
               autoPlay
               muted
@@ -227,14 +162,14 @@ export function StorefrontHome(): JSX.Element {
       <section className="bg-ink-0 overflow-hidden">
         <div className="py-12 sm:py-16 md:py-20">
           <div className="max-w-[1280px] mx-auto px-4 sm:px-6 text-center mb-8 sm:mb-12">
-            <p className="text-eyebrow uppercase text-brand-700">Browse by category</p>
-            <h2 className="font-display text-3xl sm:text-[36px] md:text-[44px] leading-tight text-ink-900 mt-2">Rings, necklaces, earrings &amp; more</h2>
-            <p className="mt-3 text-sm text-ink-600 max-w-md mx-auto">From diamond solitaires to 22K bridal necklaces — shop every category in one hallmarked workshop.</p>
+            <p className="text-eyebrow uppercase text-brand-700">{L.categoriesEyebrow}</p>
+            <h2 className="font-display text-3xl sm:text-[36px] md:text-[44px] leading-tight text-ink-900 mt-2">{L.categoriesTitle}</h2>
+            <p className="mt-3 text-sm text-ink-600 max-w-md mx-auto">{L.categoriesSub}</p>
           </div>
           {/* Marquee */}
           <div className="group">
             <div className="flex w-max gap-6 sm:gap-8 md:gap-10 animate-marquee-left marquee-pause px-4 sm:px-6">
-              {[...CATEGORY_TILES, ...CATEGORY_TILES].map((c, i) => (
+              {[...browseCategories, ...browseCategories].map((c, i) => (
                 <Link
                   key={`${c.label}-${i}`}
                   to={`/store/collections/${c.slug}`}
@@ -263,9 +198,9 @@ export function StorefrontHome(): JSX.Element {
       <section className="max-w-[1280px] mx-auto px-4 sm:px-6 py-14 sm:py-20 md:py-24">
         <div className="flex items-end justify-between mb-8 sm:mb-12 gap-4">
           <div className="max-w-2xl">
-            <p className="text-eyebrow uppercase text-brand-700">Shop by occasion</p>
-            <h2 className="font-display text-3xl sm:text-[40px] md:text-[52px] leading-[1.06] text-ink-900 mt-2">Indian bridal &amp; festive jewellery, by collection</h2>
-            <p className="mt-3 text-sm text-ink-600 max-w-xl">Hand-crafted 22K and 18K pieces — bridal, daily-wear, festive, diamond and silver — from our family workshop in Haryana.</p>
+            <p className="text-eyebrow uppercase text-brand-700">{L.occasionEyebrow}</p>
+            <h2 className="font-display text-3xl sm:text-[40px] md:text-[52px] leading-[1.06] text-ink-900 mt-2">{L.occasionTitle}</h2>
+            <p className="mt-3 text-sm text-ink-600 max-w-xl">{L.occasionSub}</p>
           </div>
           <Link to="/store/collections" className="hidden sm:inline-flex items-center gap-1 text-sm text-ink-700 hover:text-brand-700 border-b border-ink-200 hover:border-brand-400 pb-0.5 shrink-0 transition-colors">
             See all
@@ -273,7 +208,7 @@ export function StorefrontHome(): JSX.Element {
           </Link>
         </div>
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 sm:gap-4 md:gap-5">
-          {SHOP_BY_OCCASION.map((c, i) => (
+          {shopByOccasion.map((c, i) => (
             <Link
               key={c.slug}
               to={`/store/collections/${c.slug}`}
@@ -355,19 +290,19 @@ export function StorefrontHome(): JSX.Element {
             <div className="absolute inset-0 bg-gradient-to-br from-ink-900/85 via-ink-900/60 to-ink-900/85" aria-hidden />
             <div className="relative z-10 flex-1 flex flex-col justify-between p-7 sm:p-8 lg:p-10">
               <div>
-                <p className="text-eyebrow uppercase text-brand-300">Deals of the week</p>
+                <p className="text-eyebrow uppercase text-brand-300">{L.dealsEyebrow}</p>
                 <h2 className="font-display text-3xl sm:text-[36px] md:text-[40px] leading-[1.1] mt-3 max-w-[14ch]">
-                  Hand-set, hallmarked, half-price.
+                  {L.dealsTitle}
                 </h2>
                 <p className="mt-4 text-sm text-ink-200/85 leading-relaxed max-w-[28ch]">
-                  Eight curated pieces this week — bridal, daily-wear and diamond — priced at today&apos;s live gold rate.
+                  {L.dealsSub}
                 </p>
               </div>
               <Link
-                to="/store/collections"
+                to={L.dealsCtaHref || '/store/collections'}
                 className="mt-8 inline-flex items-center gap-2 self-start h-11 sm:h-12 px-5 sm:px-7 rounded-full bg-brand-400 text-ink-900 text-sm font-medium hover:bg-brand-300 transition-colors duration-fast"
               >
-                Shop deals
+                {L.dealsCtaLabel}
                 <ArrowRight className="h-4 w-4" />
               </Link>
             </div>
@@ -377,7 +312,7 @@ export function StorefrontHome(): JSX.Element {
               on mobile, fixed grid on lg+. */}
           <div className="-mx-4 sm:-mx-6 lg:mx-0">
             <div className="px-4 sm:px-6 lg:px-0 grid grid-flow-col auto-cols-[68%] sm:auto-cols-[40%] md:auto-cols-[30%] lg:grid-flow-row lg:auto-cols-auto lg:grid-cols-4 lg:grid-rows-2 gap-3 sm:gap-4 lg:gap-5 overflow-x-auto lg:overflow-visible snap-x snap-mandatory lg:snap-none pb-2 lg:pb-0">
-              {DEALS.map((d, i) => (
+              {deals.map((d, i) => (
                 <Link
                   key={d.slug}
                   to={`/store/products/${d.slug}`}
@@ -422,29 +357,25 @@ export function StorefrontHome(): JSX.Element {
       {/* Two editorial promo cards with doors-opening reveal animation.
           Left card slides in from the left, right card from the right when
           the section enters the viewport (IntersectionObserver-driven). */}
-      <DoorsRevealSection />
-      {/* Vestigial reference so the destructured `story` field isn't flagged
-          as unused — content slice still drives other surfaces. */}
-      <span className="hidden" aria-hidden>{story.title}</span>
+      <DoorsRevealSection cards={doorCards} />
 
-      {/* Trust strip — SEO copy: BIS 916 hallmark, MCX gold rate, GST, exchange */}
+      {/* Trust strip — CMS-driven badges (icon: shield/sparkles/award). */}
       <section>
         <div className="max-w-[1280px] mx-auto px-4 sm:px-6 py-10 sm:py-14 grid grid-cols-1 md:grid-cols-3 gap-6 sm:gap-8 md:gap-12">
-          {[
-            { icon: ShieldCheck, title: 'BIS 916 hallmarked gold', body: 'Every gram of our 22K and 18K jewellery is BIS-hallmarked and audited monthly by an independent assay lab.' },
-            { icon: Sparkles, title: 'Live MCX rate · transparent GST', body: 'Weight × today\u2019s MCX gold rate + making charges + 3% GST, itemised on every bill. No hidden margins.' },
-            { icon: Award, title: 'Lifetime exchange on pure gold', body: 'Trade in any piece against pure-gold value at the current rate — no time limit, no deduction beyond stones.' },
-          ].map((t) => (
-            <div key={t.title} className="flex items-start gap-4">
-              <div className="h-11 w-11 shrink-0 rounded-full bg-brand-50 text-brand-700 inline-flex items-center justify-center">
-                <t.icon className="h-5 w-5" />
+          {trustBadges.map((t) => {
+            const Icon = TRUST_ICONS[t.icon] ?? ShieldCheck;
+            return (
+              <div key={t.title} className="flex items-start gap-4">
+                <div className="h-11 w-11 shrink-0 rounded-full bg-brand-50 text-brand-700 inline-flex items-center justify-center">
+                  <Icon className="h-5 w-5" />
+                </div>
+                <div>
+                  <h3 className="text-[15px] text-ink-900 font-medium">{t.title}</h3>
+                  <p className="mt-1.5 text-sm text-ink-600 leading-relaxed">{t.body}</p>
+                </div>
               </div>
-              <div>
-                <h3 className="text-[15px] text-ink-900 font-medium">{t.title}</h3>
-                <p className="mt-1.5 text-sm text-ink-600 leading-relaxed">{t.body}</p>
-              </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       </section>
 
@@ -455,11 +386,9 @@ export function StorefrontHome(): JSX.Element {
         <div className="max-w-[1280px] mx-auto px-4 sm:px-6 py-14 sm:py-20 md:py-24">
           <div className="flex items-end justify-between mb-8 sm:mb-10 gap-4">
             <div>
-              <p className="text-eyebrow uppercase text-brand-700">Watch &amp; wear</p>
-              <h2 className="font-display text-3xl sm:text-display-lg md:text-[48px] md:leading-[1.05] text-ink-900 mt-2">Styling reels from our customers</h2>
-              <p className="mt-2 text-sm text-ink-600 max-w-md">
-                Real brides, real jhumka stacks, real solitaires. Tap any reel to shop the look.
-              </p>
+              <p className="text-eyebrow uppercase text-brand-700">{L.reelsEyebrow}</p>
+              <h2 className="font-display text-3xl sm:text-display-lg md:text-[48px] md:leading-[1.05] text-ink-900 mt-2">{L.reelsTitle}</h2>
+              <p className="mt-2 text-sm text-ink-600 max-w-md">{L.reelsSub}</p>
             </div>
             <a
               href="https://instagram.com/"
@@ -473,7 +402,7 @@ export function StorefrontHome(): JSX.Element {
           </div>
           {/* Horizontal scroll on mobile, 5-col grid on lg+ */}
           <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 sm:gap-4 md:gap-5">
-            {REELS.map((r, i) => (
+            {reels.map((r, i) => (
               <Link
                 key={r.handle}
                 to={`/store/collections/${r.slug}`}
@@ -509,28 +438,25 @@ export function StorefrontHome(): JSX.Element {
       <section className="bg-[#F5E5DC] border-y border-[#E8CFC1]/60 overflow-hidden">
         <div className="max-w-[1280px] mx-auto px-4 sm:px-6 py-14 sm:py-20 md:py-24">
           <div className="text-center max-w-2xl mx-auto mb-10 sm:mb-12">
-            <p className="text-eyebrow uppercase text-brand-700">Loved by jewellery families across Haryana</p>
-            <h2 className="font-display text-3xl sm:text-[36px] md:text-[44px] leading-tight text-ink-900 mt-2">
-              50,000+ verified customers since 1972
-            </h2>
-            <p className="mt-3 text-sm text-ink-600">Transparent pricing, BIS-hallmarked gold, and a WhatsApp update on every piece &mdash; that&apos;s why families trust us for bridal, festive, and gifting.</p>
+            <p className="text-eyebrow uppercase text-brand-700">{L.reviewsEyebrow}</p>
+            <h2 className="font-display text-3xl sm:text-[36px] md:text-[44px] leading-tight text-ink-900 mt-2">{L.reviewsTitle}</h2>
+            <p className="mt-3 text-sm text-ink-600">{L.reviewsSub}</p>
           </div>
         </div>
 
         {/* Full-bleed marquee rows */}
         <div className="space-y-5 sm:space-y-6 pb-14 sm:pb-20 md:pb-24">
-          <TestimonialMarquee items={TESTIMONIALS_ROW_1} direction="left" />
-          <TestimonialMarquee items={TESTIMONIALS_ROW_2} direction="right" />
+          <TestimonialMarquee items={testimonialsRow1} direction="left" />
+          <TestimonialMarquee items={testimonialsRow2} direction="right" />
         </div>
 
         {/* Press strip beneath the reviews */}
         <div className="max-w-[1280px] mx-auto px-4 sm:px-6 pb-14 sm:pb-20 md:pb-24">
           <div className="pt-8 border-t border-[#E8CFC1]/60 flex flex-wrap items-center justify-center gap-x-8 sm:gap-x-12 gap-y-3 text-ink-500 text-xs uppercase tracking-[0.18em]">
             <span className="text-ink-500">As featured in</span>
-            <span>Vogue India</span>
-            <span>Femina</span>
-            <span>The Hindu</span>
-            <span>Times of India</span>
+            {pressLogos.map((p) => (
+              <span key={p}>{p}</span>
+            ))}
           </div>
         </div>
       </section>
@@ -539,14 +465,12 @@ export function StorefrontHome(): JSX.Element {
       <section className="bg-[#FDF8F4]">
         <div className="max-w-[1280px] mx-auto px-4 sm:px-6 py-12 sm:py-16 md:py-20 flex flex-col md:flex-row items-start md:items-center justify-between gap-6 border-t border-[#EFE0D2]/60">
           <div className="max-w-xl">
-            <p className="text-eyebrow uppercase text-brand-700">Visit our jewellery showrooms</p>
-            <h2 className="font-display text-2xl sm:text-[28px] md:text-[36px] leading-tight text-ink-900 mt-3">
-              Two BIS-certified showrooms in Gurugram &amp; Karnal. Walk in, weigh, decide.
-            </h2>
-            <p className="mt-3 text-sm text-ink-600 max-w-lg">In-person rate matching, free try-on, lifetime exchange — and a chai on the house while you decide.</p>
+            <p className="text-eyebrow uppercase text-brand-700">{L.visitEyebrow}</p>
+            <h2 className="font-display text-2xl sm:text-[28px] md:text-[36px] leading-tight text-ink-900 mt-3">{L.visitTitle}</h2>
+            <p className="mt-3 text-sm text-ink-600 max-w-lg">{L.visitSub}</p>
           </div>
-          <Link to="/store/locations" className="inline-flex items-center gap-2 h-11 sm:h-12 px-5 sm:px-7 rounded-full bg-ink-900 text-ink-0 text-sm font-medium hover:bg-ink-800 transition-colors duration-fast">
-            Find a store
+          <Link to={L.visitCtaHref || '/store/locations'} className="inline-flex items-center gap-2 h-11 sm:h-12 px-5 sm:px-7 rounded-full bg-ink-900 text-ink-0 text-sm font-medium hover:bg-ink-800 transition-colors duration-fast">
+            {L.visitCtaLabel}
             <ArrowRight className="h-4 w-4" />
           </Link>
         </div>
@@ -565,7 +489,7 @@ function TestimonialMarquee({
   items,
   direction,
 }: {
-  items: Testimonial[];
+  items: TestimonialCard[];
   direction: 'left' | 'right';
 }): JSX.Element {
   const animClass = direction === 'left' ? 'animate-marquee-left' : 'animate-marquee-right';
@@ -642,33 +566,9 @@ function useInView<T extends HTMLElement>(): [RefObject<T>, boolean] {
   return [ref, inView];
 }
 
-interface DoorCard {
-  eyebrow: string;
-  title: string;
-  body: string;
-  href: string;
-  img: string;
-}
-
-const DOOR_CARDS: [DoorCard, DoorCard] = [
-  {
-    eyebrow: 'Luxury necklace',
-    title: 'Best Friend Jewelry',
-    body: 'A wide range of exquisite 22K & 18K necklaces — hand-set in Haryana, BIS-hallmarked.',
-    href: '/store/collections/bridal',
-    img: '/img/j9.jpg',
-  },
-  {
-    eyebrow: 'Our earrings',
-    title: 'Diamond Stud Earrings',
-    body: 'IGI-certified solitaires and timeless studs, priced against today\u2019s live MCX rate.',
-    href: '/store/collections/diamond',
-    img: '/img/j10.jpg',
-  },
-];
-
-function DoorsRevealSection(): JSX.Element {
+function DoorsRevealSection({ cards }: { cards: DoorCard[] }): JSX.Element {
   const [ref, inView] = useInView<HTMLDivElement>();
+  if (!cards || cards.length === 0) return <></>;
   return (
     <section className="bg-[#FAF3EE] border-y border-[#EFE0D2]/60">
       <div
@@ -678,7 +578,7 @@ function DoorsRevealSection(): JSX.Element {
           inView && 'in-view',
         )}
       >
-        {DOOR_CARDS.map((c, i) => (
+        {cards.slice(0, 2).map((c, i) => (
           <article
             key={c.eyebrow}
             className={cn(
