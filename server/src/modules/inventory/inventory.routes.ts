@@ -2,7 +2,6 @@ import { Router } from 'express';
 import multer from 'multer';
 import {
   ItemInputSchema,
-  TransferInitiateSchema,
   VendorInputSchema,
   PurchaseOrderCreateSchema,
   WastageInputSchema,
@@ -123,15 +122,9 @@ inventoryRouter.delete('/items/:id', requirePermission('inventory.delete'), asyn
   }
 });
 
-inventoryRouter.post('/items/:id/transfer', requirePermission('inventory.transfer'), async (req, res, next) => {
-  try {
-    const body = TransferInitiateSchema.parse({ itemId: req.params['id'], ...req.body });
-    await svc.transferItem(body.itemId, body.toShopId, body.reason, req.user?.userId);
-    res.status(204).end();
-  } catch (err) {
-    next(err);
-  }
-});
+// Legacy one-shot transfer endpoint removed. Stock moves now go through the
+// /transfers workflow (PENDING -> APPROVED -> COMPLETED). See
+// server/src/modules/transfers/ and client TransfersPage.
 
 inventoryRouter.post('/items/:id/wastage', requirePermission('inventory.wastage'), async (req, res, next) => {
   try {

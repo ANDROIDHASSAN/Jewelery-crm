@@ -1,5 +1,5 @@
 import { useEffect } from 'react';
-import { Outlet } from 'react-router-dom';
+import { Outlet, useLocation } from 'react-router-dom';
 import { MessageCircle } from 'lucide-react';
 import { StorefrontHeader } from './StorefrontHeader';
 import { StorefrontFooter } from './StorefrontFooter';
@@ -12,6 +12,12 @@ export function StorefrontLayout(): JSX.Element {
   const whatsapp = useAppSelector((s) => s.storefrontContent.whatsappNumber);
   const dispatch = useAppDispatch();
   const { data } = useGetPublicStorefrontQuery();
+  const { pathname } = useLocation();
+
+  // Scroll to top on every storefront route transition
+  useEffect(() => {
+    window.scrollTo(0, 0);
+  }, [pathname]);
 
   // Hydrate the local slice from the database on mount + whenever the server
   // version refreshes. Preserves the existing useAppSelector consumers without
@@ -25,6 +31,7 @@ export function StorefrontLayout(): JSX.Element {
     if (import.meta.env.VITE_USE_DEFAULT_CONTENT === '1') return;
     if (data?.content) dispatch(setContent(data.content));
   }, [data, dispatch]);
+
 
   return (
     <AuthGateProvider>

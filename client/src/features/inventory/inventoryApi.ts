@@ -90,14 +90,6 @@ export const inventoryApi = baseApi.injectEndpoints({
       query: ({ id, patch }) => ({ url: `/inventory/items/${id}`, method: 'PATCH', body: patch }),
       invalidatesTags: (_r, _e, a) => [{ type: 'Item', id: a.id }, { type: 'Item', id: 'LIST' }],
     }),
-    transferItem: b.mutation<void, { id: string; toShopId: string; reason: string }>({
-      query: ({ id, ...body }) => ({ url: `/inventory/items/${id}/transfer`, method: 'POST', body }),
-      invalidatesTags: (_r, _e, a) => [
-        { type: 'Item', id: a.id },
-        { type: 'Item', id: 'LIST' },
-        'StockValuation',
-      ],
-    }),
     recordWastage: b.mutation<ApiOne<ItemMovementRow>, { id: string; reason: string }>({
       query: ({ id, reason }) => ({ url: `/inventory/items/${id}/wastage`, method: 'POST', body: { reason } }),
       invalidatesTags: (_r, _e, a) => [
@@ -211,7 +203,6 @@ export const {
   useGetItemsQuery,
   useCreateItemMutation,
   useUpdateItemMutation,
-  useTransferItemMutation,
   useRecordWastageMutation,
   useGetCategoriesQuery,
   useUpdateCategoryMakingChargeMutation,

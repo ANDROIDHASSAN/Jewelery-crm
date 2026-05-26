@@ -1459,6 +1459,22 @@ function OrderDrawer({ order, onClose }: { order: AdminOrder | null; onClose: ()
                 )}
               </div>
 
+              {(full?.shippingLine1 || full?.shippingCity) && (
+                <div className="rounded-md border border-ink-100 p-3 space-y-1 text-sm bg-ink-25">
+                  <p className="text-eyebrow uppercase text-ink-500">Shipping Address</p>
+                  <p className="text-ink-900 font-medium">{full.shippingName ?? full.customer?.name}</p>
+                  {full.shippingPhone && <p className="text-xs text-ink-700 font-mono">{full.shippingPhone}</p>}
+                  <p className="text-xs text-ink-800 mt-1">
+                    {full.shippingLine1}
+                    {full.shippingLine2 && `, ${full.shippingLine2}`}
+                  </p>
+                  <p className="text-xs text-ink-800 font-medium">
+                    {full.shippingCity}, {full.shippingState} - {full.shippingPincode}
+                  </p>
+                </div>
+              )}
+
+
               <div className="space-y-2">
                 <p className="text-eyebrow uppercase text-ink-500">Items</p>
                 <ul className="divide-y divide-ink-100 text-sm">

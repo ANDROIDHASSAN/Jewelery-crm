@@ -55,7 +55,15 @@ export interface AdminOrder {
   customer?: { id: string; name: string; phone: string } | null;
   items?: AdminOrderItem[];
   events?: AdminOrderEvent[];
+  shippingName?: string | null;
+  shippingPhone?: string | null;
+  shippingLine1?: string | null;
+  shippingLine2?: string | null;
+  shippingCity?: string | null;
+  shippingState?: string | null;
+  shippingPincode?: string | null;
 }
+
 
 // Live-count snapshot returned by /ecommerce/orders/live-count. The single
 // tenant-wide source of truth for every count + revenue figure displayed on

@@ -207,6 +207,8 @@ function PosBillingScreen(): JSX.Element {
   const [idempotencyKey, setIdempotencyKey] = useState<string>(() => freshIdempotencyKey());
   const [addItemOpen, setAddItemOpen] = useState(false);
 
+
+
   // Last successfully committed bill — drives the Print + WhatsApp buttons
   // in the status bar. They were `disabled` placeholders for months; now
   // they wire to the server's PDF endpoint and a wa.me deep link.
@@ -339,6 +341,97 @@ function PosBillingScreen(): JSX.Element {
     },
     [lines, rates],
   );
+
+  const searchInputRef = useRef<HTMLInputElement>(null);
+
+  // Resume draft from sessionStorage on load if present.
+  useEffect(() => {
+    try {
+      const stored = window.sessionStorage.getItem('zelora.pos.resumeDraft');
+      if (stored && items.length > 0) {
+        const draft = JSON.parse(stored);
+        window.sessionStorage.removeItem('zelora.pos.resumeDraft');
+
+        if (draft.lines && Array.isArray(draft.lines)) {
+          const newLines: CartLine[] = [];
+          for (const dl of draft.lines) {
+            const it = items.find((i) => i.id === dl.itemId);
+            if (it) {
+              const rate = rateForPurity(rates, it.purityCaratX100);
+              const makingBps = dl.makingChargeBps ?? it.makingChargeBps ?? 1200;
+              const goldValue = computeGoldValuePaise(it.weightMg, it.purityCaratX100, rate.paise);
+              const makingPaise = applyBps(goldValue, makingBps);
+              newLines.push({
+                id: `${it.id}-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+                itemId: it.id,
+                sku: it.sku,
+                name: (it as Item & { name?: string | null }).name?.trim() || it.sku,
+                imageUrl: (it as Item & { images?: string[] }).images?.[0] ?? null,
+                categoryId: it.categoryId,
+                weightMg: it.weightMg,
+                purityCaratX100: it.purityCaratX100,
+                makingChargeBps: makingBps,
+                stoneChargePaise: dl.stoneChargePaise ?? 0,
+                ratePerGramPaise: rate.paise,
+                goldValuePaise: goldValue,
+                makingPaise,
+                linePaise: goldValue + makingPaise + (dl.stoneChargePaise ?? 0),
+              });
+            }
+          }
+          setLines(newLines);
+        }
+
+        if (draft.discountPaise) {
+          setDiscountRupees(String(draft.discountPaise / 100));
+          setDiscountIsPct(false);
+        }
+
+        if (draft.payments && Array.isArray(draft.payments)) {
+          setPayments(draft.payments);
+        }
+
+        if (draft.customer) {
+          setCustomer(draft.customer);
+          setPhoneSearch(draft.customer.phone || '');
+        }
+
+        toast.success('Parked bill cart loaded');
+      }
+    } catch (e) {
+      console.error('Failed to restore draft', e);
+    }
+  }, [items, rates]);
+
+  // Focus search box with F2 key
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'F2') {
+        e.preventDefault();
+        searchInputRef.current?.focus();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, []);
+
+  const handleSearchSubmit = useCallback(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return;
+
+    // Find an item that has an exact SKU or barcodeData match in stock.
+    const exactMatch = inStock.find(
+      (it) => it.sku.toLowerCase() === q || it.barcodeData.toLowerCase() === q
+    );
+
+    if (exactMatch) {
+      addItem(exactMatch);
+      setSearch(''); // Clear search input on successful scan/match!
+      toast.success(`Scanned and added ${exactMatch.sku}`);
+    } else {
+      toast.error(`No in-stock item found matching "${search}"`);
+    }
+  }, [search, inStock, addItem]);
 
   function removeLine(id: string): void {
     setLines((curr) => curr.filter((l) => l.id !== id));
@@ -528,6 +621,7 @@ function PosBillingScreen(): JSX.Element {
           })),
           discountPaise,
           payments,
+          customer,
         },
       }).unwrap();
       toast.success('Bill parked — ready for next customer');
@@ -563,6 +657,8 @@ function PosBillingScreen(): JSX.Element {
             onAddItem={() => setAddItemOpen(true)}
             onOpenBillDrawer={() => setBillDrawerOpen(true)}
             lineCount={lines.length}
+            inputRef={searchInputRef}
+            onSearchSubmit={handleSearchSubmit}
           />
 
           <div className="flex-1 overflow-y-auto px-4 sm:px-5 lg:px-6 py-4 sm:py-5">
@@ -787,6 +883,8 @@ function CatalogToolbar({
   onAddItem,
   onOpenBillDrawer,
   lineCount,
+  inputRef,
+  onSearchSubmit,
 }: {
   search: string;
   onSearchChange: (v: string) => void;
@@ -795,15 +893,24 @@ function CatalogToolbar({
   onAddItem: () => void;
   onOpenBillDrawer: () => void;
   lineCount: number;
+  inputRef?: React.RefObject<HTMLInputElement>;
+  onSearchSubmit?: () => void;
 }): JSX.Element {
   return (
     <div className="px-3 sm:px-4 py-2.5 border-b border-ink-100 bg-ink-0 flex items-center gap-2">
       <div className="relative flex-1 min-w-0">
         <Search className="h-4 w-4 absolute left-3 top-1/2 -translate-y-1/2 text-ink-400 pointer-events-none" />
         <Input
+          ref={inputRef}
           placeholder="Search by SKU, barcode, or name (F2)"
           value={search}
           onChange={(e) => onSearchChange(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') {
+              e.preventDefault();
+              onSearchSubmit?.();
+            }
+          }}
           className="pl-9 h-10"
         />
       </div>

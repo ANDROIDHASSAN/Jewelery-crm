@@ -25,7 +25,6 @@ import {
   useGetItemsQuery,
   useGetCategoriesQuery,
   useCreateItemMutation,
-  useTransferItemMutation,
   useRecordWastageMutation,
   useGetValuationQuery,
   useGetLowStockQuery,
@@ -39,6 +38,7 @@ import {
   useGetAuditLogQuery,
   useUpdateCategoryMakingChargeMutation,
 } from '@/features/inventory/inventoryApi';
+import { useCreateTransferMutation } from '@/features/transfers/transfersApi';
 import { useGetShopsQuery } from '@/features/shops/shopsApi';
 import { DataTable } from '@/components/data/DataTable';
 import { Button } from '@/components/ui/button';
@@ -118,6 +118,7 @@ function ItemsTab(): JSX.Element {
   const [transferOpen, setTransferOpen] = useState(false);
   const [wastageOpen, setWastageOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
+  const [distributeOpen, setDistributeOpen] = useState(false);
 
   const categoryNameById = useMemo(() => {
     const map = new Map<string, string>();
@@ -204,6 +205,9 @@ function ItemsTab(): JSX.Element {
           <div className="flex items-center gap-2">
             <Button variant="outline" onClick={() => setImportOpen(true)}>
               <Upload className="h-4 w-4" /> Import
+            </Button>
+            <Button variant="outline" onClick={() => setDistributeOpen(true)}>
+              <Truck className="h-4 w-4" /> Distribute stock
             </Button>
             <Button
               variant="outline"
@@ -297,6 +301,7 @@ function ItemsTab(): JSX.Element {
       </Sheet>
 
       <AddItemDialog open={addOpen} onClose={() => setAddOpen(false)} />
+      <DistributeStockDialog open={distributeOpen} onClose={() => setDistributeOpen(false)} />
       {selected && (
         <>
           <TransferDialog
@@ -1021,6 +1026,7 @@ function AuditTab(): JSX.Element {
 function AddItemDialog({ open, onClose }: { open: boolean; onClose: () => void }): JSX.Element {
   const { data: cats } = useGetCategoriesQuery();
   const { data: shops } = useGetShopsQuery();
+  const { data: existingItemsRes } = useGetItemsQuery({});
   const [create, { isLoading }] = useCreateItemMutation();
   const [form, setForm] = useState({
     sku: '',
@@ -1035,9 +1041,31 @@ function AddItemDialog({ open, onClose }: { open: boolean; onClose: () => void }
     makingChargePct: '',
   });
 
+  const existingItems = existingItemsRes?.data ?? [];
+  const selectedCat = cats?.data.find((c) => c.id === form.categoryId);
+  const metalType = selectedCat?.metalType ?? 'GOLD';
+
+  const handleCategoryChange = (catId: string) => {
+    const cat = cats?.data.find((c) => c.id === catId);
+    let defaultPurity = '22';
+    if (cat) {
+      if (cat.metalType === 'SILVER') defaultPurity = '0';
+      else if (cat.metalType === 'PLATINUM') defaultPurity = '95';
+      else if (cat.metalType === 'OTHER') defaultPurity = '0';
+    }
+    setForm((f) => ({ ...f, categoryId: catId, purityCarat: defaultPurity }));
+  };
+
   // Pre-fill defaults once data lands.
   if (!form.shopId && shops?.data[0]) setForm((f) => ({ ...f, shopId: shops.data[0]!.id }));
-  if (!form.categoryId && cats?.data[0]) setForm((f) => ({ ...f, categoryId: cats.data[0]!.id }));
+  if (!form.categoryId && cats?.data[0]) {
+    const firstCat = cats.data[0]!;
+    let defaultPurity = '22';
+    if (firstCat.metalType === 'SILVER') defaultPurity = '0';
+    else if (firstCat.metalType === 'PLATINUM') defaultPurity = '95';
+    else if (firstCat.metalType === 'OTHER') defaultPurity = '0';
+    setForm((f) => ({ ...f, categoryId: firstCat.id, purityCarat: defaultPurity }));
+  }
 
   const submit = async (e: React.FormEvent): Promise<void> => {
     e.preventDefault();
@@ -1046,7 +1074,20 @@ function AddItemDialog({ open, onClose }: { open: boolean; onClose: () => void }
     const costPricePaise = Math.round(parseFloat(form.costPriceRupees) * 100);
     if (!form.sku.trim()) return void toast.error('SKU is required');
     if (!Number.isFinite(weightMg) || weightMg <= 0) return void toast.error('Weight must be > 0');
-    if (![1400, 1800, 2200, 2400].includes(purityCaratX100)) return void toast.error('Purity must be 14K, 18K, 22K or 24K');
+
+    // Validate purity based on metal type
+    if (metalType === 'GOLD') {
+      if (![1400, 1800, 2200, 2400].includes(purityCaratX100)) {
+        return void toast.error('Purity must be 14K, 18K, 22K or 24K for Gold');
+      }
+    } else if (metalType === 'SILVER') {
+      if (purityCaratX100 !== 0) return void toast.error('Purity must be Silver (0) for Silver category');
+    } else if (metalType === 'PLATINUM') {
+      if (purityCaratX100 !== 9500) return void toast.error('Purity must be Platinum (95K) for Platinum category');
+    } else if (metalType === 'OTHER') {
+      if (purityCaratX100 !== 0) return void toast.error('Purity must be 0 for Other category');
+    }
+
     if (!Number.isFinite(costPricePaise) || costPricePaise <= 0) return void toast.error('Cost price must be > 0');
     if (!form.shopId || !form.categoryId) return void toast.error('Pick a shop and category');
 
@@ -1082,6 +1123,40 @@ function AddItemDialog({ open, onClose }: { open: boolean; onClose: () => void }
         </SheetHeader>
         <SheetBody>
           <form onSubmit={submit} className="space-y-4 text-sm">
+            <Field label="Copy details from existing SKU (optional)">
+              <select
+                onChange={(e) => {
+                  const val = e.target.value;
+                  if (!val) return;
+                  const it = existingItems.find((i) => i.id === val);
+                  if (it) {
+                    setForm({
+                      sku: it.sku,
+                      shopId: it.shopId,
+                      categoryId: it.categoryId,
+                      weightG: String(it.weightMg / 1000),
+                      purityCarat: String(it.purityCaratX100 === 0 ? '0' : it.purityCaratX100 / 100),
+                      stoneWeightG: it.stoneWeightMg ? String(it.stoneWeightMg / 1000) : '',
+                      hallmarkStatus: it.hallmarkStatus,
+                      hallmarkRef: it.hallmarkRef || '',
+                      costPriceRupees: String(it.costPricePaise / 100),
+                      makingChargePct: it.makingChargeBps ? String(it.makingChargeBps / 100) : '',
+                    });
+                    toast.success(`Copied details from ${it.sku}`);
+                  }
+                }}
+                className={fieldCls}
+                value=""
+              >
+                <option value="">Choose an existing item to copy details…</option>
+                {existingItems.map((it) => (
+                  <option key={it.id} value={it.id}>
+                    {it.sku} - {it.name || it.sku}
+                  </option>
+                ))}
+              </select>
+            </Field>
+
             <Field label="SKU">
               <input
                 value={form.sku}
@@ -1109,7 +1184,7 @@ function AddItemDialog({ open, onClose }: { open: boolean; onClose: () => void }
               <Field label="Category">
                 <select
                   value={form.categoryId}
-                  onChange={(e) => setForm({ ...form, categoryId: e.target.value })}
+                  onChange={(e) => handleCategoryChange(e.target.value)}
                   className={fieldCls}
                   required
                 >
@@ -1138,10 +1213,23 @@ function AddItemDialog({ open, onClose }: { open: boolean; onClose: () => void }
                   onChange={(e) => setForm({ ...form, purityCarat: e.target.value })}
                   className={fieldCls}
                 >
-                  <option value="24">24K</option>
-                  <option value="22">22K</option>
-                  <option value="18">18K</option>
-                  <option value="14">14K</option>
+                  {metalType === 'GOLD' && (
+                    <>
+                      <option value="24">24K</option>
+                      <option value="22">22K</option>
+                      <option value="18">18K</option>
+                      <option value="14">14K</option>
+                    </>
+                  )}
+                  {metalType === 'SILVER' && (
+                    <option value="0">Silver</option>
+                  )}
+                  {metalType === 'PLATINUM' && (
+                    <option value="95">Platinum (95% Pt)</option>
+                  )}
+                  {metalType === 'OTHER' && (
+                    <option value="0">Non-precious / Attachment</option>
+                  )}
                 </select>
               </Field>
               <Field label="Stone wt (g)">
@@ -1231,7 +1319,7 @@ function TransferDialog({
   item: Item;
 }): JSX.Element {
   const { data: shops } = useGetShopsQuery();
-  const [transfer, { isLoading }] = useTransferItemMutation();
+  const [createTransfer, { isLoading }] = useCreateTransferMutation();
   const others = (shops?.data ?? []).filter((s) => s.id !== item.shopId);
   const [toShopId, setToShopId] = useState<string>('');
   const [reason, setReason] = useState('');
@@ -1243,12 +1331,17 @@ function TransferDialog({
     if (!toShopId) return void toast.error('Pick a destination shop');
     if (!reason.trim()) return void toast.error('Reason is required');
     try {
-      await transfer({ id: item.id, toShopId, reason: reason.trim() }).unwrap();
-      toast.success(`Transferred ${item.sku}`);
+      await createTransfer({
+        fromShopId: item.shopId,
+        toShopId,
+        itemIds: [item.id],
+        reason: reason.trim(),
+      }).unwrap();
+      toast.success(`Transfer requested for ${item.sku} — awaiting approval`);
       onClose();
     } catch (err) {
       const message =
-        (err as { data?: { error?: { message?: string } } }).data?.error?.message ?? 'Could not transfer.';
+        (err as { data?: { error?: { message?: string } } }).data?.error?.message ?? 'Could not request transfer.';
       toast.error(message);
     }
   };
@@ -1290,7 +1383,7 @@ function TransferDialog({
                 Cancel
               </Button>
               <Button type="submit" className="flex-1" disabled={isLoading}>
-                {isLoading ? 'Transferring…' : 'Confirm transfer'}
+                {isLoading ? 'Submitting…' : 'Request transfer'}
               </Button>
             </div>
           </form>
@@ -1624,5 +1717,272 @@ function Row({ label, children }: { label: string; children: React.ReactNode }):
       <dt className="text-ink-500">{label}</dt>
       <dd>{children}</dd>
     </div>
+  );
+}
+
+// ----------------------------------------------------------------------------
+// DistributeStockDialog.
+
+import { useEffect } from 'react';
+
+function DistributeStockDialog({
+  open,
+  onClose,
+}: {
+  open: boolean;
+  onClose: () => void;
+}): JSX.Element {
+  const { data: shopsRes } = useGetShopsQuery();
+  const { data: catRes } = useGetCategoriesQuery();
+  const [createTransfer] = useCreateTransferMutation();
+
+  const shops = shopsRes?.data ?? [];
+  const categories = catRes?.data ?? [];
+
+  const [sourceShopId, setSourceShopId] = useState('');
+  const [toShopId, setToShopId] = useState('');
+  const [search, setSearch] = useState('');
+  const [selectedCatId, setSelectedCatId] = useState<string>('ALL');
+  const [selectedIds, setSelectedIds] = useState<Record<string, boolean>>({});
+  const [reason, setReason] = useState('Bulk stock distribution from warehouse');
+  const [distributing, setDistributing] = useState(false);
+
+  // Set default source shop (preferring Warehouse)
+  useEffect(() => {
+    if (shops.length > 0 && !sourceShopId) {
+      const warehouse = shops.find((s) => s.name.toLowerCase().includes('warehouse'));
+      setSourceShopId(warehouse ? warehouse.id : (shops[0]?.id ?? ''));
+    }
+  }, [shops, sourceShopId]);
+
+  // Set default destination shop (different from source)
+  const destinationShops = useMemo(() => {
+    return shops.filter((s) => s.id !== sourceShopId);
+  }, [shops, sourceShopId]);
+
+  useEffect(() => {
+    if (destinationShops.length > 0) {
+      if (!toShopId || !destinationShops.some((s) => s.id === toShopId)) {
+        setToShopId(destinationShops[0]?.id ?? '');
+      }
+    } else {
+      setToShopId('');
+    }
+  }, [destinationShops, toShopId]);
+
+  // Fetch in-stock items at the source shop
+  const { data: sourceItemsRes, isLoading: loadingItems } = useGetItemsQuery(
+    { shopId: sourceShopId || undefined },
+    { skip: !sourceShopId }
+  );
+
+  const sourceItems = useMemo(() => {
+    return (sourceItemsRes?.data ?? []).filter((i) => i.status === 'IN_STOCK');
+  }, [sourceItemsRes]);
+
+  const filteredItems = useMemo(() => {
+    let pool = sourceItems;
+    if (selectedCatId !== 'ALL') {
+      pool = pool.filter((i) => i.categoryId === selectedCatId);
+    }
+    const q = search.trim().toLowerCase();
+    if (q) {
+      pool = pool.filter((i) =>
+        [i.sku, i.barcodeData, i.name].some((s) =>
+          (s ?? '').toString().toLowerCase().includes(q)
+        )
+      );
+    }
+    return pool;
+  }, [sourceItems, selectedCatId, search]);
+
+  // Clear selections when source shop changes
+  useEffect(() => {
+    setSelectedIds({});
+  }, [sourceShopId]);
+
+  const toggleSelect = (id: string) => {
+    setSelectedIds((prev) => ({ ...prev, [id]: !prev[id] }));
+  };
+
+  const selectedCount = Object.values(selectedIds).filter(Boolean).length;
+
+  const toggleSelectAll = () => {
+    const allActiveSelected = filteredItems.length > 0 && filteredItems.every((i) => selectedIds[i.id]);
+    const next: Record<string, boolean> = { ...selectedIds };
+    for (const i of filteredItems) {
+      next[i.id] = !allActiveSelected;
+    }
+    setSelectedIds(next);
+  };
+
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const ids = Object.keys(selectedIds).filter((id) => selectedIds[id]);
+    if (ids.length === 0) return void toast.error('Select at least one item to distribute');
+    if (!toShopId) return void toast.error('Pick a destination shop');
+    if (!reason.trim()) return void toast.error('Reason is required');
+
+    setDistributing(true);
+    const toastId = toast.loading(`Submitting transfer for ${ids.length} item(s)…`);
+
+    try {
+      await createTransfer({
+        fromShopId: sourceShopId,
+        toShopId,
+        itemIds: ids,
+        reason: reason.trim(),
+      }).unwrap();
+      toast.success(`Transfer requested for ${ids.length} item(s) — awaiting approval`, { id: toastId });
+      setSelectedIds({});
+      onClose();
+    } catch (err) {
+      const message =
+        (err as { data?: { error?: { message?: string } } }).data?.error?.message ??
+        'Could not submit transfer.';
+      toast.error(message, { id: toastId });
+    } finally {
+      setDistributing(false);
+    }
+  };
+
+  return (
+    <Sheet open={open} onOpenChange={(o) => !o && onClose()}>
+      <SheetContent className="!max-w-2xl">
+        <SheetHeader>
+          <SheetTitle>Distribute stock</SheetTitle>
+        </SheetHeader>
+        <SheetBody>
+          <form onSubmit={submit} className="space-y-4 text-sm">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <Field label="Source shop (Distribution Center)">
+                <select
+                  value={sourceShopId}
+                  onChange={(e) => setSourceShopId(e.target.value)}
+                  className={fieldCls}
+                  required
+                >
+                  {shops.map((s) => (
+                    <option key={s.id} value={s.id}>
+                      {s.name}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+              <Field label="Destination branch">
+                <select
+                  value={toShopId}
+                  onChange={(e) => setToShopId(e.target.value)}
+                  className={fieldCls}
+                  required
+                  disabled={destinationShops.length === 0}
+                >
+                  {destinationShops.map((s) => (
+                    <option key={s.id} value={s.id}>
+                      {s.name}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+            </div>
+
+            <div className="border-t border-ink-100 pt-3">
+              <span className="text-eyebrow uppercase text-ink-500 block mb-1">Select items to distribute</span>
+              <div className="flex gap-2 items-center my-2">
+                <input
+                  placeholder="Search SKUs or names..."
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                  className={`${fieldCls} flex-1`}
+                />
+                <select
+                  value={selectedCatId}
+                  onChange={(e) => setSelectedCatId(e.target.value)}
+                  className={`${fieldCls} w-48`}
+                >
+                  <option value="ALL">All categories</option>
+                  {categories.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="border border-ink-100 rounded-lg max-h-[250px] overflow-y-auto bg-ink-25">
+                {loadingItems ? (
+                  <p className="text-xs text-ink-500 text-center py-6">Loading showroom items...</p>
+                ) : filteredItems.length === 0 ? (
+                  <p className="text-xs text-ink-400 text-center py-6">No in-stock items available.</p>
+                ) : (
+                  <table className="w-full text-xs text-left">
+                    <thead className="sticky top-0 bg-ink-100 border-b border-ink-200">
+                      <tr>
+                        <th className="p-2 w-10">
+                          <input
+                            type="checkbox"
+                            checked={filteredItems.length > 0 && filteredItems.every((i) => selectedIds[i.id])}
+                            onChange={toggleSelectAll}
+                            aria-label="Select all"
+                          />
+                        </th>
+                        <th className="p-2">SKU / Name</th>
+                        <th className="p-2">Category</th>
+                        <th className="p-2 text-right">Weight</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {filteredItems.map((it) => (
+                        <tr key={it.id} className="border-b border-ink-100 hover:bg-ink-50">
+                          <td className="p-2">
+                            <input
+                              type="checkbox"
+                              checked={!!selectedIds[it.id]}
+                              onChange={() => toggleSelect(it.id)}
+                              aria-label={`Select ${it.sku}`}
+                            />
+                          </td>
+                          <td className="p-2">
+                            <p className="font-semibold text-ink-900">{it.sku}</p>
+                            {it.name && <p className="text-[10px] text-ink-500 truncate max-w-[200px]">{it.name}</p>}
+                          </td>
+                          <td className="p-2 text-ink-600">
+                            {categories.find((c) => c.id === it.categoryId)?.name ?? '—'}
+                          </td>
+                          <td className="p-2 text-right font-mono">
+                            {(it.weightMg / 1000).toFixed(3)}g
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                )}
+              </div>
+            </div>
+
+            <Field label="Distribution reason (for audit trail)">
+              <input
+                value={reason}
+                onChange={(e) => setReason(e.target.value)}
+                className={fieldCls}
+                required
+              />
+            </Field>
+
+            <div className="flex gap-2 pt-2 border-t border-ink-100 mt-4">
+              <span className="text-xs text-ink-500 flex-1 flex items-center">
+                {selectedCount} item(s) selected
+              </span>
+              <Button variant="outline" type="button" onClick={onClose} disabled={distributing}>
+                Cancel
+              </Button>
+              <Button type="submit" disabled={distributing || selectedCount === 0} className="px-6">
+                {distributing ? 'Distributing...' : 'Confirm distribution'}
+              </Button>
+            </div>
+          </form>
+        </SheetBody>
+      </SheetContent>
+    </Sheet>
   );
 }

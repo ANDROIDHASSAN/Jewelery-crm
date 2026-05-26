@@ -10,6 +10,7 @@ import {
   Settings,
   LayoutDashboard,
   UserCog,
+  Truck,
   X,
 } from 'lucide-react';
 import { cn } from '@/lib/cn';
@@ -46,6 +47,7 @@ const sections: NavSection[] = [
     title: 'Operations',
     items: [
       { to: '/admin/inventory', label: 'Inventory', icon: Boxes, anyPerm: ['inventory.read', 'inventory.write'] },
+      { to: '/admin/inventory/transfers', label: 'Transfers', icon: Truck, anyPerm: ['inventory.read', 'inventory.transfer'] },
       // No POS billing here — that lives on the pos.<host> subdomain.
       // This is the read-only owner / accountant monitor across every shop.
       { to: '/admin/counter', label: 'Offline shops', icon: Store, anyPerm: ['pos.monitor'] },

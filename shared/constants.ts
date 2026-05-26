@@ -387,7 +387,9 @@ export type PurchaseOrderStatus = (typeof PURCHASE_ORDER_STATUSES)[number];
 export const GOLD_LOAN_STATUSES = ['ACTIVE', 'PARTIALLY_REPAID', 'CLOSED', 'DEFAULTED'] as const;
 export type GoldLoanStatus = (typeof GOLD_LOAN_STATUSES)[number];
 
-export const TRANSFER_STATUSES = ['INITIATED', 'IN_TRANSIT', 'ACCEPTED', 'REJECTED'] as const;
+// Transfer workflow: PENDING (requested) -> APPROVED (items in transit) ->
+// COMPLETED (received at destination). REJECTED is terminal from PENDING.
+export const TRANSFER_STATUSES = ['PENDING', 'APPROVED', 'COMPLETED', 'REJECTED'] as const;
 export type TransferStatus = (typeof TRANSFER_STATUSES)[number];
 
 // --------------------------------------------------------------------------

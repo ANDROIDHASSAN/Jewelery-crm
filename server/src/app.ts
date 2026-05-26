@@ -26,6 +26,7 @@ import { usersRouter } from './modules/users/users.routes.js';
 import { rolesRouter } from './modules/roles/roles.routes.js';
 import { shopsRouter } from './modules/shops/shops.routes.js';
 import { inventoryRouter } from './modules/inventory/inventory.routes.js';
+import { transfersRouter } from './modules/transfers/transfers.routes.js';
 import { posRouter } from './modules/pos/pos.routes.js';
 import { posFeaturesRouter } from './modules/pos/pos-features.routes.js';
 import { counterRouter } from './modules/counter/counter.routes.js';
@@ -100,6 +101,15 @@ export function createApp(): express.Express {
       'inventory.purchase_order',
     ),
     inventoryRouter,
+  );
+
+  // Stock transfer workflow (warehouse <-> shop). Anyone with inventory.read
+  // can browse the queue; mutating actions are gated by inventory.transfer
+  // inside the router itself.
+  protectedRouter.use(
+    '/transfers',
+    requireAnyPermission('inventory.read', 'inventory.transfer'),
+    transfersRouter,
   );
 
   // POS — two routers, two audiences:

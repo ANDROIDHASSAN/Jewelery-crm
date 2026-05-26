@@ -13,7 +13,10 @@ import type {
   ItemSchema,
   ItemInputSchema,
   ItemMovementSchema,
-  TransferInitiateSchema,
+  TransferSchema,
+  TransferLineSchema,
+  TransferCreateSchema,
+  TransferRejectSchema,
   VendorSchema,
   VendorInputSchema,
   PurchaseOrderSchema,
@@ -59,7 +62,12 @@ export type CategoryInput = z.infer<typeof CategoryInputSchema>;
 export type Item = z.infer<typeof ItemSchema>;
 export type ItemInput = z.infer<typeof ItemInputSchema>;
 export type ItemMovement = z.infer<typeof ItemMovementSchema>;
-export type TransferInitiate = z.infer<typeof TransferInitiateSchema>;
+export type Transfer = z.infer<typeof TransferSchema>;
+export type TransferLine = z.infer<typeof TransferLineSchema>;
+export type TransferCreate = z.infer<typeof TransferCreateSchema>;
+export type TransferReject = z.infer<typeof TransferRejectSchema>;
+// `TransferStatus` is exported from ./constants.ts (the canonical enum). Don't
+// re-export from the schema to avoid an ambiguous name across shared/index.ts.
 export type Vendor = z.infer<typeof VendorSchema>;
 export type VendorInput = z.infer<typeof VendorInputSchema>;
 export type PurchaseOrder = z.infer<typeof PurchaseOrderSchema>;

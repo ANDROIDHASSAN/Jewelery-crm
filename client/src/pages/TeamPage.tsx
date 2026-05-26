@@ -35,7 +35,7 @@ import {
   useRevokeInvitationMutation,
   type RoleSummary,
 } from '@/features/team/teamApi';
-import { useGetShopsQuery } from '@/features/shops/shopsApi';
+import { useGetShopsQuery, useCreateShopMutation } from '@/features/shops/shopsApi';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -86,7 +86,7 @@ function groupByModule<T extends { module: string }>(rows: readonly T[]): Array<
   return ordered;
 }
 
-type Tab = 'members' | 'invitations' | 'roles' | 'permissions';
+type Tab = 'members' | 'invitations' | 'roles' | 'shops' | 'permissions';
 
 export function TeamPage(): JSX.Element {
   const [tab, setTab] = useState<Tab>('members');
@@ -94,6 +94,7 @@ export function TeamPage(): JSX.Element {
     { id: 'members', label: 'Members' },
     { id: 'invitations', label: 'Invitations' },
     { id: 'roles', label: 'Roles' },
+    { id: 'shops', label: 'Shops' },
     { id: 'permissions', label: 'Permissions reference' },
   ];
 
@@ -116,6 +117,7 @@ export function TeamPage(): JSX.Element {
       {tab === 'members' && <MembersTab />}
       {tab === 'invitations' && <InvitationsTab />}
       {tab === 'roles' && <RolesTab />}
+      {tab === 'shops' && <ShopsTab />}
       {tab === 'permissions' && <PermissionsReferenceTab />}
     </div>
   );
@@ -236,6 +238,153 @@ function RoleBadge({ slug, name }: { slug: string; name: string }): JSX.Element 
     slug === 'POS_USER' ? 'bg-warning-50 text-warning-700' : 'bg-ink-50 text-ink-700';
   return <span className={cn('inline-flex items-center px-2 py-0.5 rounded text-xs', tone)}>{name}</span>;
 }
+
+function ShopsTab(): JSX.Element {
+  const [addingOpen, setAddingOpen] = useState(false);
+  const { data, isLoading } = useGetShopsQuery();
+  const shops = data?.data ?? [];
+
+  return (
+    <section className="space-y-4">
+      <div className="flex justify-end">
+        <Button onClick={() => setAddingOpen(true)} className="w-full sm:w-auto">
+          <Plus className="h-4 w-4 mr-1.5" /> Add shop
+        </Button>
+      </div>
+
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+        {isLoading && <p className="text-sm text-ink-500 col-span-full text-center py-6">Loading shops…</p>}
+        {!isLoading && shops.length === 0 && (
+          <div className="col-span-full">
+            <EmptyState title="No shops registered" body="Register a shop branch to associate staff and manage inventory." />
+          </div>
+        )}
+        {shops.map((s) => (
+          <div
+            key={s.id}
+            className="rounded-md border border-ink-100 bg-ink-0 p-4 space-y-2 hover:border-brand-300 transition-colors text-sm"
+          >
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <h3 className="text-sm font-semibold text-ink-900 truncate">{s.name}</h3>
+                <p className="text-[10px] text-ink-400 mt-0.5 font-mono">{s.id}</p>
+              </div>
+              <Badge tone={s.isActive ? 'success' : 'neutral'}>
+                {s.isActive ? 'Open' : 'Closed'}
+              </Badge>
+            </div>
+            <div className="space-y-1 text-xs text-ink-600 pt-2 border-t border-ink-50">
+              <p className="truncate"><strong>Phone:</strong> {s.phone}</p>
+              <p className="truncate"><strong>GST State:</strong> {s.gstStateCode}</p>
+              <p className="line-clamp-2"><strong>Address:</strong> {s.address}</p>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      <AddShopSheet open={addingOpen} onClose={() => setAddingOpen(false)} />
+    </section>
+  );
+}
+
+function AddShopSheet({ open, onClose }: { open: boolean; onClose: () => void }): JSX.Element {
+  const [create, { isLoading }] = useCreateShopMutation();
+  const [form, setForm] = useState({ name: '', phone: '+91', gstStateCode: '', address: '', isActive: true, isWarehouse: false });
+
+  async function submit(e: React.FormEvent): Promise<void> {
+    e.preventDefault();
+    const digits = form.phone.replace(/\D/g, '');
+    const local = digits.startsWith('91') ? digits.slice(2) : digits;
+    if (form.name.trim().length < 2) {
+      toast.error('Name is required');
+      return;
+    }
+    if (!/^[6-9]\d{9}$/.test(local)) {
+      toast.error('Phone must be a valid Indian number');
+      return;
+    }
+    if (!/^\d{2}$/.test(form.gstStateCode.trim())) {
+      toast.error('GST state code must be exactly 2 digits (e.g. 27 for Maharashtra)');
+      return;
+    }
+    try {
+      await create({
+        name: form.name.trim(),
+        phone: `+91${local}`,
+        gstStateCode: form.gstStateCode.trim(),
+        address: form.address.trim(),
+        isActive: form.isActive,
+        isWarehouse: form.isWarehouse,
+      }).unwrap();
+      toast.success(`Created shop ${form.name}`);
+      setForm({ name: '', phone: '+91', gstStateCode: '', address: '', isActive: true, isWarehouse: false });
+      onClose();
+    } catch (err: unknown) {
+      const e = err as { data?: { error?: { message?: string } } };
+      toast.error(e.data?.error?.message ?? 'Failed to create shop');
+    }
+  }
+
+  return (
+    <Sheet open={open} onOpenChange={(v) => { if (!v) onClose(); }}>
+      <SheetContent side="right" className="w-full sm:max-w-md md:max-w-lg p-0 flex flex-col">
+        <header className="sticky top-0 z-10 bg-ink-0 border-b border-ink-100 px-5 sm:px-6 py-4 pr-12">
+          <h2 className="font-display text-md sm:text-lg text-ink-900">Add new shop branch</h2>
+          <p className="text-xs text-ink-500 mt-0.5">Register a new showroom or branch outlet.</p>
+        </header>
+        <form className="flex-1 overflow-y-auto px-5 sm:px-6 py-5 space-y-4" onSubmit={submit} id="add-shop-form">
+          <Field label="Shop name">
+            <Input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} required minLength={2} placeholder="MG Road Showroom" />
+          </Field>
+          <Field label="Phone number">
+            <Input placeholder="+91 XXXXX XXXXX" value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} required />
+          </Field>
+          <Field label="GST State Code" hint="2-digit state code (e.g., 06 for Haryana, 27 for Maharashtra)">
+            <Input placeholder="06" value={form.gstStateCode} onChange={(e) => setForm({ ...form, gstStateCode: e.target.value })} required maxLength={2} />
+          </Field>
+          <Field label="Address">
+            <textarea
+              className="w-full min-h-[80px] rounded-md border border-ink-200 px-3 py-2 text-sm bg-ink-0 focus:outline-none focus:ring-2 focus:ring-brand-500/20 focus:border-brand-500"
+              placeholder="Full physical address of the showroom"
+              value={form.address}
+              onChange={(e) => setForm({ ...form, address: e.target.value })}
+              required
+            />
+          </Field>
+          <div className="flex items-center gap-2">
+            <input
+              type="checkbox"
+              id="shop-active"
+              checked={form.isActive}
+              onChange={(e) => setForm({ ...form, isActive: e.target.checked })}
+              className="h-4 w-4 rounded border-ink-300 text-brand-600 focus:ring-brand-500"
+            />
+            <label htmlFor="shop-active" className="text-sm font-medium text-ink-700">Open and active for billing</label>
+          </div>
+          <div className="flex items-center gap-2">
+            <input
+              type="checkbox"
+              id="shop-warehouse"
+              checked={form.isWarehouse}
+              onChange={(e) => setForm({ ...form, isWarehouse: e.target.checked })}
+              className="h-4 w-4 rounded border-ink-300 text-brand-600 focus:ring-brand-500"
+            />
+            <label htmlFor="shop-warehouse" className="text-sm font-medium text-ink-700">
+              Warehouse (stocks inventory, does not sell from POS — used as transfer source)
+            </label>
+          </div>
+        </form>
+        <footer className="sticky bottom-0 bg-ink-0 border-t border-ink-100 px-5 sm:px-6 py-3 flex flex-col-reverse sm:flex-row sm:items-center sm:justify-end gap-2">
+          <Button type="button" variant="secondary" onClick={onClose} className="sm:order-1">Cancel</Button>
+          <Button type="submit" form="add-shop-form" disabled={isLoading} className="sm:order-2 sm:min-w-[160px]">
+            {isLoading ? 'Creating…' : 'Create shop'}
+          </Button>
+        </footer>
+      </SheetContent>
+    </Sheet>
+  );
+}
+
 
 function AddUserSheet({ open, onClose }: { open: boolean; onClose: () => void }): JSX.Element {
   const { data: rolesData } = useListRolesQuery();

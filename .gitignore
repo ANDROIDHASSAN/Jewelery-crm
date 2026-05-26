@@ -43,3 +43,10 @@ client/.vite-dev.log.out
 .claude/
 shared/*.js
 client/vite.config.ts.timestamp-*
+
+# Playwright MCP snapshots + root-level smoke-test screenshots
+.playwright-mcp/
+/transfers-completed-tab.png
+/transfers-page-completed.png
+# Detached dev-server log dir written by PowerShell Start-Process during local runs
+.run/

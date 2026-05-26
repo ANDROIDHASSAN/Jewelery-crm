@@ -32,8 +32,8 @@ export function ParkedBillsPage(): JSX.Element {
       } catch {
         /* ignore */
       }
-      toast.success('Bill resumed — back to billing.');
-      navigate('/pos');
+      const targetPath = window.location.pathname.startsWith('/pos') ? '/pos' : '/';
+      navigate(targetPath);
     } catch (err: unknown) {
       const e = err as { data?: { error?: { message?: string } } };
       toast.error(e.data?.error?.message ?? 'Could not resume bill');

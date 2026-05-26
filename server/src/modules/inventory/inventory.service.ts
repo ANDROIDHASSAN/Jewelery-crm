@@ -84,29 +84,9 @@ export async function deleteItem(id: string, performedByUserId?: string) {
   void writeAudit('Item', id, 'DELETE', before, after, performedByUserId);
 }
 
-export async function transferItem(id: string, toShopId: string, reason: string, performedByUserId?: string) {
-  const tenantId = getTenantId();
-  if (!tenantId) throw new Error('tenantId missing');
-  const item = await prisma.item.findUnique({ where: { id } });
-  if (!item) throw new NotFoundError();
-  if (item.status !== 'IN_STOCK') throw new BusinessRuleError('ITEM_NOT_IN_STOCK', 'Item is not in stock');
-  const [updated] = await prisma.$transaction([
-    prisma.item.update({ where: { id }, data: { status: 'IN_TRANSIT', shopId: toShopId } }),
-    prisma.itemMovement.create({
-      data: {
-        tenantId,
-        itemId: id,
-        fromShopId: item.shopId,
-        toShopId,
-        type: 'TRANSFER',
-        reason,
-        performedByUserId: performedByUserId ?? null,
-      },
-    }),
-  ]);
-  void writeAudit('Item', id, 'TRANSFER', item, updated, performedByUserId);
-  return updated;
-}
+// transferItem() removed — stock moves now go through the /transfers
+// workflow (PENDING -> APPROVED -> COMPLETED). See
+// server/src/modules/transfers/transfers.service.ts.
 
 export async function recordWastage(id: string, reason: string, performedByUserId?: string) {
   const tenantId = getTenantId();

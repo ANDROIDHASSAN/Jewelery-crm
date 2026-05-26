@@ -12,6 +12,7 @@ import {
   PURITY_VALUES,
   PURCHASE_ORDER_STATUSES,
   GOLD_LOAN_STATUSES,
+  TRANSFER_STATUSES,
 } from './constants.js';
 
 // --- Primitives ---
@@ -68,6 +69,9 @@ export const ShopSchema = z.object({
   gstStateCode: z.string().regex(/^\d{2}$/),
   phone: IndianPhoneSchema,
   isActive: z.boolean().default(true),
+  // A warehouse stocks inventory but doesn't sell from POS. Used as a source
+  // node in the transfer workflow.
+  isWarehouse: z.boolean().default(false),
 });
 
 export const ShopInputSchema = ShopSchema.omit({ id: true, tenantId: true });
@@ -239,10 +243,51 @@ export const ItemMovementSchema = z.object({
   createdAt: z.coerce.date(),
 });
 
-export const TransferInitiateSchema = z.object({
-  itemId: CuidSchema,
+// --- Stock transfer workflow ---
+// State machine: PENDING -> APPROVED -> COMPLETED, or PENDING -> REJECTED.
+// One Transfer carries many items via TransferLine; quantity = lines.length.
+
+export const TransferStatusSchema = z.enum(TRANSFER_STATUSES);
+
+export const TransferCreateSchema = z.object({
+  fromShopId: CuidSchema,
   toShopId: CuidSchema,
+  // Cap at 200 items per transfer to keep the approve/complete txn bounded.
+  itemIds: z.array(CuidSchema).min(1).max(200),
   reason: z.string().min(1).max(400),
+  notes: z.string().max(1000).optional().nullable(),
+}).refine((v) => v.fromShopId !== v.toShopId, {
+  message: 'fromShopId and toShopId must differ',
+  path: ['toShopId'],
+});
+
+export const TransferRejectSchema = z.object({
+  rejectionReason: z.string().min(1).max(400),
+});
+
+export const TransferLineSchema = z.object({
+  id: CuidSchema,
+  transferId: CuidSchema,
+  itemId: CuidSchema,
+});
+
+export const TransferSchema = z.object({
+  id: CuidSchema,
+  tenantId: CuidSchema,
+  fromShopId: CuidSchema,
+  toShopId: CuidSchema,
+  status: TransferStatusSchema,
+  reason: z.string(),
+  notes: z.string().nullable(),
+  requestedByUserId: z.string().nullable(),
+  approvedByUserId: z.string().nullable(),
+  completedByUserId: z.string().nullable(),
+  rejectedByUserId: z.string().nullable(),
+  rejectionReason: z.string().nullable(),
+  createdAt: z.coerce.date(),
+  approvedAt: z.coerce.date().nullable(),
+  completedAt: z.coerce.date().nullable(),
+  rejectedAt: z.coerce.date().nullable(),
 });
 
 export const VendorSchema = z.object({
