@@ -161,10 +161,55 @@ export async function createBill(input: BillCreate, createdByUserId?: string) {
       include: { lines: true, payments: true, oldGoldExchange: true },
     });
 
-    // Decrement stock (mark items SOLD).
-    await tx.item.updateMany({
-      where: { id: { in: input.lines.map((l) => l.itemId) }, status: 'IN_STOCK' },
-      data: { status: 'SOLD' },
+    // Decrement stock — branch by serialized vs lot.
+    //   serialized: one row = one piece. Flip status to SOLD (one shot).
+    //   lot:        decrement quantityOnHand by 1 per bill line; if it
+    //               reaches 0 flip the row to SOLD so listings stay clean.
+    // Lines are evaluated against the items we already fetched above, so
+    // we don't need a second DB hit just to learn isSerialized.
+    const serializedIds = input.lines
+      .filter((l) => itemById.get(l.itemId)?.isSerialized !== false)
+      .map((l) => l.itemId);
+    const lotLines = input.lines.filter(
+      (l) => itemById.get(l.itemId)?.isSerialized === false,
+    );
+
+    if (serializedIds.length > 0) {
+      await tx.item.updateMany({
+        where: { id: { in: serializedIds }, status: 'IN_STOCK' },
+        data: { status: 'SOLD' },
+      });
+    }
+    for (const l of lotLines) {
+      // 1 piece per bill line for now — BillLine.quantity is not yet a
+      // separate column, so the cashier rings up one row per piece. Lot
+      // POS UX will revisit this when it lands.
+      const updated = await tx.item.update({
+        where: { id: l.itemId },
+        data: { quantityOnHand: { decrement: 1 } },
+        select: { quantityOnHand: true },
+      });
+      if (updated.quantityOnHand <= 0) {
+        await tx.item.update({
+          where: { id: l.itemId },
+          data: { status: 'SOLD' },
+        });
+      }
+    }
+
+    // SALE movement per line — historical bug: we never wrote these, so
+    // the item-history view showed PURCHASE but no SALE. One row per
+    // bill line, qty=1 (lot UX will multiply this when it lands).
+    await tx.itemMovement.createMany({
+      data: input.lines.map((l) => ({
+        tenantId,
+        itemId: l.itemId,
+        type: 'SALE' as const,
+        fromShopId: input.shopId,
+        qty: 1,
+        reason: `Bill ${billNumber}`,
+        performedByUserId: createdByUserId ?? null,
+      })),
     });
 
     // Audit log via rawPrisma (it sits outside the tx, fine for v1).

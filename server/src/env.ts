@@ -61,6 +61,14 @@ const EnvSchema = z.object({
   S3_SECRET_KEY: z.string().optional().default(''),
   S3_ENDPOINT: z.string().optional().default('http://localhost:9000'),
 
+  // Cloudinary connection URL — single env that bundles the cloud name, API
+  // key, and API secret. Format: cloudinary://<api_key>:<api_secret>@<cloud_name>.
+  // When set, the server signs each upload (no unsigned-preset setup
+  // required); when empty, the client falls back to the unsigned-preset flow
+  // (VITE_CLOUDINARY_*) and finally to base64 dev fallback. Set this in
+  // production so images go to your Cloudinary instead of bloating the DB.
+  CLOUDINARY_URL: z.string().optional().default(''),
+
   SENTRY_DSN: z.string().optional().default(''),
 });
 

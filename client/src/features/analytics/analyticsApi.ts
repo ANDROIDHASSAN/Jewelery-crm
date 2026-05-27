@@ -61,6 +61,12 @@ export interface InventoryValuation {
     categoryName: string;
     metalType: string;
   }>;
+  byProduct: Array<InventoryValuationAgg & {
+    productKey: string;
+    productName: string;
+    categoryName: string;
+    metalType: string;
+  }>;
   goldRates: Array<{ purity: number; ratePerGramPaise: number; stale: boolean }>;
 }
 

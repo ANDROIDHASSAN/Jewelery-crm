@@ -61,6 +61,9 @@ export const TenantSchema = z.object({
   createdAt: z.coerce.date(),
 });
 
+export const ShopTypeSchema = z.enum(['WAREHOUSE', 'RETAIL']);
+export type ShopTypeKind = z.infer<typeof ShopTypeSchema>;
+
 export const ShopSchema = z.object({
   id: CuidSchema,
   tenantId: CuidSchema,
@@ -70,8 +73,10 @@ export const ShopSchema = z.object({
   phone: IndianPhoneSchema,
   isActive: z.boolean().default(true),
   // A warehouse stocks inventory but doesn't sell from POS. Used as a source
-  // node in the transfer workflow.
+  // node in the transfer workflow. `type` is the canonical field; the legacy
+  // `isWarehouse` boolean mirrors it for backward compatibility.
   isWarehouse: z.boolean().default(false),
+  type: ShopTypeSchema.default('RETAIL'),
 });
 
 export const ShopInputSchema = ShopSchema.omit({ id: true, tenantId: true });
@@ -210,8 +215,12 @@ export const ItemSchema = z.object({
   sku: z.string().min(2).max(60),
   barcodeData: z.string().min(2).max(80),
   name: z.string().min(1).max(160).optional().nullable(),
-  // Cloudinary URLs only. First image is the catalog hero.
-  images: z.array(z.string().url().max(2048)).max(8).default([]),
+  // First image is the catalog hero. In prod these are Cloudinary URLs
+  // (a few hundred chars); in dev / when Cloudinary isn't configured the
+  // client falls back to base64 data URLs which can be tens of KB each.
+  // Total payload is bounded by the Express JSON body parser (1 MB) so we
+  // don't add a tight per-URL cap here.
+  images: z.array(z.string().url()).max(8).default([]),
   weightMg: MgSchema,
   purityCaratX100: PuritySchema,
   stoneWeightMg: MgSchema.optional().nullable(),
@@ -220,6 +229,9 @@ export const ItemSchema = z.object({
   costPricePaise: PaiseSchema,
   makingChargeBps: BpsSchema.optional().nullable(),
   status: z.enum(['IN_STOCK', 'IN_TRANSIT', 'SOLD', 'MELTED']).default('IN_STOCK'),
+  // Hybrid stock model — see schema.prisma comment on Item for the long form.
+  isSerialized: z.boolean().default(true),
+  quantityOnHand: z.number().int().nonnegative().default(1),
   createdAt: z.coerce.date(),
 });
 
@@ -228,7 +240,26 @@ export const ItemInputSchema = ItemSchema.omit({
   tenantId: true,
   createdAt: true,
   status: true,
+}).extend({
+  // Opt-in toggle on the create form: when true, the server also creates a
+  // linked storefront Product so the piece appears on the public catalog
+  // immediately. Defaults to false so legacy callers + bulk-import (which
+  // don't know about this) keep their current behavior.
+  publishToWebsite: z.boolean().optional().default(false),
 });
+
+// AddStock — used by POST /inventory/items/:id/add-stock.
+// Behavior depends on the target Item's `isSerialized` flag:
+//   - serialized: clones `quantity` new Item rows with auto-generated SKUs.
+//   - lot:        increments the existing row's quantityOnHand by `quantity`.
+// `costPricePaise` is an optional override applied only to newly-created
+// serialized clones (lot items keep their existing cost price).
+export const AddStockSchema = z.object({
+  quantity: z.number().int().positive().max(10_000),
+  reason: z.string().max(200).optional(),
+  costPricePaise: z.number().int().nonnegative().optional(),
+});
+export type AddStockInput = z.infer<typeof AddStockSchema>;
 
 export const ItemMovementSchema = z.object({
   id: CuidSchema,
@@ -249,17 +280,36 @@ export const ItemMovementSchema = z.object({
 
 export const TransferStatusSchema = z.enum(TRANSFER_STATUSES);
 
-export const TransferCreateSchema = z.object({
-  fromShopId: CuidSchema,
-  toShopId: CuidSchema,
-  // Cap at 200 items per transfer to keep the approve/complete txn bounded.
-  itemIds: z.array(CuidSchema).min(1).max(200),
-  reason: z.string().min(1).max(400),
-  notes: z.string().max(1000).optional().nullable(),
-}).refine((v) => v.fromShopId !== v.toShopId, {
-  message: 'fromShopId and toShopId must differ',
-  path: ['toShopId'],
+// Per-line input for a transfer. Quantity defaults to 1 — the only legal
+// value for serialized items, and the lot-item lines must specify a positive
+// integer no larger than that source row's quantityOnHand (enforced server-side).
+export const TransferLineInputSchema = z.object({
+  itemId: CuidSchema,
+  quantity: z.number().int().positive().max(10_000).default(1),
 });
+
+export const TransferCreateSchema = z
+  .object({
+    fromShopId: CuidSchema,
+    toShopId: CuidSchema,
+    // Cap at 200 items per transfer to keep the approve/complete txn bounded.
+    // Two shapes accepted for backward compatibility:
+    //   - itemIds: [id, id, ...]                — every line quantity=1
+    //   - lines:   [{ itemId, quantity }, ...]  — explicit per-line quantity
+    // Exactly one must be present.
+    itemIds: z.array(CuidSchema).min(1).max(200).optional(),
+    lines: z.array(TransferLineInputSchema).min(1).max(200).optional(),
+    reason: z.string().min(1).max(400),
+    notes: z.string().max(1000).optional().nullable(),
+  })
+  .refine((v) => v.fromShopId !== v.toShopId, {
+    message: 'fromShopId and toShopId must differ',
+    path: ['toShopId'],
+  })
+  .refine((v) => Boolean(v.itemIds) !== Boolean(v.lines), {
+    message: 'Provide exactly one of itemIds or lines',
+    path: ['lines'],
+  });
 
 export const TransferRejectSchema = z.object({
   rejectionReason: z.string().min(1).max(400),
@@ -269,6 +319,7 @@ export const TransferLineSchema = z.object({
   id: CuidSchema,
   transferId: CuidSchema,
   itemId: CuidSchema,
+  quantity: z.number().int().positive().default(1),
 });
 
 export const TransferSchema = z.object({

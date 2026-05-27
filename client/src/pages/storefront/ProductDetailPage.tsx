@@ -263,6 +263,11 @@ export function ProductDetailPage(): JSX.Element {
           </div>
 
           {/* Quantity + actions */}
+          {product.inStock === false && (
+            <div className="inline-flex items-center gap-2 px-3 py-2 rounded-md bg-ink-900 text-ink-0 text-xs uppercase tracking-[0.18em]">
+              Sold out
+            </div>
+          )}
           <div className="flex flex-wrap gap-3 items-stretch">
             <div className="inline-flex items-center h-12 rounded-full border border-ink-200 overflow-hidden shrink-0">
               <button onClick={() => setQty((q) => Math.max(1, q - 1))} className="h-12 w-12 inline-flex items-center justify-center text-ink-700 hover:bg-ink-50" aria-label="Decrease quantity">
@@ -275,6 +280,7 @@ export function ProductDetailPage(): JSX.Element {
             </div>
             <button
               type="button"
+              disabled={product.inStock === false}
               onClick={() => {
                 // Cart pricePaise mirrors what the server uses for order
                 // line items (basePricePaise + stoneChargePaise) so the
@@ -308,12 +314,13 @@ export function ProductDetailPage(): JSX.Element {
                   resume: doAdd,
                 });
               }}
-              className="flex-1 min-w-[140px] h-12 px-5 sm:px-7 rounded-full bg-ink-900 text-ink-0 text-sm font-medium hover:bg-ink-700 transition-colors duration-fast"
+              className="flex-1 min-w-[140px] h-12 px-5 sm:px-7 rounded-full bg-ink-900 text-ink-0 text-sm font-medium hover:bg-ink-700 transition-colors duration-fast disabled:bg-ink-200 disabled:text-ink-500 disabled:cursor-not-allowed"
             >
-              Add to bag
+              {product.inStock === false ? 'Sold out' : 'Add to bag'}
             </button>
             <button
               type="button"
+              disabled={product.inStock === false}
               onClick={() => {
                 requireAuth({
                   intent: 'buy-now',
@@ -321,7 +328,7 @@ export function ProductDetailPage(): JSX.Element {
                   resume: () => setReserveOpen(true),
                 });
               }}
-              className="flex-1 min-w-[140px] h-12 px-5 sm:px-7 rounded-full bg-brand-400 text-ink-900 text-sm font-medium hover:bg-brand-300 transition-colors duration-fast"
+              className="flex-1 min-w-[140px] h-12 px-5 sm:px-7 rounded-full bg-brand-400 text-ink-900 text-sm font-medium hover:bg-brand-300 transition-colors duration-fast disabled:bg-ink-100 disabled:text-ink-400 disabled:cursor-not-allowed"
             >
               Buy now
             </button>

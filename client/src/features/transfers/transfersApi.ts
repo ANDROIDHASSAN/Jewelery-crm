@@ -26,6 +26,8 @@ export interface TransferLineRow {
   id: string;
   transferId: string;
   itemId: string;
+  // 1 for serialized lines, N for lot lines. Defaults to 1 server-side.
+  quantity: number;
   item: TransferItemRef;
 }
 
@@ -63,6 +65,10 @@ export interface TransferableItem {
   purityCaratX100: number;
   costPricePaise: number;
   images: string[];
+  // Hybrid stock fields — drive the LOT/UNIQUE badge and the per-line
+  // quantity input in the transfer composer.
+  isSerialized: boolean;
+  quantityOnHand: number;
 }
 
 export const transfersApi = baseApi.injectEndpoints({
@@ -125,6 +131,7 @@ export const transfersApi = baseApi.injectEndpoints({
       invalidatesTags: (_r, _e, a) => [
         { type: 'Transfer', id: a.id },
         { type: 'Transfer', id: 'LIST' },
+        { type: 'Item', id: 'TRANSFERABLE' },
         { type: 'Item', id: 'TRANSFERABLE' },
       ],
     }),

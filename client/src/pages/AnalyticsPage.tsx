@@ -700,6 +700,19 @@ function InventoryValuationSection(): JSX.Element {
         paiseToRupeeString(c.marketPaise),
         paiseToRupeeString(c.unrealizedProfitPaise),
       ]),
+      [],
+      ['By product'],
+      ['Product', 'Category', 'Metal', 'Qty in stock', 'Weight (g)', 'Cost (₹)', 'Market (₹)', 'Unrealized (₹)'],
+      ...rep.byProduct.map((p) => [
+        p.productName,
+        p.categoryName,
+        p.metalType,
+        p.count,
+        (p.weightMg / 1000).toFixed(3),
+        paiseToRupeeString(p.costPaise),
+        paiseToRupeeString(p.marketPaise),
+        paiseToRupeeString(p.unrealizedProfitPaise),
+      ]),
     ]);
   }
 
@@ -806,6 +819,50 @@ function InventoryValuationSection(): JSX.Element {
                 ))}
               </tbody>
             </table>
+          </section>
+
+          <section className="rounded-md border border-ink-100 bg-ink-0 overflow-x-auto">
+            <header className="px-4 py-3 border-b border-ink-100 flex items-center justify-between">
+              <h2 className="text-md font-medium text-ink-900">By product</h2>
+              <p className="text-xs text-ink-500">{rep.byProduct.length} products</p>
+            </header>
+            {rep.byProduct.length === 0 ? (
+              <p className="px-4 py-6 text-sm text-ink-500">No in-stock products to value.</p>
+            ) : (
+              <table className="w-full text-sm min-w-[860px]">
+                <thead className="text-eyebrow uppercase text-ink-500 bg-ink-25">
+                  <tr>
+                    <th className="text-left px-4 py-2.5">Product</th>
+                    <th className="text-left px-4 py-2.5">Category</th>
+                    <th className="text-right px-4 py-2.5">Qty in stock</th>
+                    <th className="text-right px-4 py-2.5">Weight</th>
+                    <th className="text-right px-4 py-2.5">Cost</th>
+                    <th className="text-right px-4 py-2.5">Market</th>
+                    <th className="text-right px-4 py-2.5">Unrealized</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-ink-100">
+                  {rep.byProduct.map((p) => (
+                    <tr key={p.productKey}>
+                      <td className="px-4 py-2 font-medium text-ink-900">{p.productName}</td>
+                      <td className="px-4 py-2 text-ink-700">
+                        {p.categoryName}
+                        <span className="ml-1 text-xs text-ink-500">· {p.metalType}</span>
+                      </td>
+                      <td className="px-4 py-2 text-right tabular-nums">{p.count}</td>
+                      <td className="px-4 py-2 text-right"><Weight mg={p.weightMg} /></td>
+                      <td className="px-4 py-2 text-right"><Money paise={p.costPaise} /></td>
+                      <td className="px-4 py-2 text-right text-ink-900 font-medium">
+                        <Money paise={p.marketPaise} />
+                      </td>
+                      <td className={cn('px-4 py-2 text-right font-semibold', p.unrealizedProfitPaise >= 0 ? 'text-success-700' : 'text-danger-700')}>
+                        <Money paise={p.unrealizedProfitPaise} />
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
           </section>
         </>
       )}

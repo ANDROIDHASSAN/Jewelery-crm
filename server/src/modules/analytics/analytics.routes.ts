@@ -86,6 +86,7 @@ async function buildDashboardSummary(shopId: string | undefined): Promise<unknow
     openLeads,
     leadsToday,
     itemAgg,
+    lotItems,
     purities,
   ] = await Promise.all([
     prisma.bill.aggregate({
@@ -106,14 +107,22 @@ async function buildDashboardSummary(shopId: string | undefined): Promise<unknow
     }),
     prisma.lead.count({ where: { status: { in: ['NEW', 'CONTACTED', 'INTERESTED', 'NEGOTIATION'] } } }),
     prisma.lead.count({ where: { createdAt: { gte: startOfToday } } }),
-    // Stock valuation: groupBy purity so we compute one metal-value per
-    // purity bucket instead of looping over every individual item in JS.
-    // Was O(n) row-by-row before; now O(k) where k = number of purities.
+    // Stock valuation: split serialized vs lot rows so the unit count and
+    // total weight stay correct under the hybrid model. Lot rows track N
+    // interchangeable pieces in `quantityOnHand`, so unit count needs
+    // SUM(quantityOnHand) and total weight needs SUM(weightMg * quantityOnHand).
+    // Prisma's groupBy can't do conditional aggregates, so we run two
+    // queries and merge in JS. Still O(k) where k = number of purities,
+    // bounded by ~5 purity values in practice.
     prisma.item.groupBy({
       by: ['purityCaratX100'],
-      where: { status: 'IN_STOCK', ...(shopId ? { shopId } : {}) },
+      where: { status: 'IN_STOCK', isSerialized: true, ...(shopId ? { shopId } : {}) },
       _sum: { weightMg: true },
       _count: { _all: true },
+    }),
+    prisma.item.findMany({
+      where: { status: 'IN_STOCK', isSerialized: false, ...(shopId ? { shopId } : {}) },
+      select: { purityCaratX100: true, weightMg: true, quantityOnHand: true },
     }),
     Promise.all(
       [2400, 2200, 1800, 0].map(async (p) => ({
@@ -144,11 +153,22 @@ async function buildDashboardSummary(shopId: string | undefined): Promise<unknow
   }
   let stockValuationPaise = 0;
   let itemCount = 0;
+  // Serialized rows: 1 unit per row, weight is the per-piece weight.
   for (const grp of itemAgg) {
     const ratePerGramPaise = rateByPurity.get(grp.purityCaratX100) ?? 642_000;
     const totalWeightMg = grp._sum.weightMg ?? 0;
     stockValuationPaise += computeGoldValuePaise(totalWeightMg, grp.purityCaratX100, ratePerGramPaise);
     itemCount += grp._count._all;
+  }
+  // Lot rows: each row holds N interchangeable pieces. Value + unit count
+  // both scale by quantityOnHand. Bug fix: previously these rows counted as
+  // 1 unit each and contributed only a single piece's weight, so a "Gold
+  // Bar 1g × 23" surfaced as "1 in stock" worth one gram.
+  for (const it of lotItems) {
+    const ratePerGramPaise = rateByPurity.get(it.purityCaratX100) ?? 642_000;
+    const totalWeightMg = it.weightMg * it.quantityOnHand;
+    stockValuationPaise += computeGoldValuePaise(totalWeightMg, it.purityCaratX100, ratePerGramPaise);
+    itemCount += it.quantityOnHand;
   }
 
   return {
@@ -366,9 +386,16 @@ analyticsRouter.get('/inventory-valuation', async (req, res, next) => {
         where: { status: 'IN_STOCK', ...(q.shopId ? { shopId: q.shopId } : {}) },
         select: {
           shopId: true,
+          sku: true,
+          name: true,
           weightMg: true,
           purityCaratX100: true,
           costPricePaise: true,
+          // Hybrid stock model: lot rows hold N interchangeable pieces in
+          // quantityOnHand. Pull both so the aggregation can scale every
+          // per-piece value (count, weight, cost, market) by units.
+          isSerialized: true,
+          quantityOnHand: true,
           category: { select: { id: true, name: true, metalType: true } },
           shop: { select: { id: true, name: true } },
         },
@@ -389,16 +416,27 @@ analyticsRouter.get('/inventory-valuation', async (req, res, next) => {
     type Agg = { count: number; weightMg: number; costPaise: number; marketPaise: number };
     const byShop = new Map<string, Agg & { shopName: string }>();
     const byCategory = new Map<string, Agg & { categoryName: string; metalType: string }>();
+    const byProduct = new Map<
+      string,
+      Agg & { productName: string; categoryName: string; metalType: string }
+    >();
     let total: Agg = { count: 0, weightMg: 0, costPaise: 0, marketPaise: 0 };
 
     for (const it of items) {
       const rate = rateByPurity.get(it.purityCaratX100) ?? 642_000;
-      const market = computeGoldValuePaise(it.weightMg, it.purityCaratX100, rate);
+      // Per-piece market value at today's rate; we scale by `units` below so
+      // a lot row of 23 gold bars contributes 23× the value, not 1×.
+      const marketPerPiece = computeGoldValuePaise(it.weightMg, it.purityCaratX100, rate);
+      const units = it.isSerialized ? 1 : it.quantityOnHand;
+      const weightTotal = it.weightMg * units;
+      const costTotal = it.costPricePaise * units;
+      const marketTotal = marketPerPiece * units;
+
       total = {
-        count: total.count + 1,
-        weightMg: total.weightMg + it.weightMg,
-        costPaise: total.costPaise + it.costPricePaise,
-        marketPaise: total.marketPaise + market,
+        count: total.count + units,
+        weightMg: total.weightMg + weightTotal,
+        costPaise: total.costPaise + costTotal,
+        marketPaise: total.marketPaise + marketTotal,
       };
       const s = byShop.get(it.shopId) ?? {
         count: 0,
@@ -409,10 +447,10 @@ analyticsRouter.get('/inventory-valuation', async (req, res, next) => {
       };
       byShop.set(it.shopId, {
         ...s,
-        count: s.count + 1,
-        weightMg: s.weightMg + it.weightMg,
-        costPaise: s.costPaise + it.costPricePaise,
-        marketPaise: s.marketPaise + market,
+        count: s.count + units,
+        weightMg: s.weightMg + weightTotal,
+        costPaise: s.costPaise + costTotal,
+        marketPaise: s.marketPaise + marketTotal,
       });
       const c = byCategory.get(it.category.id) ?? {
         count: 0,
@@ -424,10 +462,28 @@ analyticsRouter.get('/inventory-valuation', async (req, res, next) => {
       };
       byCategory.set(it.category.id, {
         ...c,
-        count: c.count + 1,
-        weightMg: c.weightMg + it.weightMg,
-        costPaise: c.costPaise + it.costPricePaise,
-        marketPaise: c.marketPaise + market,
+        count: c.count + units,
+        weightMg: c.weightMg + weightTotal,
+        costPaise: c.costPaise + costTotal,
+        marketPaise: c.marketPaise + marketTotal,
+      });
+      const productName = it.name?.trim() || it.sku;
+      const productKey = `${productName.toLowerCase()}__${it.category.id}`;
+      const p = byProduct.get(productKey) ?? {
+        count: 0,
+        weightMg: 0,
+        costPaise: 0,
+        marketPaise: 0,
+        productName,
+        categoryName: it.category.name,
+        metalType: it.category.metalType,
+      };
+      byProduct.set(productKey, {
+        ...p,
+        count: p.count + units,
+        weightMg: p.weightMg + weightTotal,
+        costPaise: p.costPaise + costTotal,
+        marketPaise: p.marketPaise + marketTotal,
       });
     }
 
@@ -443,6 +499,13 @@ analyticsRouter.get('/inventory-valuation', async (req, res, next) => {
           .sort((a, b) => b.marketPaise - a.marketPaise),
         byCategory: Array.from(byCategory.entries())
           .map(([categoryId, v]) => ({ categoryId, ...v, unrealizedProfitPaise: v.marketPaise - v.costPaise }))
+          .sort((a, b) => b.marketPaise - a.marketPaise),
+        byProduct: Array.from(byProduct.entries())
+          .map(([productKey, v]) => ({
+            productKey,
+            ...v,
+            unrealizedProfitPaise: v.marketPaise - v.costPaise,
+          }))
           .sort((a, b) => b.marketPaise - a.marketPaise),
         goldRates: purities.map((p) => ({
           purity: p.purity,

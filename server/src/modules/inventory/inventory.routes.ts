@@ -5,6 +5,7 @@ import {
   VendorInputSchema,
   PurchaseOrderCreateSchema,
   WastageInputSchema,
+  AddStockSchema,
 } from '@goldos/shared/schemas';
 import { z } from 'zod';
 import * as svc from './inventory.service.js';
@@ -125,6 +126,20 @@ inventoryRouter.delete('/items/:id', requirePermission('inventory.delete'), asyn
 // Legacy one-shot transfer endpoint removed. Stock moves now go through the
 // /transfers workflow (PENDING -> APPROVED -> COMPLETED). See
 // server/src/modules/transfers/ and client TransfersPage.
+
+// Add stock against an existing Item. Behavior branches on isSerialized:
+// clones N rows for serialized items, increments quantityOnHand for lot items.
+// Works for both SuperAdmin and Accountant — they share the inventory.write
+// permission (see ROLE_DEFAULT_PERMISSIONS in shared/constants.ts).
+inventoryRouter.post('/items/:id/add-stock', requirePermission('inventory.write'), async (req, res, next) => {
+  try {
+    const body = AddStockSchema.parse(req.body);
+    const result = await svc.addStock(req.params['id']!, body, req.user?.userId);
+    res.status(201).json({ data: result });
+  } catch (err) {
+    next(err);
+  }
+});
 
 inventoryRouter.post('/items/:id/wastage', requirePermission('inventory.wastage'), async (req, res, next) => {
   try {

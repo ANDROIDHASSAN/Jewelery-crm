@@ -29,6 +29,13 @@ export interface PublicProduct {
   hallmarkedAt: string | null;
   isPublished: boolean;
   createdAt: string;
+  /**
+   * Live availability flag computed by the server from the linked inventory
+   * Item. `false` when the piece is sold / melted / out of stock; storefront
+   * cards render a "Sold out" badge in that case. Defaults to `true` for
+   * legacy products without a linked Item.
+   */
+  inStock: boolean;
 }
 
 export interface PublicCategory {

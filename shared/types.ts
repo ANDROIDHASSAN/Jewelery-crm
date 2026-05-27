@@ -13,8 +13,10 @@ import type {
   ItemSchema,
   ItemInputSchema,
   ItemMovementSchema,
+  AddStockSchema,
   TransferSchema,
   TransferLineSchema,
+  TransferLineInputSchema,
   TransferCreateSchema,
   TransferRejectSchema,
   VendorSchema,
@@ -62,8 +64,10 @@ export type CategoryInput = z.infer<typeof CategoryInputSchema>;
 export type Item = z.infer<typeof ItemSchema>;
 export type ItemInput = z.infer<typeof ItemInputSchema>;
 export type ItemMovement = z.infer<typeof ItemMovementSchema>;
+export type AddStock = z.infer<typeof AddStockSchema>;
 export type Transfer = z.infer<typeof TransferSchema>;
 export type TransferLine = z.infer<typeof TransferLineSchema>;
+export type TransferLineInput = z.infer<typeof TransferLineInputSchema>;
 export type TransferCreate = z.infer<typeof TransferCreateSchema>;
 export type TransferReject = z.infer<typeof TransferRejectSchema>;
 // `TransferStatus` is exported from ./constants.ts (the canonical enum). Don't

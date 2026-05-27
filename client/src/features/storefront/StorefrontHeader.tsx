@@ -79,7 +79,7 @@ export function StorefrontHeader(): JSX.Element {
   }, [mobileOpen]);
 
   return (
-    <header className="relative z-40">
+    <header className="sticky top-0 z-40">
       {/* Announcement bar — faint blush + champagne, premium tonal. */}
       <div className="bg-[#F5E5DC] border-b border-[#E8CFC1]/60 text-ink-700">
         <div className="max-w-[1280px] mx-auto px-4 sm:px-6 h-9 flex items-center justify-between text-[11px] tracking-wide">
@@ -100,7 +100,7 @@ export function StorefrontHeader(): JSX.Element {
         </div>
       </div>
 
-      {/* Main bar — champagne cream, no shrink (navbar scrolls away with page). */}
+      {/* Main bar — champagne cream. Header is sticky; logo shrinks slightly on scroll. */}
       <div className="bg-[#FAF3EE] border-b border-[#EFE0D2]/70">
         <div className="max-w-[1280px] mx-auto px-4 sm:px-6 flex items-center justify-between gap-3 sm:gap-6 h-16 sm:h-[72px]">
           <button

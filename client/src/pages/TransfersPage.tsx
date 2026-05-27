@@ -304,27 +304,43 @@ function NewTransferDialog({
   open: boolean;
   onClose: () => void;
 }): JSX.Element {
-  const { data: shopsRes } = useGetShopsQuery();
-  const shops = useMemo(() => shopsRes?.data ?? [], [shopsRes?.data]);
+  // Two separate queries — one warehouse-only for the From picker, one
+  // retail-only for the To picker. Falls back to the all-shops list if the
+  // tenant has no warehouses configured yet.
+  const { data: warehousesRes } = useGetShopsQuery({ type: 'WAREHOUSE' });
+  const { data: retailsRes } = useGetShopsQuery({ type: 'RETAIL' });
+  const { data: shopsAllRes } = useGetShopsQuery();
+  const warehouses = useMemo(() => warehousesRes?.data ?? [], [warehousesRes?.data]);
+  const retails = useMemo(() => retailsRes?.data ?? [], [retailsRes?.data]);
+  // For displays that still need a unified lookup of "what shop is this id?".
+  const shopName = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const s of shopsAllRes?.data ?? []) m.set(s.id, s.name);
+    return m;
+  }, [shopsAllRes?.data]);
 
-  // Default source = a warehouse if there is one, otherwise the first shop.
-  const initialSource = useMemo(() => {
-    const wh = shops.find((s) => s.isWarehouse);
-    return wh?.id ?? shops[0]?.id ?? '';
-  }, [shops]);
+  // Default source = first warehouse, fall back to any retail (single-shop
+  // tenants without a warehouse can still transfer shop-to-shop).
+  const fromOptions = warehouses.length > 0 ? warehouses : retails;
 
   const [fromShopId, setFromShopId] = useState('');
   const [toShopId, setToShopId] = useState('');
   const [reason, setReason] = useState('');
-  const [selected, setSelected] = useState<Record<string, boolean>>({});
+  // selectedQty maps itemId -> quantity (0 / undefined = not selected).
+  // Defaults to 1 when the user ticks an item; lot items can be edited up to
+  // their quantityOnHand cap.
+  const [selectedQty, setSelectedQty] = useState<Record<string, number>>({});
   const [search, setSearch] = useState('');
 
-  // Lazily initialise source once shops load. We do this with a derived
-  // assignment rather than useEffect to keep the render path simple.
-  if (!fromShopId && initialSource) setFromShopId(initialSource);
+  // Lazily initialise source once shops load.
+  if (!fromShopId && fromOptions[0]) setFromShopId(fromOptions[0].id);
 
-  const destShops = useMemo(() => shops.filter((s) => s.id !== fromShopId), [shops, fromShopId]);
-  if (!toShopId && destShops[0]) setToShopId(destShops[0].id);
+  // Destination defaults to first retail shop that isn't the source.
+  const destOptions = useMemo(
+    () => retails.filter((s) => s.id !== fromShopId),
+    [retails, fromShopId],
+  );
+  if (!toShopId && destOptions[0]) setToShopId(destOptions[0].id);
 
   const { data: itemsRes, isLoading: itemsLoading } = useGetTransferableItemsQuery(
     fromShopId ? { shopId: fromShopId } : ({ shopId: '' } as { shopId: string }),
@@ -342,30 +358,47 @@ function NewTransferDialog({
 
   const [createTransfer, { isLoading }] = useCreateTransferMutation();
 
-  const selectedIds = Object.keys(selected).filter((id) => selected[id]);
+  const selectedLines = useMemo(
+    () =>
+      Object.entries(selectedQty)
+        .filter(([, qty]) => qty > 0)
+        .map(([itemId, quantity]) => ({ itemId, quantity })),
+    [selectedQty],
+  );
 
   function toggleAll(): void {
-    const allOn = filtered.length > 0 && filtered.every((i) => selected[i.id]);
-    const next = { ...selected };
-    for (const i of filtered) next[i.id] = !allOn;
-    setSelected(next);
+    const allOn = filtered.length > 0 && filtered.every((i) => (selectedQty[i.id] ?? 0) > 0);
+    if (allOn) {
+      const next = { ...selectedQty };
+      for (const i of filtered) delete next[i.id];
+      setSelectedQty(next);
+    } else {
+      const next = { ...selectedQty };
+      for (const i of filtered) next[i.id] = 1;
+      setSelectedQty(next);
+    }
   }
 
   async function submit(e: React.FormEvent): Promise<void> {
     e.preventDefault();
     if (!fromShopId || !toShopId) return void toast.error('Pick source and destination');
     if (fromShopId === toShopId) return void toast.error('Source and destination must differ');
-    if (selectedIds.length === 0) return void toast.error('Select at least one item');
+    if (selectedLines.length === 0) return void toast.error('Select at least one item');
     if (!reason.trim()) return void toast.error('Reason is required');
     try {
       await createTransfer({
         fromShopId,
         toShopId,
-        itemIds: selectedIds,
+        lines: selectedLines,
         reason: reason.trim(),
       }).unwrap();
-      toast.success(`Transfer requested for ${selectedIds.length} item(s) — awaiting approval`);
-      setSelected({});
+      const totalUnits = selectedLines.reduce((s, l) => s + l.quantity, 0);
+      toast.success(
+        `Transfer requested: ${selectedLines.length} line${selectedLines.length === 1 ? '' : 's'}, ${totalUnits} unit${
+          totalUnits === 1 ? '' : 's'
+        } — awaiting approval`,
+      );
+      setSelectedQty({});
       setReason('');
       setSearch('');
       onClose();
@@ -386,47 +419,62 @@ function NewTransferDialog({
           <form onSubmit={submit} className="space-y-4 text-sm">
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <label className="block">
-                <span className="text-eyebrow uppercase text-ink-500 block mb-1">From</span>
+                <span className="text-eyebrow uppercase text-ink-500 block mb-1">
+                  From (warehouse)
+                </span>
                 <select
                   value={fromShopId}
                   onChange={(e) => {
                     setFromShopId(e.target.value);
-                    setSelected({});
+                    setSelectedQty({});
                   }}
                   className={fieldCls}
                   required
                 >
-                  {shops.map((s) => (
+                  {fromOptions.length === 0 && <option value="">No source shops available</option>}
+                  {fromOptions.map((s) => (
                     <option key={s.id} value={s.id}>
                       {s.name}
-                      {s.isWarehouse ? ' (warehouse)' : ''}
+                      {warehouses.some((w) => w.id === s.id) ? ' (warehouse)' : ''}
                     </option>
                   ))}
                 </select>
+                {warehouses.length === 0 && (
+                  <p className="text-[10px] text-ink-500 mt-1">
+                    No warehouses configured — falling back to retail shops as source.
+                  </p>
+                )}
               </label>
               <label className="block">
-                <span className="text-eyebrow uppercase text-ink-500 block mb-1">To</span>
+                <span className="text-eyebrow uppercase text-ink-500 block mb-1">
+                  To (retail shop)
+                </span>
                 <select
                   value={toShopId}
                   onChange={(e) => setToShopId(e.target.value)}
                   className={fieldCls}
                   required
-                  disabled={destShops.length === 0}
+                  disabled={destOptions.length === 0}
                 >
-                  {destShops.map((s) => (
+                  {destOptions.length === 0 && <option value="">No retail destinations available</option>}
+                  {destOptions.map((s) => (
                     <option key={s.id} value={s.id}>
                       {s.name}
-                      {s.isWarehouse ? ' (warehouse)' : ''}
                     </option>
                   ))}
                 </select>
+                {fromShopId && shopName.get(fromShopId) && (
+                  <p className="text-[10px] text-ink-500 mt-1">
+                    Source: <span className="font-medium">{shopName.get(fromShopId)}</span>
+                  </p>
+                )}
               </label>
             </div>
 
             <div className="border-t border-ink-100 pt-3">
               <div className="flex items-center justify-between mb-2">
                 <span className="text-eyebrow uppercase text-ink-500">
-                  Select items ({selectedIds.length} selected)
+                  Select items ({selectedLines.length} line{selectedLines.length === 1 ? '' : 's'})
                 </span>
                 {filtered.length > 0 && (
                   <button
@@ -434,7 +482,9 @@ function NewTransferDialog({
                     onClick={toggleAll}
                     className="text-xs text-brand-700 hover:underline"
                   >
-                    {filtered.every((i) => selected[i.id]) ? 'Clear visible' : 'Select visible'}
+                    {filtered.every((i) => (selectedQty[i.id] ?? 0) > 0)
+                      ? 'Clear visible'
+                      : 'Select visible'}
                   </button>
                 )}
               </div>
@@ -444,7 +494,7 @@ function NewTransferDialog({
                 onChange={(e) => setSearch(e.target.value)}
                 className={`${fieldCls} mb-2`}
               />
-              <div className="border border-ink-100 rounded-lg max-h-[260px] overflow-y-auto bg-ink-25">
+              <div className="border border-ink-100 rounded-lg max-h-[300px] overflow-y-auto bg-ink-25">
                 {itemsLoading ? (
                   <p className="text-xs text-ink-500 text-center py-6">Loading available items…</p>
                 ) : filtered.length === 0 ? (
@@ -457,35 +507,80 @@ function NewTransferDialog({
                       <tr>
                         <th className="p-2 w-10" />
                         <th className="p-2">SKU / Name</th>
+                        <th className="p-2">Kind</th>
                         <th className="p-2 text-right">Weight (mg)</th>
                         <th className="p-2 text-right">Purity</th>
+                        <th className="p-2 text-right w-28">Qty</th>
                       </tr>
                     </thead>
                     <tbody>
-                      {filtered.map((it) => (
-                        <tr key={it.id} className="border-b border-ink-100 hover:bg-ink-50">
-                          <td className="p-2">
-                            <input
-                              type="checkbox"
-                              checked={!!selected[it.id]}
-                              onChange={() =>
-                                setSelected((p) => ({ ...p, [it.id]: !p[it.id] }))
-                              }
-                              aria-label={`Select ${it.sku}`}
-                            />
-                          </td>
-                          <td className="p-2">
-                            <p className="font-semibold text-ink-900">{it.sku}</p>
-                            {it.name && (
-                              <p className="text-[10px] text-ink-500 truncate max-w-[200px]">{it.name}</p>
-                            )}
-                          </td>
-                          <td className="p-2 text-right font-mono">{it.weightMg.toLocaleString('en-IN')}</td>
-                          <td className="p-2 text-right">
-                            {it.purityCaratX100 === 0 ? '—' : `${(it.purityCaratX100 / 100).toFixed(0)}K`}
-                          </td>
-                        </tr>
-                      ))}
+                      {filtered.map((it) => {
+                        const isChecked = (selectedQty[it.id] ?? 0) > 0;
+                        const maxQty = it.isSerialized ? 1 : it.quantityOnHand;
+                        return (
+                          <tr key={it.id} className="border-b border-ink-100 hover:bg-ink-50">
+                            <td className="p-2">
+                              <input
+                                type="checkbox"
+                                checked={isChecked}
+                                onChange={(e) => {
+                                  setSelectedQty((p) => {
+                                    const next = { ...p };
+                                    if (e.target.checked) next[it.id] = 1;
+                                    else delete next[it.id];
+                                    return next;
+                                  });
+                                }}
+                                aria-label={`Select ${it.sku}`}
+                              />
+                            </td>
+                            <td className="p-2">
+                              <p className="font-semibold text-ink-900">{it.sku}</p>
+                              {it.name && (
+                                <p className="text-[10px] text-ink-500 truncate max-w-[200px]">{it.name}</p>
+                              )}
+                            </td>
+                            <td className="p-2">
+                              {it.isSerialized ? (
+                                <Badge tone="neutral">UNIQUE</Badge>
+                              ) : (
+                                <span className="inline-flex items-center gap-1">
+                                  <Badge tone="info">LOT</Badge>
+                                  <span className="font-mono text-[10px] text-ink-500">
+                                    {it.quantityOnHand} on hand
+                                  </span>
+                                </span>
+                              )}
+                            </td>
+                            <td className="p-2 text-right font-mono">
+                              {it.weightMg.toLocaleString('en-IN')}
+                            </td>
+                            <td className="p-2 text-right">
+                              {it.purityCaratX100 === 0 ? '—' : `${(it.purityCaratX100 / 100).toFixed(0)}K`}
+                            </td>
+                            <td className="p-2 text-right">
+                              <input
+                                type="number"
+                                min={1}
+                                max={maxQty}
+                                step={1}
+                                value={selectedQty[it.id] ?? ''}
+                                placeholder={isChecked ? '' : '—'}
+                                disabled={!isChecked || it.isSerialized}
+                                onChange={(e) => {
+                                  const v = Number(e.target.value);
+                                  setSelectedQty((p) => ({
+                                    ...p,
+                                    [it.id]: Math.max(1, Math.min(maxQty, Number.isFinite(v) ? v : 1)),
+                                  }));
+                                }}
+                                aria-label={`Quantity for ${it.sku}`}
+                                className="w-20 rounded border border-ink-200 bg-white px-2 py-1 text-right font-mono text-xs disabled:opacity-50 disabled:bg-ink-50"
+                              />
+                            </td>
+                          </tr>
+                        );
+                      })}
                     </tbody>
                   </table>
                 )}
@@ -508,8 +603,14 @@ function NewTransferDialog({
               <Button variant="outline" type="button" onClick={onClose} disabled={isLoading}>
                 Cancel
               </Button>
-              <Button type="submit" className="flex-1" disabled={isLoading || selectedIds.length === 0}>
-                {isLoading ? 'Submitting…' : `Request transfer of ${selectedIds.length || ''} item${selectedIds.length === 1 ? '' : 's'}`}
+              <Button
+                type="submit"
+                className="flex-1"
+                disabled={isLoading || selectedLines.length === 0}
+              >
+                {isLoading
+                  ? 'Submitting…'
+                  : `Request transfer of ${selectedLines.length} line${selectedLines.length === 1 ? '' : 's'}`}
               </Button>
             </div>
           </form>

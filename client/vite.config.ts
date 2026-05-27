@@ -18,11 +18,12 @@ export default defineConfig({
     port: 3000,
     proxy: {
       '/api': {
-        // Local UI talks to the deployed API by default so the storefront has real
-        // products / gold rate / collections without booting the backend locally.
-        // Override with API_PROXY_TARGET=http://localhost:4000 when running against
-        // a local server.
-        target: process.env.API_PROXY_TARGET ?? 'https://jewelery-crm.vercel.app',
+        // Default to the local server (port 4000) so admin development hits
+        // the in-tree backend with the latest schema + routes. To preview the
+        // storefront against the deployed API instead (so you don't have to
+        // boot the local server for catalog browsing), set
+        // API_PROXY_TARGET=https://jewelery-crm.vercel.app when starting Vite.
+        target: process.env.API_PROXY_TARGET ?? 'http://localhost:4000',
         changeOrigin: true,
         secure: true,
       },

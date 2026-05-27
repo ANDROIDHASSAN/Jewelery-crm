@@ -306,25 +306,38 @@ export function CollectionPage(): JSX.Element {
             const weightG = p.weightMg / 1000;
             const primary = p.images[0] ?? '';
             const secondary = p.images[1] ?? primary;
+            // `inStock` is computed server-side from the linked inventory
+            // Item. Sold-out cards stay visible (per the admin's choice) but
+            // get a desaturated thumbnail + an unmistakable corner badge.
+            const soldOut = p.inStock === false;
             return (
               <Link to={`/store/products/${p.slug}`} key={p.id} className="group block">
                 <div className="relative aspect-[4/5] overflow-hidden bg-[#FAF3EE] rounded-sm">
                   <img
                     src={primary}
                     alt={p.name}
-                    className="absolute inset-0 h-full w-full object-cover transition-opacity duration-300 group-hover:opacity-0"
+                    className={`absolute inset-0 h-full w-full object-cover transition-opacity duration-300 group-hover:opacity-0 ${
+                      soldOut ? 'grayscale opacity-70' : ''
+                    }`}
                     loading="lazy"
                   />
                   <img
                     src={secondary}
                     alt=""
-                    className="absolute inset-0 h-full w-full object-cover opacity-0 group-hover:opacity-100 transition-opacity duration-300"
+                    className={`absolute inset-0 h-full w-full object-cover opacity-0 group-hover:opacity-100 transition-opacity duration-300 ${
+                      soldOut ? 'grayscale' : ''
+                    }`}
                     loading="lazy"
                     aria-hidden
                   />
+                  {soldOut && (
+                    <span className="absolute top-2 left-2 z-10 bg-ink-900 text-ink-0 text-[10px] uppercase tracking-[0.18em] px-2 py-1 rounded-sm">
+                      Sold out
+                    </span>
+                  )}
                   {/* CaratLane-style hover overlay with quiet view CTA */}
                   <div className="absolute inset-x-0 bottom-0 px-3 py-2.5 bg-ink-0/85 backdrop-blur-sm text-center text-[11px] uppercase tracking-[0.18em] text-ink-900 opacity-0 group-hover:opacity-100 transition-opacity duration-200">
-                    View piece
+                    {soldOut ? 'View piece' : 'View piece'}
                   </div>
                 </div>
                 <div className="mt-3 sm:mt-4 space-y-1 px-0.5">

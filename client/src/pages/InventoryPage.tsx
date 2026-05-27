@@ -2,7 +2,7 @@
 // Tabbed shell. Each tab is DB-backed via RTK Query; mutations invalidate caches
 // so adds/edits flow back to the active view (and to dashboard tiles) immediately.
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import type { ColumnDef } from '@tanstack/react-table';
 import {
@@ -18,14 +18,21 @@ import {
   Sliders,
   Upload,
   Tag as TagIcon,
+  PackagePlus,
+  Pencil,
+  X,
+  Globe,
 } from 'lucide-react';
 import { toast } from 'sonner';
+import { uploadImageToCloudinary, isCloudinaryConfigured, cloudinaryThumb } from '@/lib/cloudinary';
 import type { Item } from '@goldos/shared/types';
 import {
   useGetItemsQuery,
   useGetCategoriesQuery,
   useCreateItemMutation,
+  useUpdateItemMutation,
   useRecordWastageMutation,
+  useAddStockMutation,
   useGetValuationQuery,
   useGetLowStockQuery,
   useGetMovementsQuery,
@@ -114,9 +121,13 @@ function ItemsTab(): JSX.Element {
   const { data: catRes } = useGetCategoriesQuery();
   const { data: shopsRes } = useGetShopsQuery();
   const [selected, setSelected] = useState<Item | null>(null);
+  // editTarget is independent of `selected` so the edit dialog can be opened
+  // straight from a row's pencil icon without first popping the detail sheet.
+  const [editTarget, setEditTarget] = useState<Item | null>(null);
   const [addOpen, setAddOpen] = useState(false);
   const [transferOpen, setTransferOpen] = useState(false);
   const [wastageOpen, setWastageOpen] = useState(false);
+  const [addStockOpen, setAddStockOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
   const [distributeOpen, setDistributeOpen] = useState(false);
 
@@ -191,6 +202,30 @@ function ItemsTab(): JSX.Element {
         cell: (i) => (
           <div className="text-right">
             <Money paise={Number(i.getValue())} />
+          </div>
+        ),
+      },
+      {
+        // Per-row inline edit. Stops row-click propagation so the detail Sheet
+        // doesn't also open behind the edit dialog. Visible for every row
+        // regardless of status — admins occasionally fix the name / image of
+        // a SOLD piece for historical accuracy.
+        id: 'actions',
+        header: () => <span className="sr-only">Actions</span>,
+        cell: ({ row }) => (
+          <div className="text-right">
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                setEditTarget(row.original);
+              }}
+              className="inline-flex items-center justify-center h-7 w-7 rounded-md text-ink-500 hover:text-ink-900 hover:bg-ink-50"
+              aria-label={`Edit ${row.original.sku}`}
+              title="Edit item"
+            >
+              <Pencil className="h-3.5 w-3.5" />
+            </button>
           </div>
         ),
       },
@@ -285,7 +320,13 @@ function ItemsTab(): JSX.Element {
                 <BarcodePreview value={selected.barcodeData || selected.sku} />
               </div>
 
-              <div className="mt-6 grid grid-cols-2 gap-2">
+              <div className="mt-6 grid grid-cols-2 sm:grid-cols-4 gap-2">
+                <Button variant="outline" onClick={() => setEditTarget(selected)}>
+                  <Pencil className="h-4 w-4" /> Edit
+                </Button>
+                <Button variant="outline" disabled={selected.status !== 'IN_STOCK'} onClick={() => setAddStockOpen(true)}>
+                  <PackagePlus className="h-4 w-4" /> Add stock
+                </Button>
                 <Button variant="outline" disabled={selected.status !== 'IN_STOCK'} onClick={() => setTransferOpen(true)}>
                   <Truck className="h-4 w-4" /> Transfer
                 </Button>
@@ -301,9 +342,21 @@ function ItemsTab(): JSX.Element {
       </Sheet>
 
       <AddItemDialog open={addOpen} onClose={() => setAddOpen(false)} />
+      {editTarget && (
+        <EditItemDialog
+          open={!!editTarget}
+          onClose={() => setEditTarget(null)}
+          item={editTarget}
+        />
+      )}
       <DistributeStockDialog open={distributeOpen} onClose={() => setDistributeOpen(false)} />
       {selected && (
         <>
+          <AddStockDialog
+            open={addStockOpen}
+            onClose={() => setAddStockOpen(false)}
+            item={selected}
+          />
           <TransferDialog
             open={transferOpen}
             onClose={() => setTransferOpen(false)}
@@ -1029,6 +1082,7 @@ function AddItemDialog({ open, onClose }: { open: boolean; onClose: () => void }
   const { data: existingItemsRes } = useGetItemsQuery({});
   const [create, { isLoading }] = useCreateItemMutation();
   const [form, setForm] = useState({
+    name: '',
     sku: '',
     shopId: '',
     categoryId: '',
@@ -1040,6 +1094,52 @@ function AddItemDialog({ open, onClose }: { open: boolean; onClose: () => void }
     costPriceRupees: '',
     makingChargePct: '',
   });
+  // Images and publish-to-website live alongside the form but outside the
+  // text/select state object so the upload UI can update images without
+  // re-rendering every other input.
+  const [images, setImages] = useState<string[]>([]);
+  const [publishToWebsite, setPublishToWebsite] = useState(true);
+  const [uploading, setUploading] = useState<{ name: string; progress: number }[]>([]);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const cloudinaryReady = isCloudinaryConfigured();
+  // Stock model — see schema.prisma Item.isSerialized.
+  //   'unique': one row per physical piece (rings, necklaces). Add Stock
+  //             clones N new rows with auto-generated SKUs.
+  //   'bulk':   one row tracks an interchangeable lot (gold coins, silver
+  //             bars). Add Stock bumps quantityOnHand. Initial qty asked
+  //             upfront so the cashier doesn't have to add-stock twice.
+  const [stockMode, setStockMode] = useState<'unique' | 'bulk'>('unique');
+  const [initialQty, setInitialQty] = useState<string>('1');
+
+  async function uploadFiles(files: File[]): Promise<void> {
+    const imageFiles = files.filter((f) => f.type.startsWith('image/'));
+    if (imageFiles.length === 0) {
+      toast.error('Only image files are supported');
+      return;
+    }
+    setUploading((prev) => [...prev, ...imageFiles.map((f) => ({ name: f.name, progress: 0 }))]);
+    const results = await Promise.allSettled(
+      imageFiles.map((file) =>
+        uploadImageToCloudinary(file, {
+          folder: 'zelora/items',
+          onProgress: (pct) => {
+            setUploading((prev) =>
+              prev.map((u) => (u.name === file.name ? { ...u, progress: pct } : u)),
+            );
+          },
+        }),
+      ),
+    );
+    const newUrls: string[] = [];
+    let failures = 0;
+    for (const r of results) {
+      if (r.status === 'fulfilled') newUrls.push(r.value.secureUrl);
+      else failures += 1;
+    }
+    if (newUrls.length > 0) setImages((prev) => [...prev, ...newUrls]);
+    if (failures > 0) toast.error(`${failures} upload${failures === 1 ? '' : 's'} failed`);
+    setUploading((prev) => prev.filter((u) => !imageFiles.some((f) => f.name === u.name)));
+  }
 
   const existingItems = existingItemsRes?.data ?? [];
   const selectedCat = cats?.data.find((c) => c.id === form.categoryId);
@@ -1072,8 +1172,27 @@ function AddItemDialog({ open, onClose }: { open: boolean; onClose: () => void }
     const weightMg = Math.round(parseFloat(form.weightG) * 1000);
     const purityCaratX100 = Math.round(parseFloat(form.purityCarat) * 100);
     const costPricePaise = Math.round(parseFloat(form.costPriceRupees) * 100);
+    if (!form.name.trim()) return void toast.error('Item name is required');
     if (!form.sku.trim()) return void toast.error('SKU is required');
     if (!Number.isFinite(weightMg) || weightMg <= 0) return void toast.error('Weight must be > 0');
+    if (publishToWebsite && images.length === 0) {
+      return void toast.error('Add at least one image to publish on the storefront');
+    }
+
+    // Stock mode → isSerialized + quantityOnHand. Unique = 1 piece per row,
+    // bulk = N interchangeable units sharing a single row.
+    const isSerialized = stockMode === 'unique';
+    let quantityOnHand = 1;
+    if (!isSerialized) {
+      const parsed = parseInt(initialQty, 10);
+      if (!Number.isFinite(parsed) || parsed < 1) {
+        return void toast.error('Initial quantity must be at least 1');
+      }
+      if (parsed > 10_000) {
+        return void toast.error('Initial quantity capped at 10,000 — split into multiple rows');
+      }
+      quantityOnHand = parsed;
+    }
 
     // Validate purity based on metal type
     if (metalType === 'GOLD') {
@@ -1091,22 +1210,48 @@ function AddItemDialog({ open, onClose }: { open: boolean; onClose: () => void }
     if (!Number.isFinite(costPricePaise) || costPricePaise <= 0) return void toast.error('Cost price must be > 0');
     if (!form.shopId || !form.categoryId) return void toast.error('Pick a shop and category');
 
+    // Stone weight is optional. Guard against NaN (empty / non-numeric) and
+    // negatives — the schema rejects either and Zod's error path is opaque
+    // when a `parseFloat(...) * 1000` slips through with a bad value.
+    const stoneRaw = parseFloat(form.stoneWeightG);
+    const stoneWeightMg =
+      form.stoneWeightG && Number.isFinite(stoneRaw) && stoneRaw > 0
+        ? Math.round(stoneRaw * 1000)
+        : null;
+    const makingRaw = parseFloat(form.makingChargePct);
+    const makingChargeBps =
+      form.makingChargePct && Number.isFinite(makingRaw) && makingRaw >= 0
+        ? Math.round(makingRaw * 100)
+        : null;
+
     try {
       await create({
+        name: form.name.trim(),
         sku: form.sku.trim(),
         barcodeData: form.sku.trim(),
         shopId: form.shopId,
         categoryId: form.categoryId,
-        images: [],
+        images,
         weightMg,
         purityCaratX100,
-        stoneWeightMg: form.stoneWeightG ? Math.round(parseFloat(form.stoneWeightG) * 1000) : null,
+        stoneWeightMg,
         hallmarkStatus: form.hallmarkStatus,
         hallmarkRef: form.hallmarkRef.trim() || null,
         costPricePaise,
-        makingChargeBps: form.makingChargePct ? Math.round(parseFloat(form.makingChargePct) * 100) : null,
+        makingChargeBps,
+        // Hybrid stock model — Add Item form lets admins pick between
+        // UNIQUE (one piece per row, cloned on add-stock) and BULK (lot
+        // tracking N interchangeable pieces with an integer counter).
+        isSerialized,
+        quantityOnHand,
+        publishToWebsite,
       }).unwrap();
-      toast.success(`Added ${form.sku}`);
+      const stockLabel = isSerialized ? '' : ` (${quantityOnHand} in stock)`;
+      toast.success(
+        publishToWebsite
+          ? `Added ${form.name.trim()}${stockLabel} and published to storefront`
+          : `Added ${form.name.trim()}${stockLabel}`,
+      );
       onClose();
     } catch (err) {
       const message =
@@ -1131,6 +1276,7 @@ function AddItemDialog({ open, onClose }: { open: boolean; onClose: () => void }
                   const it = existingItems.find((i) => i.id === val);
                   if (it) {
                     setForm({
+                      name: it.name || '',
                       sku: it.sku,
                       shopId: it.shopId,
                       categoryId: it.categoryId,
@@ -1142,6 +1288,7 @@ function AddItemDialog({ open, onClose }: { open: boolean; onClose: () => void }
                       costPriceRupees: String(it.costPricePaise / 100),
                       makingChargePct: it.makingChargeBps ? String(it.makingChargeBps / 100) : '',
                     });
+                    setImages(it.images ?? []);
                     toast.success(`Copied details from ${it.sku}`);
                   }
                 }}
@@ -1157,6 +1304,106 @@ function AddItemDialog({ open, onClose }: { open: boolean; onClose: () => void }
               </select>
             </Field>
 
+            <Field label="Item name">
+              <input
+                value={form.name}
+                onChange={(e) => setForm({ ...form, name: e.target.value })}
+                className={fieldCls}
+                placeholder="Floral diamond pendant"
+                required
+              />
+            </Field>
+
+            <Field label="Item images">
+              <div className="space-y-2">
+                <div
+                  onClick={() => fileInputRef.current?.click()}
+                  onDragOver={(e) => e.preventDefault()}
+                  onDrop={(e) => {
+                    e.preventDefault();
+                    const files = Array.from(e.dataTransfer.files);
+                    if (files.length > 0) void uploadFiles(files);
+                  }}
+                  role="button"
+                  tabIndex={0}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      e.preventDefault();
+                      fileInputRef.current?.click();
+                    }
+                  }}
+                  className="flex flex-col items-center justify-center gap-1 px-3 py-4 rounded-md border-2 border-dashed border-ink-200 hover:border-ink-300 hover:bg-ink-25 cursor-pointer transition-colors"
+                >
+                  <Upload className="h-5 w-5 text-ink-500" aria-hidden />
+                  <p className="text-xs text-ink-600">
+                    <span className="font-medium text-ink-900">Click to upload</span> or drag &amp; drop
+                  </p>
+                  <p className="text-[11px] text-ink-500">PNG, JPG, WebP · up to 8 MB each</p>
+                  {!cloudinaryReady && (
+                    <p className="text-[11px] text-ink-500">
+                      Dev mode: images stored locally (set VITE_CLOUDINARY_* for hosted)
+                    </p>
+                  )}
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    accept="image/*"
+                    multiple
+                    className="hidden"
+                    onChange={(e) => {
+                      const files = e.target.files ? Array.from(e.target.files) : [];
+                      if (files.length > 0) void uploadFiles(files);
+                      e.target.value = '';
+                    }}
+                  />
+                </div>
+                {uploading.length > 0 && (
+                  <ul className="space-y-1">
+                    {uploading.map((u) => (
+                      <li key={u.name} className="rounded-md border border-ink-100 bg-ink-25 px-2 py-1.5">
+                        <div className="flex items-center justify-between gap-2 text-[11px]">
+                          <span className="text-ink-700 truncate">{u.name}</span>
+                          <span className="font-mono tabular-nums text-ink-500">{u.progress}%</span>
+                        </div>
+                        <div className="mt-1 h-0.5 rounded-full bg-ink-100 overflow-hidden">
+                          <div
+                            className="h-full bg-brand-500 transition-all"
+                            style={{ width: `${u.progress}%` }}
+                          />
+                        </div>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+                {images.length > 0 && (
+                  <ul className="grid grid-cols-4 sm:grid-cols-5 gap-2">
+                    {images.map((url, idx) => (
+                      <li key={url + idx} className="relative group rounded-md border border-ink-100 bg-ink-25 overflow-hidden aspect-square">
+                        <img
+                          src={cloudinaryThumb(url, 200) ?? url}
+                          alt={`Item image ${idx + 1}`}
+                          className="h-full w-full object-cover"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => setImages(images.filter((_, i) => i !== idx))}
+                          className="absolute top-0.5 right-0.5 h-5 w-5 inline-flex items-center justify-center rounded-full bg-ink-900/70 text-ink-0 opacity-0 group-hover:opacity-100 transition-opacity"
+                          aria-label="Remove image"
+                        >
+                          <X className="h-3 w-3" />
+                        </button>
+                        {idx === 0 && (
+                          <span className="absolute bottom-0.5 left-0.5 text-[9px] px-1 py-0.5 rounded-full bg-ink-900/70 text-ink-0">
+                            Primary
+                          </span>
+                        )}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            </Field>
+
             <Field label="SKU">
               <input
                 value={form.sku}
@@ -1166,6 +1413,58 @@ function AddItemDialog({ open, onClose }: { open: boolean; onClose: () => void }
                 required
               />
             </Field>
+
+            <Field label="Stock type">
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  onClick={() => setStockMode('unique')}
+                  className={cn(
+                    'rounded-md border px-3 py-2 text-left transition-colors',
+                    stockMode === 'unique'
+                      ? 'border-brand-500 bg-brand-50 ring-1 ring-brand-400'
+                      : 'border-ink-200 hover:border-ink-300',
+                  )}
+                >
+                  <span className="block text-sm font-medium text-ink-900">Unique piece</span>
+                  <span className="block text-[11px] text-ink-500">
+                    Ring, necklace, bangle — each piece tracked as its own SKU
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setStockMode('bulk')}
+                  className={cn(
+                    'rounded-md border px-3 py-2 text-left transition-colors',
+                    stockMode === 'bulk'
+                      ? 'border-brand-500 bg-brand-50 ring-1 ring-brand-400'
+                      : 'border-ink-200 hover:border-ink-300',
+                  )}
+                >
+                  <span className="block text-sm font-medium text-ink-900">Bulk lot</span>
+                  <span className="block text-[11px] text-ink-500">
+                    Gold coin, silver bar — N interchangeable pieces, one counter
+                  </span>
+                </button>
+              </div>
+            </Field>
+
+            {stockMode === 'bulk' && (
+              <Field label="Initial quantity in stock">
+                <input
+                  type="number"
+                  min={1}
+                  max={10_000}
+                  step={1}
+                  value={initialQty}
+                  onChange={(e) => setInitialQty(e.target.value)}
+                  className={fieldCls}
+                  placeholder="e.g. 50"
+                  required
+                />
+              </Field>
+            )}
+
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <Field label="Shop">
                 <select
@@ -1236,6 +1535,7 @@ function AddItemDialog({ open, onClose }: { open: boolean; onClose: () => void }
                 <input
                   type="number"
                   step="0.001"
+                  min={0}
                   value={form.stoneWeightG}
                   onChange={(e) => setForm({ ...form, stoneWeightG: e.target.value })}
                   className={fieldCls}
@@ -1284,6 +1584,7 @@ function AddItemDialog({ open, onClose }: { open: boolean; onClose: () => void }
                 <input
                   type="number"
                   step="0.1"
+                  min={0}
                   value={form.makingChargePct}
                   onChange={(e) => setForm({ ...form, makingChargePct: e.target.value })}
                   className={fieldCls}
@@ -1291,12 +1592,425 @@ function AddItemDialog({ open, onClose }: { open: boolean; onClose: () => void }
                 />
               </Field>
             </div>
+            <label className="flex items-start gap-2 pt-2 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={publishToWebsite}
+                onChange={(e) => setPublishToWebsite(e.target.checked)}
+                className="mt-0.5 h-4 w-4 rounded border-ink-300 text-brand-500 focus:ring-brand-400"
+              />
+              <span className="flex-1">
+                <span className="flex items-center gap-1.5 text-ink-900 font-medium">
+                  <Globe className="h-3.5 w-3.5" /> Publish on storefront
+                </span>
+                <span className="block text-xs text-ink-500">
+                  Customers see this piece on the public website. Goes &quot;Sold out&quot; automatically when stock hits 0.
+                </span>
+              </span>
+            </label>
             <div className="flex gap-2 pt-2">
               <Button variant="outline" type="button" onClick={onClose} disabled={isLoading}>
                 Cancel
               </Button>
               <Button type="submit" className="flex-1" disabled={isLoading}>
                 {isLoading ? 'Saving…' : 'Save item'}
+              </Button>
+            </div>
+          </form>
+        </SheetBody>
+      </SheetContent>
+    </Sheet>
+  );
+}
+
+// ----------------------------------------------------------------------------
+// Edit-item dialog. Loads the row's current values, lets the admin change
+// every editable field (name, image gallery, weight, purity, stone weight,
+// hallmark, cost, making-charge override), then PATCHes via
+// useUpdateItemMutation. Stock-shape fields (isSerialized, quantityOnHand)
+// are intentionally read-only here — converting a unique row to a lot (or
+// vice versa) mid-life would mislead audit trails; use Add Stock / Wastage
+// for those flows. SKU is also locked so existing barcode + bill-line FKs
+// don't dangle.
+
+function EditItemDialog({
+  open,
+  onClose,
+  item,
+}: {
+  open: boolean;
+  onClose: () => void;
+  item: Item;
+}): JSX.Element {
+  const { data: cats } = useGetCategoriesQuery();
+  const { data: shops } = useGetShopsQuery();
+  const [update, { isLoading }] = useUpdateItemMutation();
+  const [form, setForm] = useState({
+    name: item.name ?? '',
+    shopId: item.shopId,
+    categoryId: item.categoryId,
+    weightG: String(item.weightMg / 1000),
+    purityCarat: String(item.purityCaratX100 === 0 ? '0' : item.purityCaratX100 / 100),
+    stoneWeightG: item.stoneWeightMg ? String(item.stoneWeightMg / 1000) : '',
+    hallmarkStatus: item.hallmarkStatus,
+    hallmarkRef: item.hallmarkRef ?? '',
+    costPriceRupees: String(item.costPricePaise / 100),
+    makingChargePct: item.makingChargeBps ? String(item.makingChargeBps / 100) : '',
+  });
+  const [images, setImages] = useState<string[]>(item.images ?? []);
+  const [uploading, setUploading] = useState<{ name: string; progress: number }[]>([]);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const cloudinaryReady = isCloudinaryConfigured();
+
+  // Reset form whenever the dialog is opened against a different item (the
+  // mount key already does this, but explicit reset keeps the contract
+  // obvious for future callers that reuse a single dialog instance).
+  useEffect(() => {
+    if (!open) return;
+    setForm({
+      name: item.name ?? '',
+      shopId: item.shopId,
+      categoryId: item.categoryId,
+      weightG: String(item.weightMg / 1000),
+      purityCarat: String(item.purityCaratX100 === 0 ? '0' : item.purityCaratX100 / 100),
+      stoneWeightG: item.stoneWeightMg ? String(item.stoneWeightMg / 1000) : '',
+      hallmarkStatus: item.hallmarkStatus,
+      hallmarkRef: item.hallmarkRef ?? '',
+      costPriceRupees: String(item.costPricePaise / 100),
+      makingChargePct: item.makingChargeBps ? String(item.makingChargeBps / 100) : '',
+    });
+    setImages(item.images ?? []);
+  }, [open, item.id]);
+
+  const selectedCat = cats?.data.find((c) => c.id === form.categoryId);
+  const metalType = selectedCat?.metalType ?? 'GOLD';
+
+  async function uploadFiles(files: File[]): Promise<void> {
+    const imageFiles = files.filter((f) => f.type.startsWith('image/'));
+    if (imageFiles.length === 0) {
+      toast.error('Only image files are supported');
+      return;
+    }
+    setUploading((prev) => [...prev, ...imageFiles.map((f) => ({ name: f.name, progress: 0 }))]);
+    const results = await Promise.allSettled(
+      imageFiles.map((file) =>
+        uploadImageToCloudinary(file, {
+          folder: 'zelora/items',
+          onProgress: (pct) => {
+            setUploading((prev) =>
+              prev.map((u) => (u.name === file.name ? { ...u, progress: pct } : u)),
+            );
+          },
+        }),
+      ),
+    );
+    const newUrls: string[] = [];
+    let failures = 0;
+    for (const r of results) {
+      if (r.status === 'fulfilled') newUrls.push(r.value.secureUrl);
+      else failures += 1;
+    }
+    if (newUrls.length > 0) setImages((prev) => [...prev, ...newUrls]);
+    if (failures > 0) toast.error(`${failures} upload${failures === 1 ? '' : 's'} failed`);
+    setUploading((prev) => prev.filter((u) => !imageFiles.some((f) => f.name === u.name)));
+  }
+
+  const submit = async (e: React.FormEvent): Promise<void> => {
+    e.preventDefault();
+    const weightMg = Math.round(parseFloat(form.weightG) * 1000);
+    const purityCaratX100 = Math.round(parseFloat(form.purityCarat) * 100);
+    const costPricePaise = Math.round(parseFloat(form.costPriceRupees) * 100);
+    if (!form.name.trim()) return void toast.error('Item name is required');
+    if (!Number.isFinite(weightMg) || weightMg <= 0) return void toast.error('Weight must be > 0');
+    if (metalType === 'GOLD' && ![1400, 1800, 2200, 2400].includes(purityCaratX100)) {
+      return void toast.error('Purity must be 14K, 18K, 22K or 24K for Gold');
+    }
+    if (!Number.isFinite(costPricePaise) || costPricePaise <= 0) {
+      return void toast.error('Cost price must be > 0');
+    }
+
+    const stoneRaw = parseFloat(form.stoneWeightG);
+    const stoneWeightMg =
+      form.stoneWeightG && Number.isFinite(stoneRaw) && stoneRaw > 0
+        ? Math.round(stoneRaw * 1000)
+        : null;
+    const makingRaw = parseFloat(form.makingChargePct);
+    const makingChargeBps =
+      form.makingChargePct && Number.isFinite(makingRaw) && makingRaw >= 0
+        ? Math.round(makingRaw * 100)
+        : null;
+
+    try {
+      await update({
+        id: item.id,
+        patch: {
+          name: form.name.trim(),
+          shopId: form.shopId,
+          categoryId: form.categoryId,
+          images,
+          weightMg,
+          purityCaratX100,
+          stoneWeightMg,
+          hallmarkStatus: form.hallmarkStatus,
+          hallmarkRef: form.hallmarkRef.trim() || null,
+          costPricePaise,
+          makingChargeBps,
+        },
+      }).unwrap();
+      toast.success(`Updated ${form.name.trim()}`);
+      onClose();
+    } catch (err) {
+      const message =
+        (err as { data?: { error?: { message?: string } } }).data?.error?.message ?? 'Could not save changes.';
+      toast.error(message);
+    }
+  };
+
+  return (
+    <Sheet open={open} onOpenChange={(o) => !o && onClose()}>
+      <SheetContent className="!max-w-lg">
+        <SheetHeader>
+          <SheetTitle>Edit item · {item.sku}</SheetTitle>
+        </SheetHeader>
+        <SheetBody>
+          <form onSubmit={submit} className="space-y-4 text-sm">
+            <p className="text-xs text-ink-500">
+              SKU + stock type are locked. Change name, photos, weight, hallmark, pricing here;
+              use Add Stock / Wastage for stock-level changes.
+            </p>
+
+            <Field label="Item name">
+              <input
+                value={form.name}
+                onChange={(e) => setForm({ ...form, name: e.target.value })}
+                className={fieldCls}
+                required
+              />
+            </Field>
+
+            <Field label="Item images">
+              <div className="space-y-2">
+                <div
+                  onClick={() => fileInputRef.current?.click()}
+                  onDragOver={(e) => e.preventDefault()}
+                  onDrop={(e) => {
+                    e.preventDefault();
+                    const files = Array.from(e.dataTransfer.files);
+                    if (files.length > 0) void uploadFiles(files);
+                  }}
+                  role="button"
+                  tabIndex={0}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      e.preventDefault();
+                      fileInputRef.current?.click();
+                    }
+                  }}
+                  className="flex flex-col items-center justify-center gap-1 px-3 py-4 rounded-md border-2 border-dashed border-ink-200 hover:border-ink-300 hover:bg-ink-25 cursor-pointer transition-colors"
+                >
+                  <Upload className="h-5 w-5 text-ink-500" aria-hidden />
+                  <p className="text-xs text-ink-600">
+                    <span className="font-medium text-ink-900">Click to upload</span> or drag &amp; drop
+                  </p>
+                  <p className="text-[11px] text-ink-500">PNG, JPG, WebP · up to 8 MB each</p>
+                  {!cloudinaryReady && (
+                    <p className="text-[11px] text-ink-500">
+                      Dev mode: images stored locally (set VITE_CLOUDINARY_* for hosted)
+                    </p>
+                  )}
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    accept="image/*"
+                    multiple
+                    className="hidden"
+                    onChange={(e) => {
+                      const files = e.target.files ? Array.from(e.target.files) : [];
+                      if (files.length > 0) void uploadFiles(files);
+                      e.target.value = '';
+                    }}
+                  />
+                </div>
+                {uploading.length > 0 && (
+                  <ul className="space-y-1">
+                    {uploading.map((u) => (
+                      <li key={u.name} className="rounded-md border border-ink-100 bg-ink-25 px-2 py-1.5">
+                        <div className="flex items-center justify-between gap-2 text-[11px]">
+                          <span className="text-ink-700 truncate">{u.name}</span>
+                          <span className="font-mono tabular-nums text-ink-500">{u.progress}%</span>
+                        </div>
+                        <div className="mt-1 h-0.5 rounded-full bg-ink-100 overflow-hidden">
+                          <div
+                            className="h-full bg-brand-500 transition-all"
+                            style={{ width: `${u.progress}%` }}
+                          />
+                        </div>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+                {images.length > 0 && (
+                  <ul className="grid grid-cols-4 sm:grid-cols-5 gap-2">
+                    {images.map((url, idx) => (
+                      <li key={url + idx} className="relative group rounded-md border border-ink-100 bg-ink-25 overflow-hidden aspect-square">
+                        <img
+                          src={cloudinaryThumb(url, 200) ?? url}
+                          alt={`Item image ${idx + 1}`}
+                          className="h-full w-full object-cover"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => setImages(images.filter((_, i) => i !== idx))}
+                          className="absolute top-0.5 right-0.5 h-5 w-5 inline-flex items-center justify-center rounded-full bg-ink-900/70 text-ink-0 opacity-0 group-hover:opacity-100 transition-opacity"
+                          aria-label="Remove image"
+                        >
+                          <X className="h-3 w-3" />
+                        </button>
+                        {idx === 0 && (
+                          <span className="absolute bottom-0.5 left-0.5 text-[9px] px-1 py-0.5 rounded-full bg-ink-900/70 text-ink-0">
+                            Primary
+                          </span>
+                        )}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            </Field>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <Field label="Shop">
+                <select
+                  value={form.shopId}
+                  onChange={(e) => setForm({ ...form, shopId: e.target.value })}
+                  className={fieldCls}
+                  required
+                >
+                  {(shops?.data ?? []).map((s) => (
+                    <option key={s.id} value={s.id}>
+                      {s.name}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+              <Field label="Category">
+                <select
+                  value={form.categoryId}
+                  onChange={(e) => setForm({ ...form, categoryId: e.target.value })}
+                  className={fieldCls}
+                  required
+                >
+                  {(cats?.data ?? []).map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.name}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+            </div>
+
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+              <Field label="Weight (g)">
+                <input
+                  type="number"
+                  step="0.001"
+                  min={0}
+                  value={form.weightG}
+                  onChange={(e) => setForm({ ...form, weightG: e.target.value })}
+                  className={fieldCls}
+                  required
+                />
+              </Field>
+              <Field label="Purity">
+                <select
+                  value={form.purityCarat}
+                  onChange={(e) => setForm({ ...form, purityCarat: e.target.value })}
+                  className={fieldCls}
+                >
+                  {metalType === 'GOLD' && (
+                    <>
+                      <option value="24">24K</option>
+                      <option value="22">22K</option>
+                      <option value="18">18K</option>
+                      <option value="14">14K</option>
+                    </>
+                  )}
+                  {metalType === 'SILVER' && <option value="0">Silver</option>}
+                  {metalType === 'PLATINUM' && <option value="95">Platinum (95% Pt)</option>}
+                  {metalType === 'OTHER' && <option value="0">Non-precious</option>}
+                </select>
+              </Field>
+              <Field label="Stone wt (g)">
+                <input
+                  type="number"
+                  step="0.001"
+                  min={0}
+                  value={form.stoneWeightG}
+                  onChange={(e) => setForm({ ...form, stoneWeightG: e.target.value })}
+                  className={fieldCls}
+                />
+              </Field>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <Field label="Hallmark">
+                <select
+                  value={form.hallmarkStatus}
+                  onChange={(e) =>
+                    setForm({
+                      ...form,
+                      hallmarkStatus: e.target.value as 'PENDING' | 'SUBMITTED' | 'CERTIFIED' | 'EXEMPT',
+                    })
+                  }
+                  className={fieldCls}
+                >
+                  <option value="PENDING">Pending</option>
+                  <option value="SUBMITTED">Submitted</option>
+                  <option value="CERTIFIED">Certified</option>
+                  <option value="EXEMPT">Exempt</option>
+                </select>
+              </Field>
+              <Field label="HUID ref">
+                <input
+                  value={form.hallmarkRef}
+                  onChange={(e) => setForm({ ...form, hallmarkRef: e.target.value })}
+                  className={fieldCls}
+                  placeholder="optional"
+                />
+              </Field>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <Field label="Cost price (₹)">
+                <input
+                  type="number"
+                  step="0.01"
+                  min={0}
+                  value={form.costPriceRupees}
+                  onChange={(e) => setForm({ ...form, costPriceRupees: e.target.value })}
+                  className={fieldCls}
+                  required
+                />
+              </Field>
+              <Field label="Making charge (%) override">
+                <input
+                  type="number"
+                  step="0.1"
+                  min={0}
+                  value={form.makingChargePct}
+                  onChange={(e) => setForm({ ...form, makingChargePct: e.target.value })}
+                  className={fieldCls}
+                  placeholder="uses category default"
+                />
+              </Field>
+            </div>
+
+            <div className="flex gap-2 pt-2">
+              <Button variant="outline" type="button" onClick={onClose} disabled={isLoading}>
+                Cancel
+              </Button>
+              <Button type="submit" className="flex-1" disabled={isLoading}>
+                {isLoading ? 'Saving…' : 'Save changes'}
               </Button>
             </div>
           </form>
@@ -1451,6 +2165,155 @@ function WastageDialog({
               </Button>
               <Button type="submit" className="flex-1" disabled={isLoading}>
                 {isLoading ? 'Recording…' : 'Confirm wastage'}
+              </Button>
+            </div>
+          </form>
+        </SheetBody>
+      </SheetContent>
+    </Sheet>
+  );
+}
+
+// ----------------------------------------------------------------------------
+// Add-stock dialog.
+//
+// Branches on item.isSerialized: serialized creates N new SKU rows cloned
+// from this design; lot increments the on-hand count of this row. Server
+// authoritative, but we mirror the explanation here so the user knows
+// exactly what they're about to do before they click Confirm.
+
+function AddStockDialog({
+  open,
+  onClose,
+  item,
+}: {
+  open: boolean;
+  onClose: () => void;
+  item: Item;
+}): JSX.Element {
+  const [addStock, { isLoading }] = useAddStockMutation();
+  const [quantity, setQuantity] = useState<number>(1);
+  const [reason, setReason] = useState('');
+  const [costInr, setCostInr] = useState<string>('');
+
+  const isLot = item.isSerialized === false;
+  const currentQty = item.quantityOnHand ?? 1;
+
+  // Reset form when sheet opens against a different item.
+  useEffect(() => {
+    if (open) {
+      setQuantity(1);
+      setReason('');
+      setCostInr('');
+    }
+  }, [open, item.id]);
+
+  const submit = async (e: React.FormEvent): Promise<void> => {
+    e.preventDefault();
+    if (!Number.isInteger(quantity) || quantity < 1) {
+      return void toast.error('Quantity must be a positive integer');
+    }
+    if (quantity > 10_000) return void toast.error('Quantity capped at 10,000');
+    let costPricePaise: number | undefined;
+    if (costInr.trim()) {
+      const inr = Number(costInr);
+      if (!Number.isFinite(inr) || inr < 0) {
+        return void toast.error('Cost price must be a non-negative number');
+      }
+      costPricePaise = Math.round(inr * 100);
+    }
+    try {
+      const res = await addStock({
+        id: item.id,
+        quantity,
+        ...(reason.trim() ? { reason: reason.trim() } : {}),
+        ...(costPricePaise !== undefined ? { costPricePaise } : {}),
+      }).unwrap();
+      if (res.data.mode === 'serialized') {
+        toast.success(
+          `Created ${res.data.added} new piece${res.data.added === 1 ? '' : 's'} cloned from ${item.sku}.`,
+        );
+      } else {
+        toast.success(
+          `Added ${res.data.added} to ${item.sku} — now ${res.data.newQuantity ?? '—'} on hand.`,
+        );
+      }
+      onClose();
+    } catch (err) {
+      const message =
+        (err as { data?: { error?: { message?: string } } }).data?.error?.message ??
+        'Could not add stock.';
+      toast.error(message);
+    }
+  };
+
+  return (
+    <Sheet open={open} onOpenChange={(o) => !o && onClose()}>
+      <SheetContent>
+        <SheetHeader>
+          <SheetTitle>Add stock · {item.sku}</SheetTitle>
+        </SheetHeader>
+        <SheetBody>
+          <form onSubmit={submit} className="space-y-4 text-sm">
+            <div className="flex items-center gap-2">
+              <Badge tone={isLot ? 'info' : 'neutral'}>{isLot ? 'LOT' : 'UNIQUE'}</Badge>
+              <span className="text-xs text-ink-500 font-mono">
+                On hand: {isLot ? currentQty : 1}
+                {!isLot && (
+                  <span className="text-ink-400"> (each unique piece is its own row)</span>
+                )}
+              </span>
+            </div>
+            <p className="text-ink-600">
+              {isLot
+                ? `This will increase the on-hand count from ${currentQty} to ${
+                    currentQty + (Number.isFinite(quantity) ? quantity : 0)
+                  }.`
+                : `This will create ${quantity || 0} new piece${
+                    quantity === 1 ? '' : 's'
+                  } with auto-generated SKUs, cloned from this design.`}
+            </p>
+            <Field label="Quantity">
+              <input
+                type="number"
+                min={1}
+                max={10_000}
+                step={1}
+                value={quantity}
+                onChange={(e) => setQuantity(Number(e.target.value))}
+                className={fieldCls}
+                required
+              />
+            </Field>
+            <Field label="Cost price override (₹, optional)">
+              <input
+                type="number"
+                min={0}
+                step="0.01"
+                value={costInr}
+                onChange={(e) => setCostInr(e.target.value)}
+                placeholder={isLot ? 'Update lot cost' : 'Apply to all new pieces'}
+                className={fieldCls}
+              />
+            </Field>
+            <Field label="Reason (optional)">
+              <textarea
+                value={reason}
+                onChange={(e) => setReason(e.target.value)}
+                rows={2}
+                maxLength={200}
+                className={fieldCls}
+                placeholder={
+                  isLot ? 'Restock from vendor Rajesh — invoice 4421' : 'Re-runs of best-selling design'
+                }
+              />
+            </Field>
+            <div className="flex gap-2">
+              <Button variant="outline" type="button" onClick={onClose} disabled={isLoading}>
+                Cancel
+              </Button>
+              <Button type="submit" className="flex-1" disabled={isLoading}>
+                {isLoading ? 'Adding…' : 'Confirm add'}
               </Button>
             </div>
           </form>
@@ -1722,8 +2585,6 @@ function Row({ label, children }: { label: string; children: React.ReactNode }):
 
 // ----------------------------------------------------------------------------
 // DistributeStockDialog.
-
-import { useEffect } from 'react';
 
 function DistributeStockDialog({
   open,

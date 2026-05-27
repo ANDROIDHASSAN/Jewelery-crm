@@ -12,6 +12,7 @@ import {
 import { authReducer, logout, setAccessToken } from '@/features/auth/authSlice';
 import { storefrontContentReducer } from '@/features/storefront/storefrontContentSlice';
 import { shopReducer, persistShopState } from '@/features/storefront/shopSlice';
+import { registerCloudinaryAuthSource } from '@/lib/cloudinary';
 
 const rawBaseQuery = fetchBaseQuery({
   baseUrl: '/api/v1',
@@ -145,6 +146,12 @@ export const store = configureStore({
 store.subscribe(() => {
   persistShopState(store.getState().shop);
 });
+
+// Cloudinary upload helper needs the current auth token so the server can
+// authenticate /uploads/cloudinary-sign. Wire it once at boot — the lib
+// reads through this closure on every upload so token rotations propagate
+// without re-registering.
+registerCloudinaryAuthSource(() => store.getState().auth.accessToken);
 
 export type RootState = ReturnType<typeof store.getState>;
 export type AppDispatch = typeof store.dispatch;

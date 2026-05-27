@@ -38,6 +38,7 @@ import { websiteRouter } from './modules/website/website.routes.js';
 import { storefrontRouter } from './modules/storefront/storefront.routes.js';
 import { webhooksRouter } from './modules/webhooks/webhooks.routes.js';
 import { settingsRouter } from './modules/settings/settings.routes.js';
+import { uploadsRouter } from './modules/uploads/uploads.routes.js';
 
 export function createApp(): express.Express {
   const app = express();
@@ -164,6 +165,12 @@ export function createApp(): express.Express {
     requireAnyPermission('settings.read', 'settings.write'),
     settingsRouter,
   );
+
+  // Uploads helpers. /cloudinary-sign is the only endpoint today; needs auth
+  // (any signed-in staffer with inventory.write or ecommerce.product_write
+  // can upload product imagery) but no further permission gate so the cashier
+  // can also drop in product photos from POS quick-add.
+  protectedRouter.use('/uploads', uploadsRouter);
 
   app.use('/api/v1', protectedRouter);
 

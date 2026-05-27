@@ -119,8 +119,30 @@ websiteRouter.get('/products', async (req, res, next) => {
       where: { tenantId, isPublished: true },
       orderBy: { createdAt: 'desc' },
       take: 60,
+      // Pull the linked inventory row (if any) so we can compute live stock
+      // for the "Sold out" badge on the storefront card. `select` keeps the
+      // payload slim — no need to ship cost prices or hallmark refs to the
+      // public.
+      include: {
+        linkedItem: {
+          select: { status: true, isSerialized: true, quantityOnHand: true },
+        },
+      },
     });
-    res.json({ data: products, page: { hasMore: false } });
+    // Compute a single `inStock` boolean per product. Products without a
+    // linked Item (legacy, admin-created from the e-commerce tab) default to
+    // in-stock — those have no inventory backing in v1, so we can't tell.
+    const enriched = products.map((p) => {
+      const { linkedItem, ...rest } = p;
+      let inStock = true;
+      if (linkedItem) {
+        const isSerializedSold = linkedItem.isSerialized && linkedItem.status !== 'IN_STOCK';
+        const lotEmpty = !linkedItem.isSerialized && linkedItem.quantityOnHand <= 0;
+        inStock = !(isSerializedSold || lotEmpty);
+      }
+      return { ...rest, inStock };
+    });
+    res.json({ data: enriched, page: { hasMore: false } });
   } catch (err) {
     next(err);
   }

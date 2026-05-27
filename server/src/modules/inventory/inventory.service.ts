@@ -1,12 +1,24 @@
 // Inventory service — Prisma operations stay tenant-scoped automatically via the extension.
 
+import crypto from 'node:crypto';
 import { Prisma } from '@prisma/client';
 import { prisma } from '../../lib/prisma.js';
 import { NotFoundError, BusinessRuleError } from '../../lib/errors.js';
 import { readGoldRatePaise } from '../../lib/redis.js';
 import { computeGoldValuePaise } from '../../lib/money.js';
 import { getTenantId } from '../../lib/async-context.js';
-import type { ItemInput, VendorInput, PurchaseOrderCreate } from '@goldos/shared/types';
+import type { ItemInput, VendorInput, PurchaseOrderCreate, AddStock } from '@goldos/shared/types';
+
+// Kebab-case slug for the storefront Product mirror. Pulls a-z0-9 + dashes,
+// collapses runs, trims edges. Falls back to "item" so a degenerate name
+// (e.g. all whitespace + emoji) still produces a valid slug.
+function slugifyForProduct(raw: string): string {
+  const base = raw
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+  return base || 'item';
+}
 
 const DEFAULT_PAGE_LIMIT = 20;
 const MAX_PAGE_LIMIT = 100;
@@ -36,7 +48,10 @@ export async function getItem(id: string) {
 export async function createItem(input: ItemInput, performedByUserId?: string) {
   const tenantId = getTenantId();
   if (!tenantId) throw new Error('tenantId missing');
-  const item = await prisma.item.create({ data: { ...input, tenantId } });
+  // `publishToWebsite` is a write-time flag, not an Item column — strip it
+  // off before handing the row to Prisma.
+  const { publishToWebsite, ...itemData } = input;
+  const item = await prisma.item.create({ data: { ...itemData, tenantId } });
   // Audit + PURCHASE movement on first insert.
   await prisma.itemMovement.create({
     data: {
@@ -49,13 +64,84 @@ export async function createItem(input: ItemInput, performedByUserId?: string) {
     },
   });
   void writeAudit('Item', item.id, 'CREATE', null, item, performedByUserId);
+
+  // Storefront mirror: when the admin opts in, also create a Product row so
+  // the piece lands on the public catalog. Requires at least one image
+  // (ProductInputSchema enforces min(1)) and a display name. If either is
+  // missing we silently skip the mirror — the inventory row still lands, and
+  // the admin can publish later from the e-commerce tab.
+  if (publishToWebsite && item.name && item.images.length > 0) {
+    try {
+      // Resolve a unique slug per-tenant. If the natural slug already exists
+      // (two pieces named "Lotus pendant" in the same tenant), append a short
+      // id-derived suffix.
+      const baseSlug = slugifyForProduct(item.name ?? item.sku);
+      const existing = await prisma.product.findUnique({
+        where: { tenantId_slug: { tenantId, slug: baseSlug } },
+        select: { id: true },
+      });
+      const slug = existing ? `${baseSlug}-${item.id.slice(-6).toLowerCase()}` : baseSlug;
+      await prisma.product.create({
+        data: {
+          tenantId,
+          linkedItemId: item.id,
+          name: item.name ?? item.sku,
+          slug,
+          categoryId: item.categoryId,
+          descriptionMd: '', // admin can enrich later from e-commerce tab
+          images: item.images,
+          weightMg: item.weightMg,
+          purityCaratX100: item.purityCaratX100,
+          makingChargeBps: item.makingChargeBps ?? 0,
+          // basePricePaise mirrors costPricePaise as a starting point. The
+          // storefront pricing surface re-prices on the fly from the live
+          // gold rate (see ecommerce.routes), so this is mostly a floor for
+          // non-gold pieces.
+          basePricePaise: item.costPricePaise,
+          stoneChargePaise: 0,
+          isPublished: true,
+        },
+      });
+    } catch (err) {
+      // Mirror failure must not break the primary Item create — log and move
+      // on. The admin will see the inventory row landed; storefront publish
+      // can be retried from the e-commerce tab.
+      console.error('[inventory.createItem] Product mirror failed', err);
+    }
+  }
+
   return item;
 }
 
 export async function updateItem(id: string, patch: Partial<ItemInput>, performedByUserId?: string) {
   const before = await prisma.item.findUnique({ where: { id } });
   if (!before) throw new NotFoundError();
-  const item = await prisma.item.update({ where: { id }, data: patch });
+  // `publishToWebsite` is write-only; never persist on Item.
+  const { publishToWebsite: _ignored, ...itemPatch } = patch;
+  const item = await prisma.item.update({ where: { id }, data: itemPatch });
+
+  // Keep the storefront mirror in sync for visible fields. Only patches that
+  // include those fields hit the Product row, so silent edits to private
+  // fields (cost price, hallmark ref) don't churn the public catalog.
+  const mirrorPatch: Prisma.ProductUpdateInput = {};
+  if (itemPatch.name !== undefined && itemPatch.name !== null) mirrorPatch.name = itemPatch.name;
+  if (itemPatch.images !== undefined) mirrorPatch.images = { set: itemPatch.images };
+  if (itemPatch.weightMg !== undefined) mirrorPatch.weightMg = itemPatch.weightMg;
+  if (itemPatch.purityCaratX100 !== undefined) mirrorPatch.purityCaratX100 = itemPatch.purityCaratX100;
+  if (itemPatch.makingChargeBps !== undefined && itemPatch.makingChargeBps !== null) {
+    mirrorPatch.makingChargeBps = itemPatch.makingChargeBps;
+  }
+  if (Object.keys(mirrorPatch).length > 0) {
+    try {
+      await prisma.product.updateMany({
+        where: { linkedItemId: id },
+        data: mirrorPatch as Prisma.ProductUpdateManyMutationInput,
+      });
+    } catch (err) {
+      console.error('[inventory.updateItem] Product mirror sync failed', err);
+    }
+  }
+
   void writeAudit('Item', id, 'UPDATE', before, item, performedByUserId);
   return item;
 }
@@ -111,6 +197,167 @@ export async function recordWastage(id: string, reason: string, performedByUserI
   return movement;
 }
 
+// Add stock to an existing Item. Behavior depends on the target row's
+// `isSerialized` flag:
+//
+//   serialized=true:
+//     Clones N new Item rows with auto-generated SKUs (pattern `{sku}-{nanoid6}`),
+//     copies weight / purity / category / shopId / makingChargeBps from the
+//     source, and writes one PURCHASE ItemMovement (qty=1) per new row. The
+//     source row is unchanged. Optional costPricePaise overrides the cloned
+//     rows' cost.
+//
+//   serialized=false (lot):
+//     Increments the source row's quantityOnHand by N and writes a single
+//     PURCHASE ItemMovement with qty=N. Cost-price override updates the
+//     source row in place.
+//
+// Wrapped in $transaction so partial writes cannot land. The whole thing
+// happens through the tenant-scoped Prisma client; tx callbacks inherit the
+// same tenant context via AsyncLocalStorage.
+//
+// Throws BusinessRuleError if the target item is not IN_STOCK (sold, melted,
+// or in transit). The Sheet UI gates the button on status anyway.
+export async function addStock(
+  itemId: string,
+  input: AddStock,
+  performedByUserId?: string,
+): Promise<{ mode: 'serialized' | 'lot'; added: number; newQuantity?: number; newItemIds?: string[] }> {
+  const tenantId = getTenantId();
+  if (!tenantId) throw new Error('tenantId missing');
+
+  const item = await prisma.item.findUnique({ where: { id: itemId } });
+  if (!item) throw new NotFoundError('Item not found');
+  if (item.status !== 'IN_STOCK') {
+    throw new BusinessRuleError(
+      'ITEM_NOT_IN_STOCK',
+      `Cannot add stock — item is ${item.status.toLowerCase()}. Restore or recreate the item first.`,
+    );
+  }
+
+  const reason = input.reason?.trim() || 'Stock added manually';
+
+  if (item.isSerialized) {
+    // Clone N rows + N PURCHASE movements. Unique SKU suffix per clone via
+    // crypto.randomBytes — base32-ish (uppercased base64url) for 6 chars.
+    const baseSku = item.sku;
+    const newItems = await prisma.$transaction(async (tx) => {
+      const created: { id: string; sku: string }[] = [];
+      for (let i = 0; i < input.quantity; i += 1) {
+        // Loop on collision; retries are bounded — 36^6 ≈ 2.1 B suffixes.
+        let sku = '';
+        for (let attempt = 0; attempt < 5; attempt += 1) {
+          const suffix = crypto
+            .randomBytes(8)
+            .toString('base64url')
+            .replace(/[^A-Za-z0-9]/g, '')
+            .slice(0, 6)
+            .toUpperCase();
+          sku = `${baseSku}-${suffix}`;
+          const dupe = await tx.item.findUnique({
+            where: { tenantId_sku: { tenantId, sku } },
+            select: { id: true },
+          });
+          if (!dupe) break;
+          sku = '';
+        }
+        if (!sku) {
+          throw new BusinessRuleError('SKU_COLLISION', 'Could not allocate a unique SKU suffix; retry the request.');
+        }
+        const clone = await tx.item.create({
+          data: {
+            tenantId,
+            shopId: item.shopId,
+            categoryId: item.categoryId,
+            sku,
+            barcodeData: sku,
+            name: item.name,
+            images: item.images,
+            weightMg: item.weightMg,
+            purityCaratX100: item.purityCaratX100,
+            stoneWeightMg: item.stoneWeightMg,
+            hallmarkStatus: 'PENDING',
+            costPricePaise: input.costPricePaise ?? item.costPricePaise,
+            makingChargeBps: item.makingChargeBps,
+            status: 'IN_STOCK',
+            isSerialized: true,
+            quantityOnHand: 1,
+          },
+          select: { id: true, sku: true },
+        });
+        await tx.itemMovement.create({
+          data: {
+            tenantId,
+            itemId: clone.id,
+            toShopId: item.shopId,
+            type: 'PURCHASE',
+            qty: 1,
+            reason,
+            performedByUserId: performedByUserId ?? null,
+          },
+        });
+        created.push(clone);
+      }
+      return created;
+    });
+
+    // Audit: one row summarising the bulk add against the source design.
+    void writeAudit(
+      'Item',
+      itemId,
+      'ADD_STOCK',
+      { mode: 'serialized', sourceSku: baseSku },
+      { mode: 'serialized', added: newItems.length, newSkus: newItems.map((i) => i.sku) },
+      performedByUserId,
+    );
+
+    return {
+      mode: 'serialized',
+      added: newItems.length,
+      newItemIds: newItems.map((i) => i.id),
+    };
+  }
+
+  // Lot path: bump quantityOnHand on the existing row + one PURCHASE movement.
+  const result = await prisma.$transaction(async (tx) => {
+    const updated = await tx.item.update({
+      where: { id: itemId },
+      data: {
+        quantityOnHand: { increment: input.quantity },
+        ...(input.costPricePaise !== undefined ? { costPricePaise: input.costPricePaise } : {}),
+      },
+      select: { quantityOnHand: true },
+    });
+    await tx.itemMovement.create({
+      data: {
+        tenantId,
+        itemId,
+        toShopId: item.shopId,
+        type: 'PURCHASE',
+        qty: input.quantity,
+        reason,
+        performedByUserId: performedByUserId ?? null,
+      },
+    });
+    return updated;
+  });
+
+  void writeAudit(
+    'Item',
+    itemId,
+    'ADD_STOCK',
+    { mode: 'lot', quantityOnHand: item.quantityOnHand },
+    { mode: 'lot', added: input.quantity, newQuantity: result.quantityOnHand },
+    performedByUserId,
+  );
+
+  return {
+    mode: 'lot',
+    added: input.quantity,
+    newQuantity: result.quantityOnHand,
+  };
+}
+
 export async function listMovements(opts: { itemId?: string; type?: string; cursor?: string }) {
   const take = DEFAULT_PAGE_LIMIT;
   const movements = await prisma.itemMovement.findMany({
@@ -149,7 +396,14 @@ export async function computeValuation(opts: { shopId?: string }) {
       status: 'IN_STOCK',
       ...(opts.shopId ? { shopId: opts.shopId } : {}),
     },
-    select: { weightMg: true, purityCaratX100: true, shopId: true, categoryId: true },
+    select: {
+      weightMg: true,
+      purityCaratX100: true,
+      shopId: true,
+      categoryId: true,
+      isSerialized: true,
+      quantityOnHand: true,
+    },
   });
   // Resolve each distinct purity's rate once, in parallel. Previously this
   // hit Redis inside the per-item loop — for a tenant with thousands of
@@ -161,24 +415,30 @@ export async function computeValuation(opts: { shopId?: string }) {
   const rateByPurity = new Map<number, number>(rateEntries);
 
   let totalPaise = 0;
+  let totalItemCount = 0;
   const byShop = new Map<string, { totalPaise: number; itemCount: number }>();
   const byCategory = new Map<string, { totalPaise: number; itemCount: number }>();
   for (const it of items) {
     const ratePerGramPaise = rateByPurity.get(it.purityCaratX100) ?? 642_000;
-    const value = computeGoldValuePaise(it.weightMg, it.purityCaratX100, ratePerGramPaise);
+    // Per-piece value (weight is recorded per piece for both modes).
+    const perPiece = computeGoldValuePaise(it.weightMg, it.purityCaratX100, ratePerGramPaise);
+    // Lot rows hold N interchangeable pieces — value and item count scale.
+    const units = it.isSerialized ? 1 : it.quantityOnHand;
+    const value = perPiece * units;
     totalPaise += value;
+    totalItemCount += units;
     const shopAgg = byShop.get(it.shopId) ?? { totalPaise: 0, itemCount: 0 };
     shopAgg.totalPaise += value;
-    shopAgg.itemCount += 1;
+    shopAgg.itemCount += units;
     byShop.set(it.shopId, shopAgg);
     const catAgg = byCategory.get(it.categoryId) ?? { totalPaise: 0, itemCount: 0 };
     catAgg.totalPaise += value;
-    catAgg.itemCount += 1;
+    catAgg.itemCount += units;
     byCategory.set(it.categoryId, catAgg);
   }
   return {
     totalPaise,
-    itemCount: items.length,
+    itemCount: totalItemCount,
     byShop: Array.from(byShop.entries()).map(([shopId, v]) => ({ shopId, ...v })),
     byCategory: Array.from(byCategory.entries()).map(([categoryId, v]) => ({ categoryId, ...v })),
     asOf: new Date().toISOString(),
@@ -186,18 +446,39 @@ export async function computeValuation(opts: { shopId?: string }) {
 }
 
 export async function computeLowStock(threshold: number) {
-  const grouped = await prisma.item.groupBy({
+  // Per-bucket count needs to use SUM(quantityOnHand) for lot rows + COUNT(*)
+  // for serialized rows. Prisma's groupBy doesn't conditionally aggregate, so
+  // we run two aggregates and merge in JS.
+  const serializedGrouped = await prisma.item.groupBy({
     by: ['categoryId', 'shopId'],
-    where: { status: 'IN_STOCK' },
+    where: { status: 'IN_STOCK', isSerialized: true },
     _count: { _all: true },
   });
-  const lowBuckets = grouped
-    .map((g) => ({
+  const lotGrouped = await prisma.item.groupBy({
+    by: ['categoryId', 'shopId'],
+    where: { status: 'IN_STOCK', isSerialized: false },
+    _sum: { quantityOnHand: true },
+  });
+  const bucketKey = (categoryId: string, shopId: string): string => `${categoryId}::${shopId}`;
+  const counts = new Map<string, { categoryId: string; shopId: string; itemCount: number }>();
+  for (const g of serializedGrouped) {
+    counts.set(bucketKey(g.categoryId, g.shopId), {
       categoryId: g.categoryId,
       shopId: g.shopId,
       itemCount: g._count._all,
-    }))
-    .filter((r) => r.itemCount <= threshold);
+    });
+  }
+  for (const g of lotGrouped) {
+    const key = bucketKey(g.categoryId, g.shopId);
+    const existing = counts.get(key);
+    const lotSum = g._sum.quantityOnHand ?? 0;
+    if (existing) {
+      existing.itemCount += lotSum;
+    } else {
+      counts.set(key, { categoryId: g.categoryId, shopId: g.shopId, itemCount: lotSum });
+    }
+  }
+  const lowBuckets = Array.from(counts.values()).filter((r) => r.itemCount <= threshold);
   if (lowBuckets.length === 0) return { threshold, rows: [], items: [] };
   // Pull every IN_STOCK item that lives in a low bucket so the UI can render
   // an actual product list (SKU / weight / purity / cost) instead of just
@@ -217,6 +498,8 @@ export async function computeLowStock(threshold: number) {
       purityCaratX100: true,
       costPricePaise: true,
       hallmarkStatus: true,
+      isSerialized: true,
+      quantityOnHand: true,
     },
   });
   return { threshold, rows: lowBuckets, items };

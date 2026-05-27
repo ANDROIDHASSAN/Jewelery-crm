@@ -1,10 +1,12 @@
 import { baseApi } from '@/app/store';
 import type { ApiList, ApiOne, Shop } from '@goldos/shared/types';
 
+export type ShopTypeFilter = 'WAREHOUSE' | 'RETAIL';
+
 export const shopsApi = baseApi.injectEndpoints({
   endpoints: (b) => ({
-    getShops: b.query<ApiList<Shop>, void>({
-      query: () => '/shops',
+    getShops: b.query<ApiList<Shop>, { type?: ShopTypeFilter } | void>({
+      query: (params) => ({ url: '/shops', params: params ?? undefined }),
       providesTags: (r) =>
         r
           ? [...r.data.map(({ id }) => ({ type: 'Shop' as const, id })), { type: 'Shop' as const, id: 'LIST' }]
@@ -26,4 +28,3 @@ export const shopsApi = baseApi.injectEndpoints({
 });
 
 export const { useGetShopsQuery, useGetShopQuery, useCreateShopMutation } = shopsApi;
-

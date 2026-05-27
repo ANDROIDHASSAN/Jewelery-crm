@@ -417,20 +417,68 @@ export async function voidBill(billId: string, reason: string, voidedByUserId: s
   if (Date.now() - bill.createdAt.getTime() > 24 * 60 * 60 * 1000) {
     throw new BusinessRuleError('VOID_WINDOW_EXPIRED', 'Bills can only be voided within 24 hours of creation');
   }
+  // Pull each item's mode so we branch correctly when restoring stock.
+  const items = await prisma.item.findMany({
+    where: { id: { in: bill.lines.map((l) => l.itemId) } },
+    select: { id: true, isSerialized: true },
+  });
+  const isSerializedById = new Map(items.map((i) => [i.id, i.isSerialized]));
+  const tenantId = tenantIdOrThrow();
+
   return prisma.$transaction(async (tx) => {
     const updated = await tx.bill.update({
       where: { id: billId },
       data: { voidedAt: new Date(), voidReason: reason, paymentStatus: 'REFUNDED' },
     });
-    // Restore stock — items go back to IN_STOCK.
-    await tx.item.updateMany({
-      where: { id: { in: bill.lines.map((l) => l.itemId) }, status: 'SOLD' },
-      data: { status: 'IN_STOCK' },
+
+    // Restore stock — symmetric to createBill's decrement.
+    //   serialized: flip SOLD -> IN_STOCK.
+    //   lot:        increment quantityOnHand back by 1 per line; if the row
+    //               had flipped to SOLD when it hit zero, flip it back.
+    const serializedIds: string[] = [];
+    const lotItemIds: string[] = [];
+    for (const l of bill.lines) {
+      if (isSerializedById.get(l.itemId) === false) lotItemIds.push(l.itemId);
+      else serializedIds.push(l.itemId);
+    }
+
+    if (serializedIds.length > 0) {
+      await tx.item.updateMany({
+        where: { id: { in: serializedIds }, status: 'SOLD' },
+        data: { status: 'IN_STOCK' },
+      });
+    }
+    for (const id of lotItemIds) {
+      await tx.item.update({
+        where: { id },
+        data: {
+          quantityOnHand: { increment: 1 },
+          // Restoring a previously sold-out lot — flip back to IN_STOCK so it
+          // shows up in catalogs again. If the row was already IN_STOCK, the
+          // status write is a no-op.
+          status: 'IN_STOCK',
+        },
+      });
+    }
+
+    // RETURN movement per line — symmetric to the SALE rows createBill wrote.
+    // Keeps the item-history view balanced for both serialized and lot rows.
+    await tx.itemMovement.createMany({
+      data: bill.lines.map((l) => ({
+        tenantId,
+        itemId: l.itemId,
+        type: 'RETURN' as const,
+        toShopId: bill.shopId,
+        qty: 1,
+        reason: `Void bill ${bill.billNumber}: ${reason}`,
+        performedByUserId: voidedByUserId,
+      })),
     });
+
     // Audit
     await rawPrisma.auditLog.create({
       data: {
-        tenantId: tenantIdOrThrow(),
+        tenantId,
         userId: voidedByUserId,
         entityType: 'Bill',
         entityId: billId,

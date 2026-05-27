@@ -8,7 +8,15 @@ import type {
   Vendor,
   VendorInput,
   PurchaseOrderCreate,
+  AddStock,
 } from '@goldos/shared/types';
+
+export interface AddStockResult {
+  mode: 'serialized' | 'lot';
+  added: number;
+  newQuantity?: number;
+  newItemIds?: string[];
+}
 
 export interface ItemMovementRow {
   id: string;
@@ -95,6 +103,22 @@ export const inventoryApi = baseApi.injectEndpoints({
       invalidatesTags: (_r, _e, a) => [
         { type: 'Item', id: a.id },
         { type: 'Item', id: 'LIST' },
+        'StockValuation',
+      ],
+    }),
+    // Add stock to an existing Item (serialized -> clone N rows, lot -> bump
+    // quantityOnHand). Server returns { mode, added, newQuantity? } so the
+    // toast can confirm exactly what happened.
+    addStock: b.mutation<ApiOne<AddStockResult>, { id: string } & AddStock>({
+      query: ({ id, ...body }) => ({
+        url: `/inventory/items/${id}/add-stock`,
+        method: 'POST',
+        body,
+      }),
+      invalidatesTags: (_r, _e, a) => [
+        { type: 'Item', id: a.id },
+        { type: 'Item', id: 'LIST' },
+        { type: 'Item', id: 'MOVEMENTS' },
         'StockValuation',
       ],
     }),
@@ -204,6 +228,7 @@ export const {
   useCreateItemMutation,
   useUpdateItemMutation,
   useRecordWastageMutation,
+  useAddStockMutation,
   useGetCategoriesQuery,
   useUpdateCategoryMakingChargeMutation,
   useGetValuationQuery,

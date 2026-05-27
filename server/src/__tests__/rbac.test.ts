@@ -118,4 +118,11 @@ describe('permission catalog integrity', () => {
     expect(ROLE_DEFAULT_PERMISSIONS.ACCOUNTANT).toContain('finance.ledger_export');
     expect(ROLE_DEFAULT_PERMISSIONS.ACCOUNTANT).not.toContain('pos.bill_create');
   });
+
+  // POST /inventory/items/:id/add-stock is gated by inventory.write — both
+  // SuperAdmin (full catalog) and Accountant must have it so SuperAdmin and
+  // Accountant can both restock items per the hybrid-inventory spec.
+  it('ACCOUNTANT can hit POST /inventory/items/:id/add-stock (inventory.write)', () => {
+    expect(ROLE_DEFAULT_PERMISSIONS.ACCOUNTANT).toContain('inventory.write');
+  });
 });

@@ -315,6 +315,9 @@ function AddShopSheet({ open, onClose }: { open: boolean; onClose: () => void })
         address: form.address.trim(),
         isActive: form.isActive,
         isWarehouse: form.isWarehouse,
+        // Mirror the new canonical ShopType field — POST /shops keeps both
+        // in lockstep, but the client schema requires it on input.
+        type: form.isWarehouse ? 'WAREHOUSE' : 'RETAIL',
       }).unwrap();
       toast.success(`Created shop ${form.name}`);
       setForm({ name: '', phone: '+91', gstStateCode: '', address: '', isActive: true, isWarehouse: false });

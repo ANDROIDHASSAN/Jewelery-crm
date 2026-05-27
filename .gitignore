@@ -43,6 +43,10 @@ client/.vite-dev.log.out
 .claude/
 shared/*.js
 client/vite.config.ts.timestamp-*
+server/vitest.config.ts.timestamp-*
+
+# Local DB backups (may contain real customer data — never commit)
+backup-*.sql
 
 # Playwright MCP snapshots + root-level smoke-test screenshots
 .playwright-mcp/

@@ -1,6 +1,7 @@
 // server/src/modules/shops/shops.routes.ts — minimal tenant-scoped endpoints for D1 smoke + D2 isolation test.
 
 import { Router } from 'express';
+import { z } from 'zod';
 import { ShopInputSchema } from '@goldos/shared/schemas';
 import { prisma } from '../../lib/prisma.js';
 import { NotFoundError } from '../../lib/errors.js';
@@ -9,9 +10,23 @@ import { requirePermission } from '../../middleware/require-permission.js';
 
 export const shopsRouter: Router = Router();
 
-shopsRouter.get('/', async (_req, res, next) => {
+const ListQuery = z.object({
+  // Optional filter — WAREHOUSE for transfer "From" pickers, RETAIL for
+  // "To" pickers + POS. Backed by Shop.type (canonical) with a fallback
+  // through the legacy isWarehouse boolean for rows pre-migration.
+  type: z.enum(['WAREHOUSE', 'RETAIL']).optional(),
+});
+
+shopsRouter.get('/', async (req, res, next) => {
   try {
+    const q = ListQuery.parse(req.query);
+    const where = q.type
+      ? q.type === 'WAREHOUSE'
+        ? { OR: [{ type: 'WAREHOUSE' as const }, { isWarehouse: true }] }
+        : { AND: [{ type: 'RETAIL' as const }, { isWarehouse: false }] }
+      : undefined;
     const data = await prisma.shop.findMany({
+      where,
       orderBy: { name: 'asc' },
       take: 100,
     });
@@ -36,7 +51,13 @@ shopsRouter.post('/', requirePermission('shops.write'), async (req, res, next) =
     const body = ShopInputSchema.parse(req.body);
     const tenantId = getTenantId();
     if (!tenantId) throw new Error('tenantId missing');
-    const shop = await prisma.shop.create({ data: { ...body, tenantId } });
+    // Keep `type` and the legacy `isWarehouse` boolean in lockstep so older
+    // code paths that still read `isWarehouse` keep working.
+    const type = body.type ?? (body.isWarehouse ? 'WAREHOUSE' : 'RETAIL');
+    const isWarehouse = type === 'WAREHOUSE';
+    const shop = await prisma.shop.create({
+      data: { ...body, tenantId, type, isWarehouse },
+    });
     res.status(201).json({ data: shop });
   } catch (err) {
     next(err);
