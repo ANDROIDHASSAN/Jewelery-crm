@@ -80,7 +80,7 @@ export interface LowStockRow {
 
 export const inventoryApi = baseApi.injectEndpoints({
   endpoints: (b) => ({
-    getItems: b.query<ApiList<Item>, { shopId?: string; categoryId?: string; cursor?: string; search?: string }>({
+    getItems: b.query<ApiList<Item>, { shopId?: string; categoryId?: string; cursor?: string; search?: string; limit?: number }>({
       query: (params) => ({ url: '/inventory/items', params }),
       providesTags: (r) =>
         r

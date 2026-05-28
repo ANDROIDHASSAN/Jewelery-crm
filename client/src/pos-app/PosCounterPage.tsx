@@ -175,7 +175,16 @@ function PosBillingScreen(): JSX.Element {
   const shopId = user?.shopId ?? shopsData?.data?.[0]?.id ?? '';
   const shop = shopsData?.data.find((s) => s.id === shopId) ?? null;
 
-  const { data: itemsRes, isLoading: itemsLoading } = useGetItemsQuery({ shopId: shopId || undefined });
+  // POS needs the full catalog for the active shop, not just the admin
+  // listing's first page. `limit: 100` matches the server's MAX_PAGE_LIMIT so
+  // shops with up to 100 SKUs come through in one shot. `pollingInterval`
+  // catches items added/edited from the admin tab without forcing the
+  // cashier to hard-refresh. refetchOnFocus from the baseApi handles the
+  // tab-switch case for free.
+  const { data: itemsRes, isLoading: itemsLoading } = useGetItemsQuery(
+    { shopId: shopId || undefined, limit: 100 },
+    { pollingInterval: 30_000 },
+  );
   const { data: categoriesRes } = useGetCategoriesQuery();
   const { data: ratesRes } = useGetGoldRateQuery(undefined, { pollingInterval: 60_000 });
   const { data: sessionData } = useGetOpenSessionQuery(shopId, { skip: !shopId });

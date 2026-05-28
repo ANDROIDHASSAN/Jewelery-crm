@@ -328,7 +328,19 @@ websiteRouter.post('/orders', async (req, res, next) => {
           candidateSlugs.length > 0 ? { slug: { in: candidateSlugs } } : undefined,
         ].filter((c): c is NonNullable<typeof c> => c !== undefined),
       },
-      select: { id: true, slug: true, name: true, basePricePaise: true, stoneChargePaise: true },
+      // Pull the linked inventory Item so the order-create transaction can
+      // decrement stock atomically. Products without a linkedItem stay as
+      // marketing-only catalog entries — they don't gate the order.
+      select: {
+        id: true,
+        slug: true,
+        name: true,
+        basePricePaise: true,
+        stoneChargePaise: true,
+        linkedItem: {
+          select: { id: true, status: true, isSerialized: true, quantityOnHand: true, shopId: true },
+        },
+      },
     });
     const byId = new Map(products.map((p) => [p.id, p]));
     const bySlug = new Map(products.map((p) => [p.slug, p]));
@@ -348,6 +360,46 @@ websiteRouter.post('/orders', async (req, res, next) => {
       }
       resolvedItems.push({ product, qty: it.qty });
     }
+
+    // Stock-availability gate. For every line whose Product is linked to an
+    // inventory Item, ensure enough units are in stock. Lot rows: must have
+    // quantityOnHand >= qty. Serialized rows: must be IN_STOCK and qty == 1
+    // (each piece is unique, can only be reserved once). Products without a
+    // linked Item (legacy catalog entries) skip this gate — they have no
+    // back-of-house counterpart to deplete. Rejecting up front beats letting
+    // the order land and then debugging a phantom oversell.
+    for (const { product, qty } of resolvedItems) {
+      const link = product.linkedItem;
+      if (!link) continue; // legacy product without inventory linkage
+      if (link.status !== 'IN_STOCK') {
+        res.status(409).json({
+          error: {
+            code: 'OUT_OF_STOCK',
+            message: `${product.name} is sold out.`,
+          },
+        });
+        return;
+      }
+      if (link.isSerialized && qty !== 1) {
+        res.status(400).json({
+          error: {
+            code: 'SERIALIZED_QTY_LIMIT',
+            message: `${product.name} is a unique piece — only 1 can be ordered.`,
+          },
+        });
+        return;
+      }
+      if (!link.isSerialized && link.quantityOnHand < qty) {
+        res.status(409).json({
+          error: {
+            code: 'INSUFFICIENT_STOCK',
+            message: `Only ${link.quantityOnHand} of ${product.name} left in stock.`,
+          },
+        });
+        return;
+      }
+    }
+
     const priceByProductId = new Map(products.map((p) => [p.id, p.basePricePaise + p.stoneChargePaise]));
     const nameById = new Map(products.map((p) => [p.id, p.name]));
     const subtotalPaise = resolvedItems.reduce(
@@ -451,56 +503,116 @@ websiteRouter.post('/orders', async (req, res, next) => {
       // a real Shiprocket AWB is attached the courier's estimate replaces this.
       const expectedDeliveryAt = new Date(Date.now() + 5 * 24 * 60 * 60 * 1000);
 
-      return rawPrisma.order.create({
-        data: {
-          tenantId,
-          customerId: customer.id,
-          status: 'PENDING',
-          subtotalPaise,
-          shippingPaise: body.shippingPaise,
-          taxPaise,
-          totalPaise,
-          paymentMethod: body.paymentMethod,
-          // Reserve-at-store and COD start unpaid; Razorpay flows through the
-          // verify endpoint to transition to PAID.
-          paymentStatus: 'PENDING',
-          expectedDeliveryAt,
-          // Snapshot the shipping address onto the order so a later customer
-          // profile edit doesn't rewrite shipping history.
-          shippingName: body.shippingAddress?.name ?? null,
-          shippingPhone: body.shippingAddress?.phone ?? null,
-          shippingLine1: body.shippingAddress?.line1 ?? null,
-          shippingLine2: body.shippingAddress?.line2 || null,
-          shippingCity: body.shippingAddress?.city ?? null,
-          shippingState: body.shippingAddress?.state ?? null,
-          shippingPincode: body.shippingAddress?.pincode ?? null,
-          items: {
-            create: resolvedItems.map(({ product, qty }) => ({
-              productId: product.id,
+      // Single transaction: create the order + decrement linked inventory
+      // (lot rows or flip serialized rows to SOLD) + write one SALE
+      // ItemMovement per line. If any step throws (e.g. a serialized row was
+      // claimed by another concurrent checkout in the milliseconds between
+      // our stock-check and this write), the whole order rolls back and the
+      // customer sees a clean error instead of a half-landed order with
+      // mismatched stock.
+      return rawPrisma.$transaction(async (tx) => {
+        const created = await tx.order.create({
+          data: {
+            tenantId,
+            customerId: customer.id,
+            status: 'PENDING',
+            subtotalPaise,
+            shippingPaise: body.shippingPaise,
+            taxPaise,
+            totalPaise,
+            paymentMethod: body.paymentMethod,
+            // Reserve-at-store and COD start unpaid; Razorpay flows through the
+            // verify endpoint to transition to PAID.
+            paymentStatus: 'PENDING',
+            expectedDeliveryAt,
+            // Snapshot the shipping address onto the order so a later customer
+            // profile edit doesn't rewrite shipping history.
+            shippingName: body.shippingAddress?.name ?? null,
+            shippingPhone: body.shippingAddress?.phone ?? null,
+            shippingLine1: body.shippingAddress?.line1 ?? null,
+            shippingLine2: body.shippingAddress?.line2 || null,
+            shippingCity: body.shippingAddress?.city ?? null,
+            shippingState: body.shippingAddress?.state ?? null,
+            shippingPincode: body.shippingAddress?.pincode ?? null,
+            items: {
+              create: resolvedItems.map(({ product, qty }) => ({
+                productId: product.id,
+                qty,
+                pricePaise: priceByProductId.get(product.id) ?? 0,
+              })),
+            },
+            events: {
+              // Surface the customer's free-form note (engraving, size, gift wrap)
+              // on the order timeline so the admin sees it without an extra lookup.
+              create: [
+                {
+                  tenantId,
+                  status: 'PENDING',
+                  note: body.notes ? `Order placed · Note: ${body.notes}` : 'Order placed',
+                  actorName: 'System',
+                },
+              ],
+            },
+          },
+          select: {
+            id: true,
+            totalPaise: true,
+            expectedDeliveryAt: true,
+            paymentMethod: true,
+            shippingPincode: true,
+          },
+        });
+
+        // Decrement the linked inventory rows. Mirrors pos.service.createBill:
+        //   serialized: flip status IN_STOCK -> SOLD (one shot per piece)
+        //   lot:        decrement quantityOnHand by qty; flip SOLD if drained
+        // Writes one SALE ItemMovement per line so item history balances
+        // PURCHASE -> SALE on every piece, regardless of channel (POS or
+        // storefront).
+        for (const { product, qty } of resolvedItems) {
+          const link = product.linkedItem;
+          if (!link) continue;
+          if (link.isSerialized) {
+            // Atomic guard: updateMany filtered by IN_STOCK so a concurrent
+            // checkout that already grabbed this piece can't double-sell it.
+            const result = await tx.item.updateMany({
+              where: { id: link.id, status: 'IN_STOCK' },
+              data: { status: 'SOLD' },
+            });
+            if (result.count === 0) {
+              // Lost the race — abort the whole transaction so the order
+              // never lands without matching stock movement.
+              throw new Error(`OUT_OF_STOCK:${product.name}`);
+            }
+          } else {
+            const updated = await tx.item.update({
+              where: { id: link.id },
+              data: { quantityOnHand: { decrement: qty } },
+              select: { quantityOnHand: true },
+            });
+            if (updated.quantityOnHand < 0) {
+              throw new Error(`OUT_OF_STOCK:${product.name}`);
+            }
+            if (updated.quantityOnHand === 0) {
+              await tx.item.update({
+                where: { id: link.id },
+                data: { status: 'SOLD' },
+              });
+            }
+          }
+          await tx.itemMovement.create({
+            data: {
+              tenantId,
+              itemId: link.id,
+              type: 'SALE',
+              fromShopId: link.shopId,
               qty,
-              pricePaise: priceByProductId.get(product.id) ?? 0,
-            })),
-          },
-          events: {
-            // Surface the customer's free-form note (engraving, size, gift wrap)
-            // on the order timeline so the admin sees it without an extra lookup.
-            create: [
-              {
-                tenantId,
-                status: 'PENDING',
-                note: body.notes ? `Order placed · Note: ${body.notes}` : 'Order placed',
-                actorName: 'System',
-              },
-            ],
-          },
-        },
-        select: {
-          id: true,
-          totalPaise: true,
-          expectedDeliveryAt: true,
-          paymentMethod: true,
-          shippingPincode: true,
-        },
+              reason: `Storefront order ${created.id.slice(-6).toUpperCase()}`,
+            },
+          });
+        }
+
+        return created;
       });
     });
 
@@ -615,6 +727,22 @@ websiteRouter.post('/orders', async (req, res, next) => {
       },
     });
   } catch (err) {
+    // Race-condition aborts from the order-create transaction surface as
+    // `OUT_OF_STOCK:<product name>` so we can render a clean 409 instead of
+    // a generic 500. The transaction already rolled back; nothing else to
+    // clean up.
+    if (err instanceof Error && err.message.startsWith('OUT_OF_STOCK:')) {
+      const name = err.message.slice('OUT_OF_STOCK:'.length);
+      res.status(409).json({
+        error: {
+          code: 'OUT_OF_STOCK',
+          message: name
+            ? `${name} was just claimed by another shopper. Refresh the cart.`
+            : 'One of the pieces in your cart is no longer in stock.',
+        },
+      });
+      return;
+    }
     next(err);
   }
 });

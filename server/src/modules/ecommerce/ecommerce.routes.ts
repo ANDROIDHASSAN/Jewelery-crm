@@ -301,10 +301,35 @@ ecommerceRouter.patch('/orders/:id', requirePermission('ecommerce.order_fulfil')
     const body = OrderPatchSchema.parse(req.body);
 
     // Pull current state so we can tell whether this PATCH actually changed
-    // the status (we only want to write an event on real transitions).
+    // the status (we only want to write an event on real transitions). Also
+    // pull the order items + their linked inventory rows so the restock
+    // branch (transition to CANCELLED / RETURNED) can flip stock back without
+    // a second round-trip.
     const before = await prisma.order.findUnique({
       where: { id },
-      select: { status: true, tenantId: true },
+      select: {
+        status: true,
+        tenantId: true,
+        items: {
+          select: {
+            qty: true,
+            product: {
+              select: {
+                name: true,
+                linkedItem: {
+                  select: {
+                    id: true,
+                    status: true,
+                    isSerialized: true,
+                    quantityOnHand: true,
+                    shopId: true,
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
     });
     if (!before) {
       res.status(404).json({ error: { code: 'NOT_FOUND', message: 'Order not found' } });
@@ -320,6 +345,13 @@ ecommerceRouter.patch('/orders/:id', requirePermission('ecommerce.order_fulfil')
       });
       return;
     }
+
+    // Detect the cancel/return transition exactly once, before the
+    // transaction, so we can decide whether to restock. Idempotent: if the
+    // order was already CANCELLED/RETURNED we skip the restock (otherwise
+    // a re-PATCH to the same status would double-restock).
+    const wasTerminal = before.status === 'CANCELLED' || before.status === 'RETURNED';
+    const shouldRestock = isCancelling && !wasTerminal;
 
     const order = await prisma.$transaction(async (tx) => {
       const updated = await tx.order.update({
@@ -350,6 +382,44 @@ ecommerceRouter.patch('/orders/:id', requirePermission('ecommerce.order_fulfil')
             actorName: body.actorName ?? null,
           },
         });
+      }
+
+      // Restock the linked inventory rows on cancel/return. Mirrors
+      // pos-features.voidBill: serialized rows flip SOLD -> IN_STOCK; lot
+      // rows increment quantityOnHand and restore IN_STOCK if they had
+      // drained to SOLD. One RETURN ItemMovement per line so the audit
+      // trail balances: PURCHASE -> SALE -> RETURN.
+      if (shouldRestock) {
+        for (const line of before.items) {
+          const link = line.product.linkedItem;
+          if (!link) continue;
+          if (link.isSerialized) {
+            await tx.item.update({
+              where: { id: link.id },
+              data: { status: 'IN_STOCK' },
+            });
+          } else {
+            await tx.item.update({
+              where: { id: link.id },
+              data: {
+                quantityOnHand: { increment: line.qty },
+                // If the lot had drained to 0 (flipped to SOLD), bring it
+                // back into stock now that units exist again.
+                ...(link.status === 'SOLD' ? { status: 'IN_STOCK' } : {}),
+              },
+            });
+          }
+          await tx.itemMovement.create({
+            data: {
+              tenantId: before.tenantId,
+              itemId: link.id,
+              type: 'RETURN',
+              toShopId: link.shopId,
+              qty: line.qty,
+              reason: `Order ${id.slice(-6).toUpperCase()} ${updated.status.toLowerCase()}`,
+            },
+          });
+        }
       }
       return updated;
     });
