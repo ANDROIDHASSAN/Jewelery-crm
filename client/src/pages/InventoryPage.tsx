@@ -1648,10 +1648,13 @@ function AddItemDialog({ open, onClose }: { open: boolean; onClose: () => void }
       quantityOnHand = parsed;
     }
 
-    // Validate purity based on metal type
+    // Validate purity per metal type. Gold now accepts any carat in the
+    // 10K–24K window so jewellers can register non-standard alloys (9K,
+    // 16K, 21K, 23K) without us blocking the save. Silver / Platinum /
+    // Other still require their canonical values.
     if (metalType === 'GOLD') {
-      if (![1400, 1800, 2200, 2400].includes(purityCaratX100)) {
-        return void toast.error('Purity must be 14K, 18K, 22K or 24K for Gold');
+      if (purityCaratX100 < 1000 || purityCaratX100 > 2400) {
+        return void toast.error('Purity must be between 10K and 24K for Gold');
       }
     } else if (metalType === 'SILVER') {
       if (purityCaratX100 !== 0) return void toast.error('Purity must be Silver (0) for Silver category');
@@ -1798,19 +1801,23 @@ function AddItemDialog({ open, onClose }: { open: boolean; onClose: () => void }
                       Dev mode: images stored locally (set VITE_CLOUDINARY_* for hosted)
                     </p>
                   )}
-                  <input
-                    ref={fileInputRef}
-                    type="file"
-                    accept="image/*"
-                    multiple
-                    className="hidden"
-                    onChange={(e) => {
-                      const files = e.target.files ? Array.from(e.target.files) : [];
-                      if (files.length > 0) void uploadFiles(files);
-                      e.target.value = '';
-                    }}
-                  />
                 </div>
+                {/* Input lives as a SIBLING of the click target, not a child.
+                    When it was nested inside the dropzone the programmatic
+                    .click() bubbled back to the parent's onClick and re-fired
+                    the picker — opening it twice. */}
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept="image/*"
+                  multiple
+                  className="hidden"
+                  onChange={(e) => {
+                    const files = e.target.files ? Array.from(e.target.files) : [];
+                    if (files.length > 0) void uploadFiles(files);
+                    e.target.value = '';
+                  }}
+                />
                 {uploading.length > 0 && (
                   <ul className="space-y-1">
                     {uploading.map((u) => (
@@ -1957,29 +1964,11 @@ function AddItemDialog({ open, onClose }: { open: boolean; onClose: () => void }
                 />
               </Field>
               <Field label="Purity">
-                <select
+                <PurityPicker
                   value={form.purityCarat}
-                  onChange={(e) => setForm({ ...form, purityCarat: e.target.value })}
-                  className={fieldCls}
-                >
-                  {metalType === 'GOLD' && (
-                    <>
-                      <option value="24">24K</option>
-                      <option value="22">22K</option>
-                      <option value="18">18K</option>
-                      <option value="14">14K</option>
-                    </>
-                  )}
-                  {metalType === 'SILVER' && (
-                    <option value="0">Silver</option>
-                  )}
-                  {metalType === 'PLATINUM' && (
-                    <option value="95">Platinum (95% Pt)</option>
-                  )}
-                  {metalType === 'OTHER' && (
-                    <option value="0">Non-precious / Attachment</option>
-                  )}
-                </select>
+                  metalType={metalType}
+                  onChange={(v) => setForm({ ...form, purityCarat: v })}
+                />
               </Field>
               <Field label="Stone wt (g)">
                 <input
@@ -2172,8 +2161,8 @@ function EditItemDialog({
     const costPricePaise = Math.round(parseFloat(form.costPriceRupees) * 100);
     if (!form.name.trim()) return void toast.error('Item name is required');
     if (!Number.isFinite(weightMg) || weightMg <= 0) return void toast.error('Weight must be > 0');
-    if (metalType === 'GOLD' && ![1400, 1800, 2200, 2400].includes(purityCaratX100)) {
-      return void toast.error('Purity must be 14K, 18K, 22K or 24K for Gold');
+    if (metalType === 'GOLD' && (purityCaratX100 < 1000 || purityCaratX100 > 2400)) {
+      return void toast.error('Purity must be between 10K and 24K for Gold');
     }
     if (!Number.isFinite(costPricePaise) || costPricePaise <= 0) {
       return void toast.error('Cost price must be > 0');
@@ -2268,19 +2257,22 @@ function EditItemDialog({
                       Dev mode: images stored locally (set VITE_CLOUDINARY_* for hosted)
                     </p>
                   )}
-                  <input
-                    ref={fileInputRef}
-                    type="file"
-                    accept="image/*"
-                    multiple
-                    className="hidden"
-                    onChange={(e) => {
-                      const files = e.target.files ? Array.from(e.target.files) : [];
-                      if (files.length > 0) void uploadFiles(files);
-                      e.target.value = '';
-                    }}
-                  />
                 </div>
+                {/* Sibling, not child — see AddItemDialog for the rationale.
+                    Nesting inside the dropzone re-fired the picker via event
+                    bubbling. */}
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept="image/*"
+                  multiple
+                  className="hidden"
+                  onChange={(e) => {
+                    const files = e.target.files ? Array.from(e.target.files) : [];
+                    if (files.length > 0) void uploadFiles(files);
+                    e.target.value = '';
+                  }}
+                />
                 {uploading.length > 0 && (
                   <ul className="space-y-1">
                     {uploading.map((u) => (
@@ -2368,23 +2360,11 @@ function EditItemDialog({
                 />
               </Field>
               <Field label="Purity">
-                <select
+                <PurityPicker
                   value={form.purityCarat}
-                  onChange={(e) => setForm({ ...form, purityCarat: e.target.value })}
-                  className={fieldCls}
-                >
-                  {metalType === 'GOLD' && (
-                    <>
-                      <option value="24">24K</option>
-                      <option value="22">22K</option>
-                      <option value="18">18K</option>
-                      <option value="14">14K</option>
-                    </>
-                  )}
-                  {metalType === 'SILVER' && <option value="0">Silver</option>}
-                  {metalType === 'PLATINUM' && <option value="95">Platinum (95% Pt)</option>}
-                  {metalType === 'OTHER' && <option value="0">Non-precious</option>}
-                </select>
+                  metalType={metalType}
+                  onChange={(v) => setForm({ ...form, purityCarat: v })}
+                />
               </Field>
               <Field label="Stone wt (g)">
                 <input
@@ -3017,6 +2997,94 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
       <span className="text-eyebrow uppercase text-ink-500 block mb-1">{label}</span>
       {children}
     </label>
+  );
+}
+
+// Purity picker — preset chips for the common gold carats (24K / 22K / 18K /
+// 14K) plus a "Custom" mode that exposes a number input. Stores the raw
+// carat value as a string in `form.purityCarat` (e.g. "21" for 21K) so the
+// existing parseFloat(carat) * 100 calculation downstream stays unchanged.
+// Used by AddItemDialog and EditItemDialog; the metalType arg gates which
+// presets we offer (gold only — silver/platinum/other have one fixed value).
+function PurityPicker({
+  value,
+  metalType,
+  onChange,
+}: {
+  value: string;
+  metalType: 'GOLD' | 'SILVER' | 'DIAMOND' | 'PLATINUM' | 'OTHER';
+  onChange: (v: string) => void;
+}): JSX.Element {
+  // Non-gold metals have exactly one valid purity — render a disabled chip
+  // so the field reads as deliberately locked, not broken.
+  if (metalType === 'SILVER' || metalType === 'OTHER') {
+    return (
+      <div className={`${fieldCls} flex items-center text-ink-500 italic`}>
+        {metalType === 'SILVER' ? 'Silver (fixed)' : 'Non-precious (fixed)'}
+      </div>
+    );
+  }
+  if (metalType === 'PLATINUM') {
+    return (
+      <div className={`${fieldCls} flex items-center text-ink-500 italic`}>
+        Platinum 95% (fixed)
+      </div>
+    );
+  }
+  // Gold + Diamond paths: chip presets plus custom carat input. Diamond
+  // pieces are often set in 14K / 18K white gold so we offer the same gold
+  // presets there too.
+  const presets = ['24', '22', '18', '14'];
+  const isPreset = presets.includes(value);
+  return (
+    <div className="space-y-2">
+      <div className="flex flex-wrap gap-1.5">
+        {presets.map((p) => (
+          <button
+            key={p}
+            type="button"
+            onClick={() => onChange(p)}
+            className={cn(
+              'h-8 px-2.5 rounded-md text-xs font-medium border transition-colors',
+              value === p
+                ? 'bg-brand-500 text-ink-0 border-brand-500'
+                : 'bg-ink-0 text-ink-700 border-ink-200 hover:border-ink-300',
+            )}
+          >
+            {p}K
+          </button>
+        ))}
+        <button
+          type="button"
+          onClick={() => {
+            if (isPreset) onChange('');
+          }}
+          className={cn(
+            'h-8 px-2.5 rounded-md text-xs font-medium border transition-colors',
+            !isPreset
+              ? 'bg-brand-500 text-ink-0 border-brand-500'
+              : 'bg-ink-0 text-ink-700 border-ink-200 hover:border-ink-300',
+          )}
+        >
+          Custom
+        </button>
+      </div>
+      {!isPreset && (
+        <div className="flex items-center gap-2">
+          <input
+            type="number"
+            step="0.5"
+            min={10}
+            max={24}
+            value={value}
+            onChange={(e) => onChange(e.target.value)}
+            placeholder="e.g. 21"
+            className={`${fieldCls} flex-1`}
+          />
+          <span className="text-xs text-ink-500 whitespace-nowrap">K (10–24)</span>
+        </div>
+      )}
+    </div>
   );
 }
 

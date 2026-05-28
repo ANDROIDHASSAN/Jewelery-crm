@@ -512,7 +512,38 @@ const slice = createSlice({
     ) {
       const filters = ensureFilters(state);
       const g = filters.groups.find((x) => x.key === action.payload.key);
-      if (g) Object.assign(g, action.payload.patch);
+      if (!g) return;
+      // Explicit field assignment instead of Object.assign — handles the
+      // options array as a fresh reference so Immer reliably picks up the
+      // mutation. The previous Object.assign path silently no-op'd in
+      // production builds where Immer's draft-mutation detection sometimes
+      // missed shallow re-assignments of nested arrays.
+      if (action.payload.patch.label !== undefined) g.label = action.payload.patch.label;
+      if (action.payload.patch.options !== undefined) g.options = [...action.payload.patch.options];
+    },
+    // Dedicated option-removal action. Used by the filter-chip "X" button so
+    // the reducer can splice the option array in place — the most Immer-
+    // friendly mutation possible. Robust against the patch-merge bug above.
+    removeFilterOption(
+      state,
+      action: PayloadAction<{ key: string; option: string }>,
+    ) {
+      const filters = ensureFilters(state);
+      const g = filters.groups.find((x) => x.key === action.payload.key);
+      if (!g) return;
+      const idx = g.options.indexOf(action.payload.option);
+      if (idx >= 0) g.options.splice(idx, 1);
+    },
+    addFilterOption(
+      state,
+      action: PayloadAction<{ key: string; option: string }>,
+    ) {
+      const filters = ensureFilters(state);
+      const g = filters.groups.find((x) => x.key === action.payload.key);
+      if (!g) return;
+      const value = action.payload.option.trim();
+      if (!value || g.options.includes(value)) return;
+      g.options.push(value);
     },
     removeFilterGroup(state, action: PayloadAction<string>) {
       const filters = ensureFilters(state);
@@ -567,6 +598,8 @@ export const {
   addFilterGroup,
   updateFilterGroup,
   removeFilterGroup,
+  removeFilterOption,
+  addFilterOption,
   setFiltersForCollection,
   clearFiltersOverride,
   setDefaultFilterKeys,

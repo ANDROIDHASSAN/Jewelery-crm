@@ -396,7 +396,20 @@ analyticsRouter.get('/inventory-valuation', async (req, res, next) => {
           // per-piece value (count, weight, cost, market) by units.
           isSerialized: true,
           quantityOnHand: true,
-          category: { select: { id: true, name: true, metalType: true } },
+          // Pull the category tree info so we can aggregate by main category
+          // (parentId === null) → sub category → individual items. `parent`
+          // joins one level up; we treat parent.id as the "main" bucket. If
+          // an item is assigned directly to a main (no sub), it's bucketed
+          // under that main as its own self-bucket.
+          category: {
+            select: {
+              id: true,
+              name: true,
+              metalType: true,
+              parentId: true,
+              parent: { select: { id: true, name: true, metalType: true } },
+            },
+          },
           shop: { select: { id: true, name: true } },
         },
       }),
@@ -420,6 +433,26 @@ analyticsRouter.get('/inventory-valuation', async (req, res, next) => {
       string,
       Agg & { productName: string; categoryName: string; metalType: string }
     >();
+
+    // Hierarchical Main → Sub → Items aggregator. Each main category bucket
+    // owns its own totals + a map of sub categories. Each sub owns its own
+    // totals + a map of individual items (grouped by product name, the same
+    // key byProduct uses). When an item's category has no parent (it's
+    // already a main), we synthesise a "(general)" sub bucket inside the
+    // main with the same id so the client tree always has the same depth.
+    type SubBucket = Agg & {
+      subCategoryId: string;
+      subCategoryName: string;
+      items: Map<string, Agg & { productName: string; itemId: string }>;
+    };
+    type MainBucket = Agg & {
+      mainCategoryId: string;
+      mainCategoryName: string;
+      metalType: string;
+      subs: Map<string, SubBucket>;
+    };
+    const tree = new Map<string, MainBucket>();
+
     let total: Agg = { count: 0, weightMg: 0, costPaise: 0, marketPaise: 0 };
 
     for (const it of items) {
@@ -485,6 +518,61 @@ analyticsRouter.get('/inventory-valuation', async (req, res, next) => {
         costPaise: p.costPaise + costTotal,
         marketPaise: p.marketPaise + marketTotal,
       });
+
+      // Hierarchical bucket. An item assigned directly to a main category
+      // (parent === null) gets a synthetic "(general)" sub bucket whose id
+      // equals the main's id, so the tree always reads main → sub → items.
+      const mainId = it.category.parent?.id ?? it.category.id;
+      const mainName = it.category.parent?.name ?? it.category.name;
+      const mainMetal = it.category.parent?.metalType ?? it.category.metalType;
+      const subId = it.category.parent ? it.category.id : it.category.id;
+      const subName = it.category.parent ? it.category.name : `${it.category.name} (general)`;
+
+      const main = tree.get(mainId) ?? {
+        mainCategoryId: mainId,
+        mainCategoryName: mainName,
+        metalType: mainMetal,
+        count: 0,
+        weightMg: 0,
+        costPaise: 0,
+        marketPaise: 0,
+        subs: new Map<string, SubBucket>(),
+      };
+      main.count += units;
+      main.weightMg += weightTotal;
+      main.costPaise += costTotal;
+      main.marketPaise += marketTotal;
+
+      const sub = main.subs.get(subId) ?? {
+        subCategoryId: subId,
+        subCategoryName: subName,
+        count: 0,
+        weightMg: 0,
+        costPaise: 0,
+        marketPaise: 0,
+        items: new Map(),
+      };
+      sub.count += units;
+      sub.weightMg += weightTotal;
+      sub.costPaise += costTotal;
+      sub.marketPaise += marketTotal;
+
+      const productKeyInSub = `${productName.toLowerCase()}__${it.category.id}`;
+      const itemBucket = sub.items.get(productKeyInSub) ?? {
+        productName,
+        itemId: it.sku,
+        count: 0,
+        weightMg: 0,
+        costPaise: 0,
+        marketPaise: 0,
+      };
+      itemBucket.count += units;
+      itemBucket.weightMg += weightTotal;
+      itemBucket.costPaise += costTotal;
+      itemBucket.marketPaise += marketTotal;
+      sub.items.set(productKeyInSub, itemBucket);
+      main.subs.set(subId, sub);
+      tree.set(mainId, main);
     }
 
     res.json({
@@ -505,6 +593,44 @@ analyticsRouter.get('/inventory-valuation', async (req, res, next) => {
             productKey,
             ...v,
             unrealizedProfitPaise: v.marketPaise - v.costPaise,
+          }))
+          .sort((a, b) => b.marketPaise - a.marketPaise),
+        // Hierarchical view that mirrors the inventory Categories tab:
+        // Main category (top level) → Sub categories → Items inside each
+        // sub. Sorted by market value at each level so the most valuable
+        // bucket reads first.
+        categoryTree: Array.from(tree.values())
+          .map((main) => ({
+            mainCategoryId: main.mainCategoryId,
+            mainCategoryName: main.mainCategoryName,
+            metalType: main.metalType,
+            count: main.count,
+            weightMg: main.weightMg,
+            costPaise: main.costPaise,
+            marketPaise: main.marketPaise,
+            unrealizedProfitPaise: main.marketPaise - main.costPaise,
+            subs: Array.from(main.subs.values())
+              .map((sub) => ({
+                subCategoryId: sub.subCategoryId,
+                subCategoryName: sub.subCategoryName,
+                count: sub.count,
+                weightMg: sub.weightMg,
+                costPaise: sub.costPaise,
+                marketPaise: sub.marketPaise,
+                unrealizedProfitPaise: sub.marketPaise - sub.costPaise,
+                items: Array.from(sub.items.values())
+                  .map((item) => ({
+                    productName: item.productName,
+                    itemId: item.itemId,
+                    count: item.count,
+                    weightMg: item.weightMg,
+                    costPaise: item.costPaise,
+                    marketPaise: item.marketPaise,
+                    unrealizedProfitPaise: item.marketPaise - item.costPaise,
+                  }))
+                  .sort((a, b) => b.marketPaise - a.marketPaise),
+              }))
+              .sort((a, b) => b.marketPaise - a.marketPaise),
           }))
           .sort((a, b) => b.marketPaise - a.marketPaise),
         goldRates: purities.map((p) => ({

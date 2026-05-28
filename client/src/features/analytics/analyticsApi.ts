@@ -52,6 +52,28 @@ export interface InventoryValuationAgg {
   unrealizedProfitPaise: number;
 }
 
+// Hierarchical node types for the Main → Sub → Items tree. The server
+// derives the structure from Category.parentId so categories that pre-date
+// the tree CMS (parent === null) appear as their own root with a single
+// "(general)" sub.
+export interface InventoryValuationItem extends InventoryValuationAgg {
+  productName: string;
+  itemId: string;
+}
+
+export interface InventoryValuationSub extends InventoryValuationAgg {
+  subCategoryId: string;
+  subCategoryName: string;
+  items: InventoryValuationItem[];
+}
+
+export interface InventoryValuationMain extends InventoryValuationAgg {
+  mainCategoryId: string;
+  mainCategoryName: string;
+  metalType: string;
+  subs: InventoryValuationSub[];
+}
+
 export interface InventoryValuation {
   asOf: string;
   total: InventoryValuationAgg;
@@ -67,6 +89,8 @@ export interface InventoryValuation {
     categoryName: string;
     metalType: string;
   }>;
+  /** Hierarchical Main → Sub → Items breakdown. */
+  categoryTree: InventoryValuationMain[];
   goldRates: Array<{ purity: number; ratePerGramPaise: number; stale: boolean }>;
 }
 

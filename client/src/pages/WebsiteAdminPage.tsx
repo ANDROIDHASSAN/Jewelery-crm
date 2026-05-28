@@ -18,17 +18,20 @@ import { useAppDispatch, useAppSelector } from '@/app/hooks';
 import {
   addCollection,
   addFilterGroup,
+  addFilterOption,
   addLocation,
   addNavItem,
   clearFiltersOverride,
   removeCollection,
   removeFilterGroup,
+  removeFilterOption,
   removeLocation,
   removeNavItem,
   resetContent,
   setContent,
   setDefaultFilterKeys,
   setFiltersForCollection,
+  setNavMenu,
   type StorefrontContent,
   updateBrand,
   updateCollection,
@@ -41,6 +44,7 @@ import {
   updateTestimonial,
   updateWhatsapp,
 } from '@/features/storefront/storefrontContentSlice';
+import { useGetCategoriesQuery } from '@/features/inventory/inventoryApi';
 import {
   useGetAdminStorefrontQuery,
   useUpdateStorefrontMutation,
@@ -280,7 +284,23 @@ export function WebsiteAdminPage(): JSX.Element {
                   onBlur={notify}
                 />
               </Field>
-              <Field label="Hero image">
+              <Field
+                label="Hero video"
+                hint="MP4/WebM that loops in the right hero panel. Renders as the primary hero on the live storefront. Leave empty if you only have a still image."
+              >
+                <HeroMediaUploader
+                  mode="video"
+                  value={content.hero.videoSrc}
+                  onChange={(url) => {
+                    dispatch(updateHero({ videoSrc: url }));
+                    notify();
+                  }}
+                />
+              </Field>
+              <Field
+                label="Hero poster image"
+                hint="Shown until the video frame loads + as a fallback when video is empty. JPG/PNG/WebP."
+              >
                 <HeroMediaUploader
                   mode="image"
                   value={content.hero.image}
@@ -326,90 +346,7 @@ export function WebsiteAdminPage(): JSX.Element {
           )}
 
           {tab === 'navigation' && (
-            <Card
-              title="Top navigation menu"
-              desc="Links shown in the storefront header. Reorder by deleting and re-adding. Leave the list empty to fall back to the default menu."
-            >
-              <div className="space-y-3">
-                {(content.navMenu ?? []).length === 0 && (
-                  <p className="text-xs text-ink-500">
-                    No custom items yet — the storefront is showing the built-in menu
-                    (All / Bridal / Daily wear / Festive / Diamond / Silver / Stores).
-                  </p>
-                )}
-                {(content.navMenu ?? []).map((item: { label: string; href: string; end?: boolean }, idx: number) => (
-                  <div
-                    key={idx}
-                    className="grid grid-cols-1 sm:grid-cols-[1fr_2fr_auto_auto] gap-2 items-end rounded-md border border-ink-100 p-3 bg-ink-25"
-                  >
-                    <Field label="Label" compact>
-                      <Input
-                        value={item.label}
-                        placeholder="Bridal"
-                        onChange={(e) =>
-                          dispatch(updateNavItem({ index: idx, patch: { label: e.target.value } }))
-                        }
-                        onBlur={notify}
-                      />
-                    </Field>
-                    <Field label="Link" compact>
-                      <Input
-                        value={item.href}
-                        placeholder="/store/collections/bridal"
-                        onChange={(e) =>
-                          dispatch(updateNavItem({ index: idx, patch: { href: e.target.value } }))
-                        }
-                        onBlur={notify}
-                        className="font-mono text-xs"
-                      />
-                    </Field>
-                    <label className="inline-flex items-center gap-1.5 text-xs text-ink-700 select-none pb-2">
-                      <input
-                        type="checkbox"
-                        checked={!!item.end}
-                        onChange={(e) => {
-                          dispatch(updateNavItem({ index: idx, patch: { end: e.target.checked } }));
-                          notify();
-                        }}
-                      />
-                      Exact match
-                    </label>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        dispatch(removeNavItem(idx));
-                        notify();
-                      }}
-                      className="inline-flex items-center gap-1.5 h-9 px-3 rounded-md text-xs text-danger-700 hover:bg-danger-50"
-                      aria-label={`Remove ${item.label}`}
-                    >
-                      <Trash2 className="h-3.5 w-3.5" /> Remove
-                    </button>
-                  </div>
-                ))}
-                <Button
-                  type="button"
-                  variant="outline"
-                  onClick={() => {
-                    if ((content.navMenu ?? []).length >= 12) {
-                      toast.error('Maximum 12 menu items');
-                      return;
-                    }
-                    dispatch(addNavItem({ label: 'New item', href: '/store/collections' }));
-                    notify();
-                  }}
-                  className="self-start"
-                >
-                  <Plus className="h-4 w-4" /> Add menu item
-                </Button>
-                <p className="text-xs text-ink-500">
-                  Tip: use relative paths like <code className="text-ink-700">/store/collections/silver</code>
-                  for internal links. External URLs (https://…) open in the same tab.
-                  Enable <strong>Exact match</strong> for "All" / homepage-style links so they don't
-                  stay highlighted on sub-pages.
-                </p>
-              </div>
-            </Card>
+            <NavigationPanel content={content} notify={notify} />
           )}
 
           {tab === 'rates' && (
@@ -790,6 +727,7 @@ export function WebsiteAdminPage(): JSX.Element {
                 dispatch(setDefaultFilterKeys(keys));
                 notify();
               }}
+              notify={notify}
             />
           )}
 
@@ -882,6 +820,218 @@ function Field({
       {children}
       {hint && <p className="text-xs text-ink-500">{hint}</p>}
     </div>
+  );
+}
+
+// Top-nav editor + auto-seed shortcuts. Two onboarding affordances when the
+// list is empty so editors don't have to type the seven default items by
+// hand:
+//   - "Use built-in menu" copies the hardcoded baseline (All / Bridal / …)
+//     into the CMS as editable rows.
+//   - "Sync from main categories" pulls inventory main categories
+//     (parentId == null) and turns each into a nav item — so adding a new
+//     main category in Inventory propagates to the storefront with one
+//     click here.
+const BUILT_IN_NAV: Array<{ label: string; href: string; end?: boolean }> = [
+  { label: 'All', href: '/store/collections', end: true },
+  { label: 'Bridal', href: '/store/collections/bridal' },
+  { label: 'Daily wear', href: '/store/collections/daily-wear' },
+  { label: 'Festive', href: '/store/collections/festive' },
+  { label: 'Diamond', href: '/store/collections/diamond' },
+  { label: 'Silver', href: '/store/collections/silver' },
+  { label: 'Stores', href: '/store/locations' },
+];
+
+function slugifyCategoryName(name: string): string {
+  return name
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+}
+
+function NavigationPanel({
+  content,
+  notify,
+}: {
+  content: StorefrontContent;
+  notify: () => void;
+}): JSX.Element {
+  const dispatch = useAppDispatch();
+  const { data: catsRes } = useGetCategoriesQuery();
+  const navMenu = content.navMenu ?? [];
+  const isEmpty = navMenu.length === 0;
+
+  // Build the "Sync from main categories" target. parentId === null is a
+  // main category in our schema; sub-categories don't surface in the nav
+  // because they'd overflow the strip.
+  const mainCategories = (catsRes?.data ?? []).filter(
+    (c) => !(c as { parentId?: string | null }).parentId,
+  );
+
+  function seedFromBuiltIn(): void {
+    dispatch(setNavMenu(BUILT_IN_NAV));
+    notify();
+    toast.success('Built-in menu copied — edit as needed.');
+  }
+
+  function syncFromCategories(): void {
+    if (mainCategories.length === 0) {
+      toast.error('No main categories yet — add some in Inventory → Categories first.');
+      return;
+    }
+    const items: Array<{ label: string; href: string; end?: boolean }> = [
+      { label: 'All', href: '/store/collections', end: true },
+      ...mainCategories
+        .slice(0, 10) // 12 cap, leave room for All + Stores
+        .map((c) => ({
+          label: c.name,
+          href: `/store/collections/${slugifyCategoryName(c.name)}`,
+        })),
+      { label: 'Stores', href: '/store/locations' },
+    ];
+    dispatch(setNavMenu(items));
+    notify();
+    toast.success(`Synced ${items.length} menu items from main categories.`);
+  }
+
+  return (
+    <Card
+      title="Top navigation menu"
+      desc="Links shown in the storefront header. Edit any row inline; remove with the trash icon."
+    >
+      <div className="space-y-3">
+        {isEmpty ? (
+          <div className="rounded-md border border-dashed border-ink-200 bg-ink-25 p-4 space-y-3 text-sm">
+            <p className="text-ink-700">
+              The storefront is currently showing the built-in menu (
+              <strong>All / Bridal / Daily wear / Festive / Diamond / Silver / Stores</strong>).
+              To customize, start from one of these:
+            </p>
+            <div className="flex flex-wrap gap-2">
+              <Button type="button" variant="outline" onClick={seedFromBuiltIn}>
+                Use built-in menu
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={syncFromCategories}
+                disabled={mainCategories.length === 0}
+              >
+                Sync from main categories
+                {mainCategories.length > 0 && (
+                  <span className="ml-1.5 text-xs text-ink-500">({mainCategories.length})</span>
+                )}
+              </Button>
+            </div>
+            <p className="text-xs text-ink-500">
+              Or click <strong>+ Add menu item</strong> below to build the menu from scratch.
+            </p>
+          </div>
+        ) : (
+          <div className="flex items-center justify-between gap-3 rounded-md bg-ink-25 border border-ink-100 p-3 text-xs">
+            <span className="text-ink-600">
+              {navMenu.length} item{navMenu.length === 1 ? '' : 's'} live on the storefront.
+            </span>
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={syncFromCategories}
+                disabled={mainCategories.length === 0}
+                className="inline-flex items-center gap-1.5 h-7 px-2 rounded-md text-xs text-ink-700 hover:bg-ink-100 disabled:opacity-50"
+                title="Replace with auto-generated items from main categories"
+              >
+                <RotateCcw className="h-3.5 w-3.5" /> Sync from categories
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  if (!window.confirm('Replace the current menu with the built-in default?')) return;
+                  seedFromBuiltIn();
+                }}
+                className="inline-flex items-center gap-1.5 h-7 px-2 rounded-md text-xs text-ink-700 hover:bg-ink-100"
+              >
+                Reset to built-in
+              </button>
+            </div>
+          </div>
+        )}
+
+        {navMenu.map((item, idx) => (
+          <div
+            key={idx}
+            className="grid grid-cols-1 sm:grid-cols-[1fr_2fr_auto_auto] gap-2 items-end rounded-md border border-ink-100 p-3 bg-ink-25"
+          >
+            <Field label="Label" compact>
+              <Input
+                value={item.label}
+                placeholder="Bridal"
+                onChange={(e) =>
+                  dispatch(updateNavItem({ index: idx, patch: { label: e.target.value } }))
+                }
+                onBlur={notify}
+              />
+            </Field>
+            <Field label="Link" compact>
+              <Input
+                value={item.href}
+                placeholder="/store/collections/bridal"
+                onChange={(e) =>
+                  dispatch(updateNavItem({ index: idx, patch: { href: e.target.value } }))
+                }
+                onBlur={notify}
+                className="font-mono text-xs"
+              />
+            </Field>
+            <label className="inline-flex items-center gap-1.5 text-xs text-ink-700 select-none pb-2">
+              <input
+                type="checkbox"
+                checked={!!item.end}
+                onChange={(e) => {
+                  dispatch(updateNavItem({ index: idx, patch: { end: e.target.checked } }));
+                  notify();
+                }}
+              />
+              Exact match
+            </label>
+            <button
+              type="button"
+              onClick={() => {
+                dispatch(removeNavItem(idx));
+                notify();
+              }}
+              className="inline-flex items-center gap-1.5 h-9 px-3 rounded-md text-xs text-danger-700 hover:bg-danger-50"
+              aria-label={`Remove ${item.label}`}
+            >
+              <Trash2 className="h-3.5 w-3.5" /> Remove
+            </button>
+          </div>
+        ))}
+
+        <Button
+          type="button"
+          variant="outline"
+          onClick={() => {
+            if (navMenu.length >= 12) {
+              toast.error('Maximum 12 menu items');
+              return;
+            }
+            dispatch(addNavItem({ label: 'New item', href: '/store/collections' }));
+            notify();
+          }}
+          className="self-start"
+        >
+          <Plus className="h-4 w-4" /> Add menu item
+        </Button>
+
+        <p className="text-xs text-ink-500">
+          Tip: use relative paths like <code className="text-ink-700">/store/collections/silver</code>
+          for internal links. External URLs (https://…) open in the same tab.
+          Enable <strong>Exact match</strong> for "All" / homepage-style links so they don't stay
+          highlighted on sub-pages.
+        </p>
+      </div>
+    </Card>
   );
 }
 
@@ -997,6 +1147,7 @@ function FiltersTab({
   onSetForCollection,
   onClearOverride,
   onSetDefaultKeys,
+  notify,
 }: {
   filters: import('@/features/storefront/storefrontContentSlice').StorefrontFiltersConfig;
   collections: import('@/features/storefront/storefrontContentSlice').CollectionTile[];
@@ -1006,6 +1157,7 @@ function FiltersTab({
   onSetForCollection: (slug: string, groupKeys: string[]) => void;
   onClearOverride: (slug: string) => void;
   onSetDefaultKeys: (keys: string[]) => void;
+  notify: () => void;
 }): JSX.Element {
   const [newLabel, setNewLabel] = useState('');
   const slugify = (s: string): string =>
@@ -1074,7 +1226,7 @@ function FiltersTab({
                 key={g.key}
                 group={g}
                 onLabelChange={(label) => onUpdateGroup(g.key, { label })}
-                onOptionsChange={(options) => onUpdateGroup(g.key, { options })}
+                notify={notify}
                 onRemove={() => {
                   if (confirm(`Remove the "${g.label}" filter from every collection?`)) {
                     onRemoveGroup(g.key);
@@ -1134,14 +1286,15 @@ function FiltersTab({
 function FilterGroupEditor({
   group,
   onLabelChange,
-  onOptionsChange,
   onRemove,
+  notify,
 }: {
   group: { key: string; label: string; options: string[] };
   onLabelChange: (label: string) => void;
-  onOptionsChange: (options: string[]) => void;
   onRemove: () => void;
+  notify: () => void;
 }): JSX.Element {
+  const dispatch = useAppDispatch();
   const [newOption, setNewOption] = useState('');
   return (
     <li className="rounded-md border border-ink-100 bg-ink-25 p-3 space-y-3">
@@ -1175,7 +1328,15 @@ function FilterGroupEditor({
               <span>{opt}</span>
               <button
                 type="button"
-                onClick={() => onOptionsChange(group.options.filter((o) => o !== opt))}
+                onClick={() => {
+                  // Dispatch the dedicated reducer directly. The old path
+                  // routed through onOptionsChange → updateFilterGroup with
+                  // an Object.assign merge that occasionally no-op'd on the
+                  // Vercel production bundle; the dedicated splice is Immer-
+                  // safe and always re-renders.
+                  dispatch(removeFilterOption({ key: group.key, option: opt }));
+                  notify();
+                }}
                 className="text-ink-400 hover:text-rose-700"
                 aria-label={`Remove ${opt}`}
               >
@@ -1191,9 +1352,8 @@ function FilterGroupEditor({
             onKeyDown={(e) => {
               if (e.key === 'Enter' && newOption.trim()) {
                 e.preventDefault();
-                if (!group.options.includes(newOption.trim())) {
-                  onOptionsChange([...group.options, newOption.trim()]);
-                }
+                dispatch(addFilterOption({ key: group.key, option: newOption.trim() }));
+                notify();
                 setNewOption('');
               }
             }}
@@ -1206,8 +1366,9 @@ function FilterGroupEditor({
             disabled={!newOption.trim()}
             onClick={() => {
               const v = newOption.trim();
-              if (!v || group.options.includes(v)) return;
-              onOptionsChange([...group.options, v]);
+              if (!v) return;
+              dispatch(addFilterOption({ key: group.key, option: v }));
+              notify();
               setNewOption('');
             }}
           >
@@ -1341,15 +1502,9 @@ function HomepageSectionsTab({
 }): JSX.Element {
   return (
     <div className="space-y-6">
-      <Card title="Hero video" desc="MP4/WebM that plays in the right hero panel. Leave empty to fall back to the static hero image.">
-        <Field label="Video">
-          <HeroMediaUploader
-            mode="video"
-            value={content.hero.videoSrc}
-            onChange={(url) => onPatch({ hero: { ...content.hero, videoSrc: url } })}
-          />
-        </Field>
-      </Card>
+      {/* Hero video moved to the Hero tab so it lives next to the title /
+          subtitle / poster image. Avoids editors hunting through two tabs
+          to update what reads as one section on the live site. */}
 
       <Card title="Shop by occasion (6-tile body-shot grid)" desc="Each tile: name, slug (existing collection), product count, image URL.">
         <JsonSectionEditor value={content.shopByOccasion} onSave={(v) => onPatch({ shopByOccasion: v })} />

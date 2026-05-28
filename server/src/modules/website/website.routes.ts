@@ -26,7 +26,20 @@ export const websiteRouter: Router = Router();
 // later); a 60s cache is safe and turns repeat visits into single-digit-ms responses.
 websiteRouter.use((req, res, next) => {
   if (req.method === 'GET') {
-    res.setHeader('Cache-Control', 'public, s-maxage=60, stale-while-revalidate=600');
+    // CMS content + product listings should reflect Publish within a few
+    // seconds, not the previous 60s edge cache (which made the storefront
+    // feel "broken" after editors saved). Trade-off: a busy storefront now
+    // hits the API every 10s per edge node instead of every 60s.
+    // - max-age=5     : browser keeps a fresh copy for 5s
+    // - s-maxage=10   : Vercel edge keeps a fresh copy for 10s
+    // - stale-while-revalidate=60 : edge can serve stale up to 60s while
+    //   it revalidates in the background, so a single-digit-ms response is
+    //   still the norm for the customer.
+    // CMS publishes propagate to every visitor within ~10s of the click.
+    res.setHeader(
+      'Cache-Control',
+      'public, max-age=5, s-maxage=10, stale-while-revalidate=60',
+    );
   }
   next();
 });
