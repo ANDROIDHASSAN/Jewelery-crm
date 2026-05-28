@@ -383,7 +383,123 @@ export async function listMovements(opts: { itemId?: string; type?: string; curs
 }
 
 export async function listCategories() {
-  return prisma.category.findMany({ orderBy: { name: 'asc' } });
+  // Flat list — the client reconstructs the tree from `parentId` for the
+  // two-level picker (Main → Sub). Keeping the wire format flat means
+  // existing consumers that ignore parentId stay happy.
+  return prisma.category.findMany({
+    orderBy: [{ name: 'asc' }],
+    select: {
+      id: true,
+      name: true,
+      parentId: true,
+      metalType: true,
+      defaultMakingChargeBps: true,
+    },
+  });
+}
+
+export async function createCategory(input: {
+  name: string;
+  parentId: string | null;
+  metalType: 'GOLD' | 'SILVER' | 'DIAMOND' | 'PLATINUM' | 'OTHER';
+  defaultMakingChargeBps: number;
+}) {
+  const tenantId = getTenantId();
+  if (!tenantId) throw new Error('tenantId missing');
+  // Guard against pointing at a sibling tenant's category. Without this a
+  // crafted parentId could leak hierarchy across tenants.
+  if (input.parentId) {
+    const parent = await prisma.category.findUnique({
+      where: { id: input.parentId },
+      select: { id: true },
+    });
+    if (!parent) throw new NotFoundError('Parent category not found');
+  }
+  const created = await prisma.category.create({
+    data: {
+      tenantId,
+      name: input.name.trim(),
+      parentId: input.parentId,
+      metalType: input.metalType,
+      defaultMakingChargeBps: input.defaultMakingChargeBps,
+    },
+  });
+  void writeAudit('Category', created.id, 'CREATE', null, created);
+  return created;
+}
+
+export async function updateCategory(
+  id: string,
+  patch: {
+    name?: string;
+    parentId?: string | null;
+    metalType?: 'GOLD' | 'SILVER' | 'DIAMOND' | 'PLATINUM' | 'OTHER';
+    defaultMakingChargeBps?: number;
+  },
+) {
+  const before = await prisma.category.findUnique({ where: { id } });
+  if (!before) throw new NotFoundError();
+  // Disallow making a category its own parent or a descendant — would create
+  // an infinite loop in the tree walker.
+  if (patch.parentId === id) {
+    throw new BusinessRuleError('CATEGORY_SELF_PARENT', 'A category cannot be its own parent.');
+  }
+  if (patch.parentId) {
+    const parent = await prisma.category.findUnique({
+      where: { id: patch.parentId },
+      select: { parentId: true, id: true },
+    });
+    if (!parent) throw new NotFoundError('Parent category not found');
+    // Walk upward — if we hit `id` we'd form a cycle.
+    let cursor: string | null = parent.parentId;
+    while (cursor) {
+      if (cursor === id) {
+        throw new BusinessRuleError('CATEGORY_CYCLE', 'That would create a parent-child cycle.');
+      }
+      const next = await prisma.category.findUnique({
+        where: { id: cursor },
+        select: { parentId: true },
+      });
+      cursor = next?.parentId ?? null;
+    }
+  }
+  const updated = await prisma.category.update({
+    where: { id },
+    data: {
+      ...(patch.name !== undefined ? { name: patch.name.trim() } : {}),
+      ...(patch.parentId !== undefined ? { parentId: patch.parentId } : {}),
+      ...(patch.metalType !== undefined ? { metalType: patch.metalType } : {}),
+      ...(patch.defaultMakingChargeBps !== undefined
+        ? { defaultMakingChargeBps: patch.defaultMakingChargeBps }
+        : {}),
+    },
+  });
+  void writeAudit('Category', id, 'UPDATE', before, updated);
+  return updated;
+}
+
+export async function deleteCategory(id: string) {
+  const before = await prisma.category.findUnique({ where: { id } });
+  if (!before) throw new NotFoundError();
+  // Refuse if items still reference this category — orphaning Items would
+  // break valuation, analytics, and the POS catalogue. Move the items first.
+  const itemCount = await prisma.item.count({ where: { categoryId: id } });
+  if (itemCount > 0) {
+    throw new BusinessRuleError(
+      'CATEGORY_HAS_ITEMS',
+      `Cannot delete — ${itemCount} item${itemCount === 1 ? '' : 's'} still use this category. Re-assign them first.`,
+    );
+  }
+  // Same for child categories. Re-parent or delete those first.
+  const childCount = await prisma.category.count({ where: { parentId: id } });
+  if (childCount > 0) {
+    throw new BusinessRuleError(
+      'CATEGORY_HAS_CHILDREN',
+      `Cannot delete — ${childCount} sub-categor${childCount === 1 ? 'y' : 'ies'} still nest under this one.`,
+    );
+  }
+  await prisma.category.delete({ where: { id } });
+  void writeAudit('Category', id, 'DELETE', before, null);
 }
 
 export async function updateCategoryMakingCharge(id: string, bps: number) {

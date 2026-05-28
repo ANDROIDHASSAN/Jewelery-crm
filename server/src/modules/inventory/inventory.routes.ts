@@ -175,6 +175,43 @@ inventoryRouter.get('/categories', async (_req, res, next) => {
   }
 });
 
+// Create + update + delete categories (Admin + Accountant via inventory.write).
+const CategoryCreateBody = z.object({
+  name: z.string().min(2).max(80),
+  parentId: z.string().min(1).nullable(),
+  metalType: z.enum(['GOLD', 'SILVER', 'DIAMOND', 'PLATINUM', 'OTHER']),
+  defaultMakingChargeBps: z.number().int().min(0).max(10_000),
+});
+
+inventoryRouter.post('/categories', requirePermission('inventory.write'), async (req, res, next) => {
+  try {
+    const body = CategoryCreateBody.parse(req.body);
+    const cat = await svc.createCategory(body);
+    res.status(201).json({ data: cat });
+  } catch (err) {
+    next(err);
+  }
+});
+
+inventoryRouter.patch('/categories/:id', requirePermission('inventory.write'), async (req, res, next) => {
+  try {
+    const body = CategoryCreateBody.partial().parse(req.body);
+    const cat = await svc.updateCategory(req.params['id']!, body);
+    res.json({ data: cat });
+  } catch (err) {
+    next(err);
+  }
+});
+
+inventoryRouter.delete('/categories/:id', requirePermission('inventory.delete'), async (req, res, next) => {
+  try {
+    await svc.deleteCategory(req.params['id']!);
+    res.status(204).end();
+  } catch (err) {
+    next(err);
+  }
+});
+
 inventoryRouter.patch('/categories/:id/making-charge', requirePermission('inventory.write'), async (req, res, next) => {
   try {
     const body = z.object({ defaultMakingChargeBps: z.number().int().min(0).max(10_000) }).parse(req.body);

@@ -3,9 +3,10 @@
 // "Publish" PUTs the full content blob to /api/v1/storefront and invalidates
 // the public storefront cache so visitors see the change.
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
-import { ExternalLink, Plus, Trash2, RotateCcw, CloudUpload, X } from 'lucide-react';
+import { ExternalLink, Plus, Trash2, RotateCcw, CloudUpload, X, Image as ImageIcon, Video as VideoIcon } from 'lucide-react';
+import { uploadImageToCloudinary, uploadVideoToCloudinary } from '@/lib/cloudinary';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -18,10 +19,12 @@ import {
   addCollection,
   addFilterGroup,
   addLocation,
+  addNavItem,
   clearFiltersOverride,
   removeCollection,
   removeFilterGroup,
   removeLocation,
+  removeNavItem,
   resetContent,
   setContent,
   setDefaultFilterKeys,
@@ -32,6 +35,7 @@ import {
   updateFilterGroup,
   updateHero,
   updateLocation,
+  updateNavItem,
   updateRates,
   updateStory,
   updateTestimonial,
@@ -45,6 +49,7 @@ import {
 type TabKey =
   | 'brand'
   | 'hero'
+  | 'navigation'
   | 'rates'
   | 'collections'
   | 'story'
@@ -59,6 +64,7 @@ type TabKey =
 const TABS: Array<{ key: TabKey; label: string }> = [
   { key: 'brand', label: 'Brand' },
   { key: 'hero', label: 'Hero' },
+  { key: 'navigation', label: 'Navigation' },
   { key: 'rates', label: 'Gold rates' },
   { key: 'collections', label: 'Collections' },
   { key: 'filters', label: 'Filters' },
@@ -274,11 +280,14 @@ export function WebsiteAdminPage(): JSX.Element {
                   onBlur={notify}
                 />
               </Field>
-              <Field label="Hero image URL">
-                <Input
+              <Field label="Hero image">
+                <HeroMediaUploader
+                  mode="image"
                   value={content.hero.image}
-                  onChange={(e) => dispatch(updateHero({ image: e.target.value }))}
-                  onBlur={notify}
+                  onChange={(url) => {
+                    dispatch(updateHero({ image: url }));
+                    notify();
+                  }}
                 />
               </Field>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -312,6 +321,93 @@ export function WebsiteAdminPage(): JSX.Element {
                     onBlur={notify}
                   />
                 </Field>
+              </div>
+            </Card>
+          )}
+
+          {tab === 'navigation' && (
+            <Card
+              title="Top navigation menu"
+              desc="Links shown in the storefront header. Reorder by deleting and re-adding. Leave the list empty to fall back to the default menu."
+            >
+              <div className="space-y-3">
+                {(content.navMenu ?? []).length === 0 && (
+                  <p className="text-xs text-ink-500">
+                    No custom items yet — the storefront is showing the built-in menu
+                    (All / Bridal / Daily wear / Festive / Diamond / Silver / Stores).
+                  </p>
+                )}
+                {(content.navMenu ?? []).map((item: { label: string; href: string; end?: boolean }, idx: number) => (
+                  <div
+                    key={idx}
+                    className="grid grid-cols-1 sm:grid-cols-[1fr_2fr_auto_auto] gap-2 items-end rounded-md border border-ink-100 p-3 bg-ink-25"
+                  >
+                    <Field label="Label" compact>
+                      <Input
+                        value={item.label}
+                        placeholder="Bridal"
+                        onChange={(e) =>
+                          dispatch(updateNavItem({ index: idx, patch: { label: e.target.value } }))
+                        }
+                        onBlur={notify}
+                      />
+                    </Field>
+                    <Field label="Link" compact>
+                      <Input
+                        value={item.href}
+                        placeholder="/store/collections/bridal"
+                        onChange={(e) =>
+                          dispatch(updateNavItem({ index: idx, patch: { href: e.target.value } }))
+                        }
+                        onBlur={notify}
+                        className="font-mono text-xs"
+                      />
+                    </Field>
+                    <label className="inline-flex items-center gap-1.5 text-xs text-ink-700 select-none pb-2">
+                      <input
+                        type="checkbox"
+                        checked={!!item.end}
+                        onChange={(e) => {
+                          dispatch(updateNavItem({ index: idx, patch: { end: e.target.checked } }));
+                          notify();
+                        }}
+                      />
+                      Exact match
+                    </label>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        dispatch(removeNavItem(idx));
+                        notify();
+                      }}
+                      className="inline-flex items-center gap-1.5 h-9 px-3 rounded-md text-xs text-danger-700 hover:bg-danger-50"
+                      aria-label={`Remove ${item.label}`}
+                    >
+                      <Trash2 className="h-3.5 w-3.5" /> Remove
+                    </button>
+                  </div>
+                ))}
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => {
+                    if ((content.navMenu ?? []).length >= 12) {
+                      toast.error('Maximum 12 menu items');
+                      return;
+                    }
+                    dispatch(addNavItem({ label: 'New item', href: '/store/collections' }));
+                    notify();
+                  }}
+                  className="self-start"
+                >
+                  <Plus className="h-4 w-4" /> Add menu item
+                </Button>
+                <p className="text-xs text-ink-500">
+                  Tip: use relative paths like <code className="text-ink-700">/store/collections/silver</code>
+                  for internal links. External URLs (https://…) open in the same tab.
+                  Enable <strong>Exact match</strong> for "All" / homepage-style links so they don't
+                  stay highlighted on sub-pages.
+                </p>
               </div>
             </Card>
           )}
@@ -789,6 +885,96 @@ function Field({
   );
 }
 
+// Combined uploader + URL-paste fallback for the hero image / video fields.
+// Tries the server-signed Cloudinary path first (no preset setup needed);
+// falls back to URL paste so editors can keep using Unsplash/external links
+// when they prefer. Mode flips the file accept attribute, the upload helper,
+// and the preview element between <img> and <video>.
+function HeroMediaUploader({
+  mode,
+  value,
+  onChange,
+}: {
+  mode: 'image' | 'video';
+  value: string;
+  onChange: (url: string) => void;
+}): JSX.Element {
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const [progress, setProgress] = useState<number | null>(null);
+  const accept = mode === 'image' ? 'image/png,image/jpeg,image/webp,image/svg+xml' : 'video/mp4,video/webm';
+  const folder = mode === 'image' ? 'zelora/hero/images' : 'zelora/hero/videos';
+
+  async function handleFile(file: File): Promise<void> {
+    setProgress(0);
+    try {
+      const result =
+        mode === 'image'
+          ? await uploadImageToCloudinary(file, { folder, onProgress: setProgress })
+          : await uploadVideoToCloudinary(file, { folder, onProgress: setProgress });
+      onChange(result.secureUrl);
+      toast.success(`${mode === 'image' ? 'Image' : 'Video'} uploaded`);
+    } catch (err) {
+      toast.error((err as Error).message ?? 'Upload failed');
+    } finally {
+      setProgress(null);
+    }
+  }
+
+  return (
+    <div className="space-y-3">
+      {/* Preview */}
+      {value && (
+        <div className="rounded-md border border-ink-100 bg-ink-25 overflow-hidden">
+          {mode === 'image' ? (
+            <img src={value} alt="Hero preview" className="w-full max-h-64 object-cover" />
+          ) : (
+            <video src={value} controls className="w-full max-h-64 bg-black" />
+          )}
+        </div>
+      )}
+
+      {/* Upload + URL paste */}
+      <div className="flex items-center gap-2">
+        <button
+          type="button"
+          onClick={() => fileInputRef.current?.click()}
+          disabled={progress !== null}
+          className="inline-flex items-center gap-1.5 h-9 px-3 rounded-md border border-ink-200 bg-ink-0 text-sm text-ink-700 hover:bg-ink-50 disabled:opacity-50 disabled:cursor-not-allowed"
+        >
+          {mode === 'image' ? <ImageIcon className="h-4 w-4" /> : <VideoIcon className="h-4 w-4" />}
+          {progress !== null ? `Uploading ${progress}%` : `Upload ${mode}`}
+        </button>
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept={accept}
+          className="sr-only"
+          onChange={(e) => {
+            const file = e.target.files?.[0];
+            if (file) void handleFile(file);
+            e.target.value = '';
+          }}
+        />
+        {value && (
+          <button
+            type="button"
+            onClick={() => onChange('')}
+            className="inline-flex items-center gap-1.5 h-9 px-3 rounded-md text-sm text-ink-600 hover:text-ink-900 hover:bg-ink-50"
+          >
+            <Trash2 className="h-3.5 w-3.5" /> Remove
+          </button>
+        )}
+      </div>
+      <Input
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder={mode === 'image' ? 'or paste an https://… URL' : 'or paste /img/hero.mp4 or https://…'}
+        className="font-mono text-xs"
+      />
+    </div>
+  );
+}
+
 // -----------------------------------------------------------------------------
 // Filters tab
 //
@@ -1155,12 +1341,12 @@ function HomepageSectionsTab({
 }): JSX.Element {
   return (
     <div className="space-y-6">
-      <Card title="Hero video" desc="MP4/WebM URL that plays in the right hero panel. Leave empty to show the static hero image only.">
-        <Field label="Video URL">
-          <Input
+      <Card title="Hero video" desc="MP4/WebM that plays in the right hero panel. Leave empty to fall back to the static hero image.">
+        <Field label="Video">
+          <HeroMediaUploader
+            mode="video"
             value={content.hero.videoSrc}
-            placeholder="/img/hero.mp4 or https://…"
-            onChange={(e) => onPatch({ hero: { ...content.hero, videoSrc: e.target.value } })}
+            onChange={(url) => onPatch({ hero: { ...content.hero, videoSrc: url } })}
           />
         </Field>
       </Card>

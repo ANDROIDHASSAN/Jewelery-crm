@@ -144,6 +144,39 @@ export const inventoryApi = baseApi.injectEndpoints({
       }),
       invalidatesTags: [{ type: 'Category', id: 'LIST' }],
     }),
+    // Main / sub category management. parentId=null = top-level (main)
+    // category; parentId=<id> = sub-category under that main.
+    createCategory: b.mutation<
+      ApiOne<Category>,
+      {
+        name: string;
+        parentId: string | null;
+        metalType: 'GOLD' | 'SILVER' | 'DIAMOND' | 'PLATINUM' | 'OTHER';
+        defaultMakingChargeBps: number;
+      }
+    >({
+      query: (body) => ({ url: '/inventory/categories', method: 'POST', body }),
+      invalidatesTags: [{ type: 'Category', id: 'LIST' }],
+    }),
+    updateCategory: b.mutation<
+      ApiOne<Category>,
+      {
+        id: string;
+        patch: {
+          name?: string;
+          parentId?: string | null;
+          metalType?: 'GOLD' | 'SILVER' | 'DIAMOND' | 'PLATINUM' | 'OTHER';
+          defaultMakingChargeBps?: number;
+        };
+      }
+    >({
+      query: ({ id, patch }) => ({ url: `/inventory/categories/${id}`, method: 'PATCH', body: patch }),
+      invalidatesTags: [{ type: 'Category', id: 'LIST' }],
+    }),
+    deleteCategory: b.mutation<void, string>({
+      query: (id) => ({ url: `/inventory/categories/${id}`, method: 'DELETE' }),
+      invalidatesTags: [{ type: 'Category', id: 'LIST' }, { type: 'Item', id: 'LIST' }],
+    }),
     getValuation: b.query<ApiOne<ValuationRow>, { shopId?: string }>({
       query: (params) => ({ url: '/inventory/valuation', params }),
       providesTags: ['StockValuation'],
@@ -240,6 +273,9 @@ export const {
   useRecordWastageMutation,
   useAddStockMutation,
   useGetCategoriesQuery,
+  useCreateCategoryMutation,
+  useUpdateCategoryMutation,
+  useDeleteCategoryMutation,
   useUpdateCategoryMakingChargeMutation,
   useGetValuationQuery,
   useGetLowStockQuery,

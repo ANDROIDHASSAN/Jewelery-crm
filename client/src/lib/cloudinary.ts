@@ -107,15 +107,18 @@ export interface CloudinaryUploadResult {
 
 // Posts a FormData to Cloudinary's upload endpoint, wired to onProgress.
 // Used by both the signed and unsigned paths — only the FormData contents
-// and the cloud name differ between them.
+// and the cloud name differ between them. `resourceType` switches the
+// endpoint between /image/upload and /video/upload; the signature itself
+// doesn't include resource_type, so the same signed payload works for both.
 function postToCloudinary(
   cloudName: string,
   form: FormData,
   onProgress?: (pct: number) => void,
+  resourceType: 'image' | 'video' = 'image',
 ): Promise<CloudinaryUploadResult> {
   return new Promise<CloudinaryUploadResult>((resolve, reject) => {
     const xhr = new XMLHttpRequest();
-    xhr.open('POST', `https://api.cloudinary.com/v1_1/${cloudName}/image/upload`);
+    xhr.open('POST', `https://api.cloudinary.com/v1_1/${cloudName}/${resourceType}/upload`);
     xhr.upload.onprogress = (e): void => {
       if (e.lengthComputable && onProgress) {
         onProgress(Math.round((e.loaded / e.total) * 100));
@@ -200,6 +203,56 @@ export async function uploadImageToCloudinary(
     height: 0,
     bytes: file.size,
     format: file.type.replace('image/', ''),
+  };
+}
+
+// Cloudinary's signed payload signs `folder` + `timestamp` only, so the same
+// /uploads/cloudinary-sign endpoint that issues signatures for images works
+// for video uploads too — we just POST to /video/upload instead. Cap at 50 MB
+// (Cloudinary free tier accepts up to 100 MB per video; we leave headroom).
+export async function uploadVideoToCloudinary(
+  file: File,
+  opts: { folder?: string; onProgress?: (pct: number) => void } = {},
+): Promise<CloudinaryUploadResult> {
+  if (!file.type.startsWith('video/')) {
+    throw new Error('Only video files are supported');
+  }
+  if (file.size > 50 * 1024 * 1024) {
+    throw new Error('Video must be under 50 MB');
+  }
+  const folder = opts.folder ?? 'zelora/uploads';
+
+  const signed = await fetchSignedPayload(folder);
+  if (signed) {
+    const form = new FormData();
+    form.append('file', file);
+    form.append('api_key', signed.apiKey);
+    form.append('timestamp', String(signed.timestamp));
+    form.append('signature', signed.signature);
+    form.append('folder', signed.folder);
+    return postToCloudinary(signed.cloudName, form, opts.onProgress, 'video');
+  }
+
+  if (CLOUD_NAME && UPLOAD_PRESET) {
+    const form = new FormData();
+    form.append('file', file);
+    form.append('upload_preset', UPLOAD_PRESET);
+    form.append('folder', folder);
+    return postToCloudinary(CLOUD_NAME, form, opts.onProgress, 'video');
+  }
+
+  // Dev fallback: data URLs work for video too, but they're enormous. Best to
+  // just configure Cloudinary in this case.
+  opts.onProgress?.(50);
+  const dataUrl = await fileToDataUrl(file);
+  opts.onProgress?.(100);
+  return {
+    secureUrl: dataUrl,
+    publicId: `local/${file.name}`,
+    width: 0,
+    height: 0,
+    bytes: file.size,
+    format: file.type.replace('video/', ''),
   };
 }
 

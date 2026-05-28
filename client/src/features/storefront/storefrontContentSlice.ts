@@ -140,6 +140,13 @@ export interface StorefrontContent {
   footerEmail: string;
   copyrightLine: string;
   sectionLabels: SectionLabels;
+  navMenu: NavItem[];
+}
+
+export interface NavItem {
+  label: string;
+  href: string;
+  end?: boolean;
 }
 
 export const DEFAULT_CONTENT: StorefrontContent = {
@@ -361,6 +368,9 @@ export const DEFAULT_CONTENT: StorefrontContent = {
     newsletterTitle: 'New collections, in your inbox.',
     newsletterSub: 'Quiet, once a month. Unsubscribe anytime.',
   },
+  // Empty by default — StorefrontHeader falls back to its hardcoded NAV
+  // until an editor adds the first entry from Website CMS → Navigation.
+  navMenu: [],
 };
 
 // Initialise state.filters on demand if a legacy payload hydrated without
@@ -406,6 +416,7 @@ const slice = createSlice({
         footerEmail: incoming.footerEmail || DEFAULT_CONTENT.footerEmail,
         copyrightLine: incoming.copyrightLine || DEFAULT_CONTENT.copyrightLine,
         sectionLabels: { ...DEFAULT_CONTENT.sectionLabels, ...(incoming.sectionLabels ?? {}) },
+        navMenu: incoming.navMenu ?? DEFAULT_CONTENT.navMenu,
       };
     },
     updateBrand(state, action: PayloadAction<Partial<StorefrontContent['brand']>>) {
@@ -456,6 +467,34 @@ const slice = createSlice({
     },
     resetContent() {
       return DEFAULT_CONTENT;
+    },
+    // --- Nav menu (Website CMS → Navigation tab) ---
+    // navMenu defaults to [] which signals StorefrontHeader to fall back to
+    // the hardcoded baseline. Once an editor adds the first entry the CMS
+    // takes over.
+    setNavMenu(state, action: PayloadAction<NavItem[]>) {
+      state.navMenu = action.payload;
+    },
+    addNavItem(state, action: PayloadAction<NavItem>) {
+      const existing = state.navMenu ?? [];
+      if (existing.length >= 12) return;
+      state.navMenu = [...existing, action.payload];
+    },
+    updateNavItem(
+      state,
+      action: PayloadAction<{ index: number; patch: Partial<NavItem> }>,
+    ) {
+      const { index, patch } = action.payload;
+      const existing = state.navMenu ?? [];
+      const target = existing[index];
+      if (!target) return;
+      state.navMenu = existing.map((item: NavItem, i: number) =>
+        i === index ? { ...item, ...patch } : item,
+      );
+    },
+    removeNavItem(state, action: PayloadAction<number>) {
+      const existing = state.navMenu ?? [];
+      state.navMenu = existing.filter((_: NavItem, i: number) => i !== action.payload);
     },
     // --- Filters ---
     // `state.filters` is typed optional because the API payload can omit it
@@ -521,6 +560,10 @@ export const {
   addLocation,
   removeLocation,
   resetContent,
+  setNavMenu,
+  addNavItem,
+  updateNavItem,
+  removeNavItem,
   addFilterGroup,
   updateFilterGroup,
   removeFilterGroup,

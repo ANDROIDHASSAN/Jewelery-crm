@@ -29,6 +29,9 @@ import type { Item } from '@goldos/shared/types';
 import {
   useGetItemsQuery,
   useGetCategoriesQuery,
+  useCreateCategoryMutation,
+  useUpdateCategoryMutation,
+  useDeleteCategoryMutation,
   useCreateItemMutation,
   useUpdateItemMutation,
   useRecordWastageMutation,
@@ -64,6 +67,7 @@ import { BulkImportModal } from '@/features/inventory/BulkImportModal';
 
 type Tab =
   | 'items'
+  | 'categories'
   | 'transfers'
   | 'wastage'
   | 'valuation'
@@ -75,6 +79,7 @@ type Tab =
 
 const TABS: Array<{ id: Tab; label: string; icon: typeof Boxes }> = [
   { id: 'items', label: 'Items', icon: Boxes },
+  { id: 'categories', label: 'Categories', icon: TagIcon },
   { id: 'transfers', label: 'Transfers', icon: Truck },
   { id: 'wastage', label: 'Wastage & melting', icon: Flame },
   { id: 'valuation', label: 'Valuation', icon: Coins },
@@ -100,6 +105,7 @@ export function InventoryPage(): JSX.Element {
       <TabStrip<Tab> items={tabItems} value={tab} onChange={setTab} />
 
       {tab === 'items' && <ItemsTab />}
+      {tab === 'categories' && <CategoriesTab />}
       {tab === 'transfers' && <MovementsTab type="TRANSFER" emptyLabel="No transfers yet." />}
       {tab === 'wastage' && <MovementsTab type="WASTAGE" emptyLabel="No wastage logged." />}
       {tab === 'valuation' && <ValuationTab />}
@@ -776,6 +782,354 @@ function LowStockTab(): JSX.Element {
         />
       )}
     </div>
+  );
+}
+
+// ----------------------------------------------------------------------------
+// Categories tab — manage the Main → Sub category tree.
+// Designed for the jewellery flow the user described:
+//   "9kt fine gold" (main) → "Bracelet", "Rings", "Earrings" (sub) → individual items.
+// Main categories sit at the root (parentId === null). Sub-categories nest
+// under a main. Deeper trees are technically allowed by the schema but the
+// UI treats anything below depth 2 as still a "sub" for simplicity — most
+// jewellery merchants don't need a third tier.
+
+interface CategoryRow {
+  id: string;
+  name: string;
+  parentId: string | null;
+  metalType: 'GOLD' | 'SILVER' | 'DIAMOND' | 'PLATINUM' | 'OTHER';
+  defaultMakingChargeBps: number;
+}
+
+function CategoriesTab(): JSX.Element {
+  const { data, isLoading } = useGetCategoriesQuery();
+  const [createOpen, setCreateOpen] = useState(false);
+  const [createUnderParentId, setCreateUnderParentId] = useState<string | null>(null);
+  const [editTarget, setEditTarget] = useState<CategoryRow | null>(null);
+
+  const cats = (data?.data ?? []) as CategoryRow[];
+  const mains = cats.filter((c) => !c.parentId);
+  const subsByParent = new Map<string, CategoryRow[]>();
+  for (const c of cats) {
+    if (c.parentId) {
+      const list = subsByParent.get(c.parentId) ?? [];
+      list.push(c);
+      subsByParent.set(c.parentId, list);
+    }
+  }
+
+  return (
+    <div className="space-y-4">
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+        <p className="text-sm text-ink-500">
+          {mains.length} main categor{mains.length === 1 ? 'y' : 'ies'} ·{' '}
+          {cats.length - mains.length} sub-categor
+          {cats.length - mains.length === 1 ? 'y' : 'ies'}
+        </p>
+        <Button
+          onClick={() => {
+            setCreateUnderParentId(null);
+            setCreateOpen(true);
+          }}
+          className="self-start sm:self-auto"
+        >
+          <Plus className="h-4 w-4" /> Add main category
+        </Button>
+      </div>
+
+      {isLoading && <p className="text-sm text-ink-500">Loading…</p>}
+
+      {!isLoading && mains.length === 0 && (
+        <EmptyState
+          eyebrow="No categories yet"
+          title="Create your first category"
+          body='Start with a main category like "22kt Fine Gold" or "Silver Bars". You can then add sub-categories (Rings, Bracelets, Coins…) under each.'
+          action={
+            <Button
+              onClick={() => {
+                setCreateUnderParentId(null);
+                setCreateOpen(true);
+              }}
+            >
+              Add first category
+            </Button>
+          }
+        />
+      )}
+
+      {mains.map((main) => {
+        const subs = subsByParent.get(main.id) ?? [];
+        return (
+          <div key={main.id} className="rounded-md border border-ink-100 bg-ink-0">
+            <header className="flex items-center justify-between gap-3 px-4 sm:px-5 py-3 border-b border-ink-100">
+              <div className="min-w-0">
+                <p className="text-eyebrow uppercase text-ink-500">Main category</p>
+                <div className="flex items-center gap-2">
+                  <h3 className="text-md font-medium text-ink-900 truncate">{main.name}</h3>
+                  <Badge tone="neutral">{main.metalType.toLowerCase()}</Badge>
+                  <span className="text-xs text-ink-500 font-mono">
+                    {(main.defaultMakingChargeBps / 100).toFixed(1)}% making
+                  </span>
+                </div>
+              </div>
+              <div className="inline-flex gap-1">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setCreateUnderParentId(main.id);
+                    setCreateOpen(true);
+                  }}
+                  className="inline-flex items-center gap-1 h-8 px-2 rounded-md text-xs text-ink-700 hover:bg-ink-50"
+                  title="Add sub-category"
+                >
+                  <Plus className="h-3.5 w-3.5" /> Sub
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setEditTarget(main)}
+                  className="inline-flex items-center justify-center h-8 w-8 rounded-md text-ink-500 hover:bg-ink-50 hover:text-ink-900"
+                  aria-label={`Edit ${main.name}`}
+                  title="Edit"
+                >
+                  <Pencil className="h-3.5 w-3.5" />
+                </button>
+                <DeleteCategoryButton id={main.id} name={main.name} />
+              </div>
+            </header>
+            {subs.length === 0 ? (
+              <p className="px-5 py-4 text-xs text-ink-400 italic">
+                No sub-categories yet. Click <strong>+ Sub</strong> to add one.
+              </p>
+            ) : (
+              <ul className="divide-y divide-ink-100">
+                {subs.map((sub) => (
+                  <li key={sub.id} className="flex items-center justify-between gap-3 px-5 py-3">
+                    <div className="min-w-0">
+                      <p className="text-sm text-ink-900 truncate">{sub.name}</p>
+                      <p className="text-[11px] text-ink-500 font-mono">
+                        {(sub.defaultMakingChargeBps / 100).toFixed(1)}% making
+                      </p>
+                    </div>
+                    <div className="inline-flex gap-1">
+                      <button
+                        type="button"
+                        onClick={() => setEditTarget(sub)}
+                        className="inline-flex items-center justify-center h-7 w-7 rounded-md text-ink-500 hover:bg-ink-50 hover:text-ink-900"
+                        aria-label={`Edit ${sub.name}`}
+                        title="Edit"
+                      >
+                        <Pencil className="h-3 w-3" />
+                      </button>
+                      <DeleteCategoryButton id={sub.id} name={sub.name} />
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        );
+      })}
+
+      <CategoryDialog
+        open={createOpen}
+        onClose={() => setCreateOpen(false)}
+        mode="create"
+        defaultParentId={createUnderParentId}
+        mains={mains}
+      />
+      {editTarget && (
+        <CategoryDialog
+          open={!!editTarget}
+          onClose={() => setEditTarget(null)}
+          mode="edit"
+          existing={editTarget}
+          mains={mains.filter((m) => m.id !== editTarget.id)}
+        />
+      )}
+    </div>
+  );
+}
+
+function DeleteCategoryButton({ id, name }: { id: string; name: string }): JSX.Element {
+  const [del, { isLoading }] = useDeleteCategoryMutation();
+  return (
+    <button
+      type="button"
+      disabled={isLoading}
+      onClick={async () => {
+        if (!window.confirm(`Delete category "${name}"? This cannot be undone.`)) return;
+        try {
+          await del(id).unwrap();
+          toast.success(`Deleted ${name}`);
+        } catch (err) {
+          const message =
+            (err as { data?: { error?: { message?: string } } }).data?.error?.message ??
+            'Cannot delete category';
+          toast.error(message);
+        }
+      }}
+      className="inline-flex items-center justify-center h-8 w-8 rounded-md text-ink-500 hover:bg-danger-50 hover:text-danger-700 disabled:opacity-50"
+      aria-label={`Delete ${name}`}
+      title="Delete"
+    >
+      <X className="h-3.5 w-3.5" />
+    </button>
+  );
+}
+
+function CategoryDialog({
+  open,
+  onClose,
+  mode,
+  existing,
+  defaultParentId,
+  mains,
+}: {
+  open: boolean;
+  onClose: () => void;
+  mode: 'create' | 'edit';
+  existing?: CategoryRow;
+  defaultParentId?: string | null;
+  mains: CategoryRow[];
+}): JSX.Element {
+  const [create, { isLoading: creating }] = useCreateCategoryMutation();
+  const [update, { isLoading: updating }] = useUpdateCategoryMutation();
+  const isLoading = creating || updating;
+
+  const [form, setForm] = useState({
+    name: existing?.name ?? '',
+    parentId: existing?.parentId ?? defaultParentId ?? '',
+    metalType: existing?.metalType ?? ('GOLD' as 'GOLD' | 'SILVER' | 'DIAMOND' | 'PLATINUM' | 'OTHER'),
+    makingPct: existing ? String(existing.defaultMakingChargeBps / 100) : '12',
+  });
+
+  useEffect(() => {
+    if (!open) return;
+    setForm({
+      name: existing?.name ?? '',
+      parentId: existing?.parentId ?? defaultParentId ?? '',
+      metalType: existing?.metalType ?? 'GOLD',
+      makingPct: existing ? String(existing.defaultMakingChargeBps / 100) : '12',
+    });
+  }, [open, existing?.id]);
+
+  const submit = async (e: React.FormEvent): Promise<void> => {
+    e.preventDefault();
+    if (form.name.trim().length < 2) return void toast.error('Name must be at least 2 characters');
+    const bps = Math.round(parseFloat(form.makingPct) * 100);
+    if (!Number.isFinite(bps) || bps < 0 || bps > 10_000) {
+      return void toast.error('Making charge must be between 0 and 100%');
+    }
+    const parentId = form.parentId ? form.parentId : null;
+    try {
+      if (mode === 'create') {
+        await create({
+          name: form.name.trim(),
+          parentId,
+          metalType: form.metalType,
+          defaultMakingChargeBps: bps,
+        }).unwrap();
+        toast.success(`Added ${form.name.trim()}`);
+      } else if (existing) {
+        await update({
+          id: existing.id,
+          patch: {
+            name: form.name.trim(),
+            parentId,
+            metalType: form.metalType,
+            defaultMakingChargeBps: bps,
+          },
+        }).unwrap();
+        toast.success(`Updated ${form.name.trim()}`);
+      }
+      onClose();
+    } catch (err) {
+      const message =
+        (err as { data?: { error?: { message?: string } } }).data?.error?.message ??
+        'Could not save category.';
+      toast.error(message);
+    }
+  };
+
+  return (
+    <Sheet open={open} onOpenChange={(o) => !o && onClose()}>
+      <SheetContent>
+        <SheetHeader>
+          <SheetTitle>{mode === 'create' ? 'Add category' : `Edit ${existing?.name ?? 'category'}`}</SheetTitle>
+        </SheetHeader>
+        <SheetBody>
+          <form onSubmit={submit} className="space-y-4 text-sm">
+            <Field label="Name">
+              <input
+                value={form.name}
+                onChange={(e) => setForm({ ...form, name: e.target.value })}
+                placeholder='e.g. "22kt Fine Gold" or "Rings"'
+                className={fieldCls}
+                required
+              />
+            </Field>
+
+            <Field label="Parent category">
+              <select
+                value={form.parentId}
+                onChange={(e) => setForm({ ...form, parentId: e.target.value })}
+                className={fieldCls}
+              >
+                <option value="">— None (main category) —</option>
+                {mains.map((m) => (
+                  <option key={m.id} value={m.id}>
+                    Under {m.name}
+                  </option>
+                ))}
+              </select>
+            </Field>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <Field label="Metal type">
+                <select
+                  value={form.metalType}
+                  onChange={(e) =>
+                    setForm({
+                      ...form,
+                      metalType: e.target.value as 'GOLD' | 'SILVER' | 'DIAMOND' | 'PLATINUM' | 'OTHER',
+                    })
+                  }
+                  className={fieldCls}
+                >
+                  <option value="GOLD">Gold</option>
+                  <option value="SILVER">Silver</option>
+                  <option value="DIAMOND">Diamond</option>
+                  <option value="PLATINUM">Platinum</option>
+                  <option value="OTHER">Other</option>
+                </select>
+              </Field>
+              <Field label="Default making charge (%)">
+                <input
+                  type="number"
+                  step="0.1"
+                  min={0}
+                  max={100}
+                  value={form.makingPct}
+                  onChange={(e) => setForm({ ...form, makingPct: e.target.value })}
+                  className={fieldCls}
+                  required
+                />
+              </Field>
+            </div>
+
+            <div className="flex gap-2 pt-2">
+              <Button variant="outline" type="button" onClick={onClose} disabled={isLoading}>
+                Cancel
+              </Button>
+              <Button type="submit" className="flex-1" disabled={isLoading}>
+                {isLoading ? 'Saving…' : mode === 'create' ? 'Create category' : 'Save changes'}
+              </Button>
+            </div>
+          </form>
+        </SheetBody>
+      </SheetContent>
+    </Sheet>
   );
 }
 
@@ -1587,11 +1941,7 @@ function AddItemDialog({ open, onClose }: { open: boolean; onClose: () => void }
                   className={fieldCls}
                   required
                 >
-                  {(cats?.data ?? []).map((c) => (
-                    <option key={c.id} value={c.id}>
-                      {c.name}
-                    </option>
-                  ))}
+                  <CategoryOptions categories={cats?.data ?? []} />
                 </select>
               </Field>
             </div>
@@ -2000,11 +2350,7 @@ function EditItemDialog({
                   className={fieldCls}
                   required
                 >
-                  {(cats?.data ?? []).map((c) => (
-                    <option key={c.id} value={c.id}>
-                      {c.name}
-                    </option>
-                  ))}
+                  <CategoryOptions categories={cats?.data ?? []} />
                 </select>
               </Field>
             </div>
@@ -2671,6 +3017,53 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
       <span className="text-eyebrow uppercase text-ink-500 block mb-1">{label}</span>
       {children}
     </label>
+  );
+}
+
+// Renders <option>s grouped by main category. The selected value stays a
+// single categoryId (item rows can FK to either main or sub) — this is
+// purely a visual hierarchy in the picker. Mains without children appear at
+// the top, ungrouped. Mains with children render as <optgroup> whose label
+// is the main's name and whose options are the children (the main itself
+// is also offered first inside the optgroup so a merchant who wants to
+// assign an item to "22kt Fine Gold" directly without a sub still can).
+function CategoryOptions({
+  categories,
+}: {
+  categories: Array<{ id: string; name: string; parentId?: string | null }>;
+}): JSX.Element {
+  const mains = categories.filter((c) => !c.parentId);
+  const subsByParent = new Map<string, Array<{ id: string; name: string }>>();
+  for (const c of categories) {
+    if (c.parentId) {
+      const list = subsByParent.get(c.parentId) ?? [];
+      list.push({ id: c.id, name: c.name });
+      subsByParent.set(c.parentId, list);
+    }
+  }
+  return (
+    <>
+      {mains.map((m) => {
+        const children = subsByParent.get(m.id) ?? [];
+        if (children.length === 0) {
+          return (
+            <option key={m.id} value={m.id}>
+              {m.name}
+            </option>
+          );
+        }
+        return (
+          <optgroup key={m.id} label={m.name}>
+            <option value={m.id}>{m.name} (general)</option>
+            {children.map((c) => (
+              <option key={c.id} value={c.id}>
+                {c.name}
+              </option>
+            ))}
+          </optgroup>
+        );
+      })}
+    </>
   );
 }
 

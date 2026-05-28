@@ -15,7 +15,10 @@ function formatLiveRate(paise: number | undefined, fallback: string): string {
     : `₹${rupees.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}/g`;
 }
 
-const NAV = [
+// Default nav surfaces when the CMS hasn't customised navMenu yet (empty
+// array). Once an editor saves changes from Website CMS → Navigation, those
+// override this baseline.
+const DEFAULT_NAV: Array<{ to: string; label: string; end?: boolean }> = [
   // "All" jumps to /store/collections (no slug) which renders the full
   // catalogue with the same filter sidebar + search input as a single
   // collection page. Lives at the front so it reads as the entry point.
@@ -31,6 +34,19 @@ const NAV = [
 export function StorefrontHeader(): JSX.Element {
   const brand = useAppSelector((s) => s.storefrontContent.brand);
   const cmsRates = useAppSelector((s) => s.storefrontContent.rates);
+  // CMS-managed nav. Empty array (the schema default) means "use baseline"
+  // so storefronts that pre-date the nav CMS keep their existing menu. The
+  // shape in the schema uses { label, href, end? } so we re-map onto the
+  // local { to, label, end? } shape NavLink expects.
+  const cmsNav = useAppSelector((s) => s.storefrontContent.navMenu);
+  const NAV: Array<{ to: string; label: string; end?: boolean }> =
+    cmsNav && cmsNav.length > 0
+      ? cmsNav.map((n: { href: string; label: string; end?: boolean }) => ({
+          to: n.href,
+          label: n.label,
+          end: n.end,
+        }))
+      : DEFAULT_NAV;
   // Live gold rate — overrides the CMS string when the worker has cached
   // today's value. Polls every 5 min so a daily refresh shows up in-session.
   const { data: liveRate } = useGetPublicGoldRateQuery(undefined, {

@@ -24,7 +24,33 @@ export const shopsApi = baseApi.injectEndpoints({
       }),
       invalidatesTags: [{ type: 'Shop', id: 'LIST' }],
     }),
+    updateShop: b.mutation<ApiOne<Shop>, { id: string; patch: Partial<Omit<Shop, 'id' | 'tenantId'>> }>({
+      query: ({ id, patch }) => ({
+        url: `/shops/${id}`,
+        method: 'PATCH',
+        body: patch,
+      }),
+      invalidatesTags: (_r, _e, a) => [
+        { type: 'Shop', id: a.id },
+        { type: 'Shop', id: 'LIST' },
+      ],
+    }),
+    // Soft-delete (server flips isActive=false). Pulls the row off the
+    // list-level cache so it disappears immediately.
+    deleteShop: b.mutation<void, string>({
+      query: (id) => ({ url: `/shops/${id}`, method: 'DELETE' }),
+      invalidatesTags: (_r, _e, id) => [
+        { type: 'Shop', id },
+        { type: 'Shop', id: 'LIST' },
+      ],
+    }),
   }),
 });
 
-export const { useGetShopsQuery, useGetShopQuery, useCreateShopMutation } = shopsApi;
+export const {
+  useGetShopsQuery,
+  useGetShopQuery,
+  useCreateShopMutation,
+  useUpdateShopMutation,
+  useDeleteShopMutation,
+} = shopsApi;

@@ -767,6 +767,23 @@ export const StorefrontContentSchema = z.object({
   footerEmail: z.string().max(160).optional().default(''),
   copyrightLine: z.string().max(400).optional().default(''),
   sectionLabels: SectionLabelsSchema.partial().optional().default({}),
+  // Top navigation menu shown in the storefront header. Empty array means
+  // "fall back to the hardcoded default" so storefronts that haven't opened
+  // the CMS yet keep their existing nav. Each entry maps a `label` to an
+  // `href` (relative path or external https URL). `end: true` makes the
+  // active-link match exact (used by /store/collections so it doesn't
+  // stay highlighted on every sub-collection).
+  navMenu: z
+    .array(
+      z.object({
+        label: z.string().min(1).max(40),
+        href: z.string().min(1).max(400),
+        end: z.boolean().optional(),
+      }),
+    )
+    .max(12)
+    .optional()
+    .default([]),
 });
 
 export type StorefrontContent = z.infer<typeof StorefrontContentSchema>;

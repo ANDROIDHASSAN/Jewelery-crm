@@ -1,7 +1,7 @@
 // Team & Roles — super-admin command centre for managing staff and the
 // permission model. Tabs: Members, Roles, Permissions reference.
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { toast } from 'sonner';
 import {
   Check,
@@ -10,6 +10,7 @@ import {
   KeyRound,
   Mail,
   Minus,
+  Pencil,
   Plus,
   ShieldCheck,
   ShieldOff,
@@ -35,7 +36,13 @@ import {
   useRevokeInvitationMutation,
   type RoleSummary,
 } from '@/features/team/teamApi';
-import { useGetShopsQuery, useCreateShopMutation } from '@/features/shops/shopsApi';
+import {
+  useGetShopsQuery,
+  useCreateShopMutation,
+  useUpdateShopMutation,
+  useDeleteShopMutation,
+} from '@/features/shops/shopsApi';
+import type { Shop } from '@goldos/shared/types';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -241,8 +248,29 @@ function RoleBadge({ slug, name }: { slug: string; name: string }): JSX.Element 
 
 function ShopsTab(): JSX.Element {
   const [addingOpen, setAddingOpen] = useState(false);
+  const [editTarget, setEditTarget] = useState<Shop | null>(null);
   const { data, isLoading } = useGetShopsQuery();
+  const [deleteShop] = useDeleteShopMutation();
   const shops = data?.data ?? [];
+
+  async function handleDelete(s: Shop): Promise<void> {
+    if (
+      !window.confirm(
+        `Deactivate shop "${s.name}"?\n\nThe shop is soft-deleted — bills, transfers and audit history stay intact. You can recreate the shop later with the same name if needed.`,
+      )
+    ) {
+      return;
+    }
+    try {
+      await deleteShop(s.id).unwrap();
+      toast.success(`Deactivated ${s.name}`);
+    } catch (err) {
+      const message =
+        (err as { data?: { error?: { message?: string } } }).data?.error?.message ??
+        'Cannot deactivate shop.';
+      toast.error(message);
+    }
+  }
 
   return (
     <section className="space-y-4">
@@ -278,12 +306,168 @@ function ShopsTab(): JSX.Element {
               <p className="truncate"><strong>GST State:</strong> {s.gstStateCode}</p>
               <p className="line-clamp-2"><strong>Address:</strong> {s.address}</p>
             </div>
+            <div className="flex justify-end gap-1 pt-2 border-t border-ink-50">
+              <button
+                type="button"
+                onClick={() => setEditTarget(s)}
+                className="inline-flex items-center gap-1 h-7 px-2 rounded-md text-xs text-ink-700 hover:bg-ink-50 hover:text-ink-900"
+                aria-label={`Edit ${s.name}`}
+                title="Edit shop"
+              >
+                <Pencil className="h-3.5 w-3.5" /> Edit
+              </button>
+              {s.isActive && (
+                <button
+                  type="button"
+                  onClick={() => handleDelete(s)}
+                  className="inline-flex items-center gap-1 h-7 px-2 rounded-md text-xs text-danger-700 hover:bg-danger-50"
+                  aria-label={`Deactivate ${s.name}`}
+                  title="Deactivate"
+                >
+                  <Trash2 className="h-3.5 w-3.5" /> Deactivate
+                </button>
+              )}
+            </div>
           </div>
         ))}
       </div>
 
       <AddShopSheet open={addingOpen} onClose={() => setAddingOpen(false)} />
+      {editTarget && (
+        <EditShopSheet
+          open={!!editTarget}
+          onClose={() => setEditTarget(null)}
+          shop={editTarget}
+        />
+      )}
     </section>
+  );
+}
+
+function EditShopSheet({
+  open,
+  onClose,
+  shop,
+}: {
+  open: boolean;
+  onClose: () => void;
+  shop: Shop;
+}): JSX.Element {
+  const [update, { isLoading }] = useUpdateShopMutation();
+  const [form, setForm] = useState({
+    name: shop.name,
+    phone: shop.phone,
+    gstStateCode: shop.gstStateCode,
+    address: shop.address,
+    isActive: shop.isActive,
+    isWarehouse: shop.isWarehouse,
+  });
+
+  useEffect(() => {
+    if (!open) return;
+    setForm({
+      name: shop.name,
+      phone: shop.phone,
+      gstStateCode: shop.gstStateCode,
+      address: shop.address,
+      isActive: shop.isActive,
+      isWarehouse: shop.isWarehouse,
+    });
+  }, [open, shop.id]);
+
+  async function submit(e: React.FormEvent): Promise<void> {
+    e.preventDefault();
+    const digits = form.phone.replace(/\D/g, '');
+    const local = digits.startsWith('91') ? digits.slice(2) : digits;
+    if (form.name.trim().length < 2) {
+      toast.error('Name is required');
+      return;
+    }
+    if (!/^[6-9]\d{9}$/.test(local)) {
+      toast.error('Phone must be a valid Indian number');
+      return;
+    }
+    if (!/^\d{2}$/.test(form.gstStateCode.trim())) {
+      toast.error('GST state code must be exactly 2 digits');
+      return;
+    }
+    try {
+      await update({
+        id: shop.id,
+        patch: {
+          name: form.name.trim(),
+          phone: `+91${local}`,
+          gstStateCode: form.gstStateCode.trim(),
+          address: form.address.trim(),
+          isActive: form.isActive,
+          isWarehouse: form.isWarehouse,
+          type: form.isWarehouse ? 'WAREHOUSE' : 'RETAIL',
+        },
+      }).unwrap();
+      toast.success(`Updated ${form.name}`);
+      onClose();
+    } catch (err: unknown) {
+      const e = err as { data?: { error?: { message?: string } } };
+      toast.error(e.data?.error?.message ?? 'Failed to update shop');
+    }
+  }
+
+  return (
+    <Sheet open={open} onOpenChange={(v) => { if (!v) onClose(); }}>
+      <SheetContent side="right" className="w-full sm:max-w-md md:max-w-lg p-0 flex flex-col">
+        <header className="sticky top-0 z-10 bg-ink-0 border-b border-ink-100 px-5 sm:px-6 py-4 pr-12">
+          <h2 className="font-display text-md sm:text-lg text-ink-900">Edit {shop.name}</h2>
+          <p className="text-xs text-ink-500 mt-0.5">Update shop details, address, or warehouse mode.</p>
+        </header>
+        <form className="flex-1 overflow-y-auto px-5 sm:px-6 py-5 space-y-4" onSubmit={submit} id="edit-shop-form">
+          <Field label="Shop name">
+            <Input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} required minLength={2} />
+          </Field>
+          <Field label="Phone number">
+            <Input value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} required />
+          </Field>
+          <Field label="GST State Code" hint="2-digit state code (e.g., 06 for Haryana, 27 for Maharashtra)">
+            <Input value={form.gstStateCode} onChange={(e) => setForm({ ...form, gstStateCode: e.target.value })} required maxLength={2} />
+          </Field>
+          <Field label="Address">
+            <textarea
+              className="w-full min-h-[80px] rounded-md border border-ink-200 px-3 py-2 text-sm bg-ink-0 focus:outline-none focus:ring-2 focus:ring-brand-500/20 focus:border-brand-500"
+              value={form.address}
+              onChange={(e) => setForm({ ...form, address: e.target.value })}
+              required
+            />
+          </Field>
+          <div className="flex items-center gap-2">
+            <input
+              type="checkbox"
+              id="edit-shop-active"
+              checked={form.isActive}
+              onChange={(e) => setForm({ ...form, isActive: e.target.checked })}
+              className="h-4 w-4 rounded border-ink-300 text-brand-600 focus:ring-brand-500"
+            />
+            <label htmlFor="edit-shop-active" className="text-sm font-medium text-ink-700">Open and active for billing</label>
+          </div>
+          <div className="flex items-center gap-2">
+            <input
+              type="checkbox"
+              id="edit-shop-warehouse"
+              checked={form.isWarehouse}
+              onChange={(e) => setForm({ ...form, isWarehouse: e.target.checked })}
+              className="h-4 w-4 rounded border-ink-300 text-brand-600 focus:ring-brand-500"
+            />
+            <label htmlFor="edit-shop-warehouse" className="text-sm font-medium text-ink-700">
+              Warehouse (stocks inventory, transfer source only)
+            </label>
+          </div>
+        </form>
+        <footer className="sticky bottom-0 bg-ink-0 border-t border-ink-100 px-5 sm:px-6 py-3 flex flex-col-reverse sm:flex-row sm:items-center sm:justify-end gap-2">
+          <Button type="button" variant="secondary" onClick={onClose} className="sm:order-1">Cancel</Button>
+          <Button type="submit" form="edit-shop-form" disabled={isLoading} className="sm:order-2 sm:min-w-[160px]">
+            {isLoading ? 'Saving…' : 'Save changes'}
+          </Button>
+        </footer>
+      </SheetContent>
+    </Sheet>
   );
 }
 
