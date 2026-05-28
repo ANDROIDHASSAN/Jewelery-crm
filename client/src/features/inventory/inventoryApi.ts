@@ -64,12 +64,22 @@ export interface ValuationRow {
 export interface LowStockItem {
   id: string;
   sku: string;
+  /** Item display name (Floral pendant). Falls back to SKU when null. */
+  name: string | null;
+  /** Cloudinary image URLs — first one is the thumbnail. */
+  images: string[];
   shopId: string;
   categoryId: string;
   weightMg: number;
   purityCaratX100: number;
   costPricePaise: number;
   hallmarkStatus: 'PENDING' | 'SUBMITTED' | 'CERTIFIED' | 'EXEMPT';
+  /** Hybrid stock model — true = one-piece-per-row, false = lot. */
+  isSerialized: boolean;
+  /** Live count. 1 for IN_STOCK serialized, lot counter, 0 for SOLD/drained. */
+  quantityOnHand: number;
+  /** Drives the Sold-out badge + sort order. */
+  status: 'IN_STOCK' | 'IN_TRANSIT' | 'SOLD' | 'MELTED';
 }
 
 export interface LowStockRow {

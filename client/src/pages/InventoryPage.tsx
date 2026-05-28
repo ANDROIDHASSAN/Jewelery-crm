@@ -537,24 +537,26 @@ function ValuationTab(): JSX.Element {
 // Low-stock tab.
 
 function LowStockTab(): JSX.Element {
+  // 30s poll so the restock list catches sale-driven drains without the
+  // owner having to refresh — same cadence as the analytics + POS catalogue.
   const [threshold, setThreshold] = useState(3);
-  const { data, isLoading } = useGetLowStockQuery({ threshold });
+  const { data, isLoading } = useGetLowStockQuery({ threshold }, { pollingInterval: 30_000 });
   const { data: catRes } = useGetCategoriesQuery();
   const { data: shopsRes } = useGetShopsQuery();
+  // editTarget + addStockTarget reuse the same dialogs the Items tab opens,
+  // so the cashier never leaves the Low-stock view to top up a SKU.
+  const [editTarget, setEditTarget] = useState<Item | null>(null);
+  const [addStockTarget, setAddStockTarget] = useState<Item | null>(null);
   const buckets = data?.data?.rows ?? [];
   const items = data?.data?.items ?? [];
 
-  // Index counts by (shopId, categoryId) so each product row can show "X left
-  // in this shop+category" — the operational signal owners care about.
-  const countKey = (shopId: string, categoryId: string): string => `${shopId}::${categoryId}`;
-  const countByBucket = new Map(buckets.map((b) => [countKey(b.shopId, b.categoryId), b.itemCount]));
   const shopNameById = new Map((shopsRes?.data ?? []).map((s) => [s.id, s.name]));
   const catNameById = new Map((catRes?.data ?? []).map((c) => [c.id, c.name]));
 
   return (
     <div className="space-y-4">
       <div className="flex items-center gap-3 text-sm">
-        <label className="text-ink-700">Alert threshold (items per category × shop)</label>
+        <label className="text-ink-700">Alert threshold (units per SKU)</label>
         <input
           type="number"
           min={0}
@@ -563,9 +565,12 @@ function LowStockTab(): JSX.Element {
           onChange={(e) => setThreshold(Math.max(0, Number(e.target.value) || 0))}
           className="h-9 w-20 px-2 rounded-md border border-ink-200 font-mono text-sm focus:outline-none focus:border-brand-500"
         />
+        <span className="text-ink-500 text-xs">
+          Lot SKUs at or below this count appear here; sold-out (0) items always do.
+        </span>
       </div>
 
-      {/* Per-bucket summary — running low buckets with their headline count */}
+      {/* Per-bucket summary — kept as a quick "where am I thin?" header */}
       {buckets.length > 0 && (
         <div className="rounded-md border border-ink-100 bg-ink-0">
           <header className="px-5 py-3 border-b border-ink-100">
@@ -593,7 +598,7 @@ function LowStockTab(): JSX.Element {
                       {catNameById.get(r.categoryId) ?? r.categoryId.slice(-6)}
                     </td>
                     <td className="px-5 py-3 text-right font-mono tabular-nums">
-                      <Badge tone="warning">{r.itemCount}</Badge>
+                      <Badge tone={r.itemCount === 0 ? 'danger' : 'warning'}>{r.itemCount}</Badge>
                     </td>
                   </tr>
                 ))}
@@ -603,36 +608,41 @@ function LowStockTab(): JSX.Element {
         </div>
       )}
 
-      {/* Actual products in those buckets */}
+      {/* Product-first restock list */}
       <div className="rounded-md border border-ink-100 bg-ink-0">
-        <header className="px-5 py-3 border-b border-ink-100">
-          <p className="text-eyebrow uppercase text-ink-500">Products to restock</p>
-          <h2 className="text-md font-medium text-ink-900">Items in running-low buckets</h2>
+        <header className="px-5 py-3 border-b border-ink-100 flex items-center justify-between gap-3">
+          <div>
+            <p className="text-eyebrow uppercase text-ink-500">Products to restock</p>
+            <h2 className="text-md font-medium text-ink-900">
+              {items.length} product{items.length === 1 ? '' : 's'} need attention
+            </h2>
+          </div>
         </header>
         {isLoading && <p className="p-5 text-sm text-ink-500">Loading…</p>}
         {!isLoading && items.length === 0 && (
           <p className="p-5 text-sm text-ink-500">
-            No category × shop is at or below {threshold} items. Healthy stock.
+            Every SKU is healthy at or above {threshold} units. Nothing to restock.
           </p>
         )}
         {items.length > 0 && (
           <div className="overflow-x-auto">
-            <table className="w-full text-sm min-w-[760px]">
+            <table className="w-full text-sm min-w-[920px]">
               <thead className="text-eyebrow uppercase text-ink-500">
                 <tr>
-                  <th className="text-left px-5 py-3">SKU</th>
-                  <th className="text-left px-5 py-3">Shop</th>
-                  <th className="text-left px-5 py-3">Category</th>
-                  <th className="text-right px-5 py-3">Weight</th>
-                  <th className="text-left px-5 py-3">Purity</th>
-                  <th className="text-left px-5 py-3">Hallmark</th>
-                  <th className="text-right px-5 py-3">Cost</th>
-                  <th className="text-right px-5 py-3">Bucket size</th>
+                  <th className="text-left px-5 py-3">Product</th>
+                  <th className="text-left px-3 py-3">SKU</th>
+                  <th className="text-left px-3 py-3">Shop</th>
+                  <th className="text-left px-3 py-3">Category</th>
+                  <th className="text-right px-3 py-3">Current qty</th>
+                  <th className="text-right px-3 py-3">Weight</th>
+                  <th className="text-left px-3 py-3">Purity</th>
+                  <th className="text-left px-3 py-3">Hallmark</th>
+                  <th className="text-right px-3 py-3">Cost</th>
+                  <th className="text-right px-5 py-3">Action</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-ink-100">
                 {items.map((it) => {
-                  const bucketCount = countByBucket.get(countKey(it.shopId, it.categoryId)) ?? 0;
                   const tone =
                     it.hallmarkStatus === 'CERTIFIED'
                       ? 'success'
@@ -641,31 +651,106 @@ function LowStockTab(): JSX.Element {
                         : it.hallmarkStatus === 'SUBMITTED'
                           ? 'info'
                           : 'neutral';
+                  const isOut = it.status === 'SOLD' || it.quantityOnHand === 0;
+                  const qtyTone = isOut ? 'danger' : it.quantityOnHand <= threshold ? 'warning' : 'success';
+                  const thumb = it.images?.[0] ?? null;
+                  // The detail-sheet dialogs (EditItemDialog + AddStockDialog)
+                  // expect a full Item shape. The low-stock projection is a
+                  // subset, so we synthesise the missing fields with safe
+                  // defaults — the dialogs only read what's in this projection
+                  // plus stoneWeight/hallmarkRef/makingChargeBps which Edit
+                  // re-fetches at submit time (the patch never reads them).
+                  const asItem = {
+                    ...it,
+                    tenantId: '',
+                    barcodeData: it.sku,
+                    stoneWeightMg: null,
+                    hallmarkRef: null,
+                    makingChargeBps: null,
+                    createdAt: new Date(),
+                  } as unknown as Item;
                   return (
                     <tr key={it.id}>
-                      <td className="px-5 py-3 font-mono text-xs text-ink-900">{it.sku}</td>
-                      <td className="px-5 py-3 text-ink-800">
+                      <td className="px-5 py-3">
+                        <div className="flex items-center gap-3">
+                          <div className="h-10 w-10 rounded-md bg-ink-50 overflow-hidden flex-shrink-0">
+                            {thumb ? (
+                              <img
+                                src={thumb}
+                                alt={it.name ?? it.sku}
+                                className="h-full w-full object-cover"
+                                onError={(e) => {
+                                  (e.currentTarget as HTMLImageElement).style.display = 'none';
+                                }}
+                              />
+                            ) : (
+                              <div className="h-full w-full grid place-items-center text-ink-300">
+                                <Boxes className="h-4 w-4" />
+                              </div>
+                            )}
+                          </div>
+                          <div className="min-w-0">
+                            <p className="font-medium text-ink-900 truncate">
+                              {it.name ?? it.sku}
+                            </p>
+                            <p className="text-[11px] text-ink-500">
+                              {it.isSerialized ? 'Unique piece' : 'Bulk lot'}
+                            </p>
+                          </div>
+                        </div>
+                      </td>
+                      <td className="px-3 py-3 font-mono text-xs text-ink-700">{it.sku}</td>
+                      <td className="px-3 py-3 text-ink-800">
                         {shopNameById.get(it.shopId) ?? it.shopId.slice(-6)}
                       </td>
-                      <td className="px-5 py-3 text-ink-800">
+                      <td className="px-3 py-3 text-ink-800">
                         {catNameById.get(it.categoryId) ?? it.categoryId.slice(-6)}
                       </td>
-                      <td className="px-5 py-3 text-right">
+                      <td className="px-3 py-3 text-right font-mono tabular-nums">
+                        {isOut ? (
+                          <Badge tone="danger">Sold out</Badge>
+                        ) : (
+                          <Badge tone={qtyTone as 'success' | 'warning' | 'danger'}>
+                            {it.quantityOnHand}
+                          </Badge>
+                        )}
+                      </td>
+                      <td className="px-3 py-3 text-right">
                         <Weight mg={it.weightMg} />
                       </td>
-                      <td className="px-5 py-3">
+                      <td className="px-3 py-3">
                         <Purity x100={it.purityCaratX100} />
                       </td>
-                      <td className="px-5 py-3">
+                      <td className="px-3 py-3">
                         <Badge tone={tone as 'success' | 'warning' | 'info' | 'neutral'}>
                           {it.hallmarkStatus.toLowerCase()}
                         </Badge>
                       </td>
-                      <td className="px-5 py-3 text-right">
+                      <td className="px-3 py-3 text-right">
                         <Money paise={it.costPricePaise} />
                       </td>
-                      <td className="px-5 py-3 text-right">
-                        <Badge tone="warning">{bucketCount}</Badge>
+                      <td className="px-5 py-3 text-right whitespace-nowrap">
+                        <div className="inline-flex gap-1">
+                          {it.status === 'IN_STOCK' && (
+                            <button
+                              type="button"
+                              onClick={() => setAddStockTarget(asItem)}
+                              className="inline-flex items-center gap-1 h-7 px-2 rounded-md text-xs text-ink-700 hover:bg-ink-50 hover:text-ink-900"
+                              title="Add stock"
+                            >
+                              <PackagePlus className="h-3.5 w-3.5" /> Restock
+                            </button>
+                          )}
+                          <button
+                            type="button"
+                            onClick={() => setEditTarget(asItem)}
+                            className="inline-flex items-center justify-center h-7 w-7 rounded-md text-ink-500 hover:bg-ink-50 hover:text-ink-900"
+                            title="Edit item"
+                            aria-label={`Edit ${it.sku}`}
+                          >
+                            <Pencil className="h-3.5 w-3.5" />
+                          </button>
+                        </div>
                       </td>
                     </tr>
                   );
@@ -675,6 +760,21 @@ function LowStockTab(): JSX.Element {
           </div>
         )}
       </div>
+
+      {editTarget && (
+        <EditItemDialog
+          open={!!editTarget}
+          onClose={() => setEditTarget(null)}
+          item={editTarget}
+        />
+      )}
+      {addStockTarget && (
+        <AddStockDialog
+          open={!!addStockTarget}
+          onClose={() => setAddStockTarget(null)}
+          item={addStockTarget}
+        />
+      )}
     </div>
   );
 }

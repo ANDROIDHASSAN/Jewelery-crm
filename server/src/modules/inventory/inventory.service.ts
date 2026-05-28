@@ -446,9 +446,11 @@ export async function computeValuation(opts: { shopId?: string }) {
 }
 
 export async function computeLowStock(threshold: number) {
-  // Per-bucket count needs to use SUM(quantityOnHand) for lot rows + COUNT(*)
-  // for serialized rows. Prisma's groupBy doesn't conditionally aggregate, so
-  // we run two aggregates and merge in JS.
+  // (1) Per-bucket aggregate: counts IN_STOCK pieces per (shopId, categoryId)
+  //     so the UI can keep the "Bridal at Karnal — 1 piece left" summary
+  //     header. Lot rows contribute SUM(quantityOnHand); serialized rows
+  //     contribute COUNT(*). Prisma's groupBy can't do conditional aggregates
+  //     so we run two queries and merge in JS.
   const serializedGrouped = await prisma.item.groupBy({
     by: ['categoryId', 'shopId'],
     where: { status: 'IN_STOCK', isSerialized: true },
@@ -479,19 +481,37 @@ export async function computeLowStock(threshold: number) {
     }
   }
   const lowBuckets = Array.from(counts.values()).filter((r) => r.itemCount <= threshold);
-  if (lowBuckets.length === 0) return { threshold, rows: [], items: [] };
-  // Pull every IN_STOCK item that lives in a low bucket so the UI can render
-  // an actual product list (SKU / weight / purity / cost) instead of just
-  // "Bridal — 2 items".
-  const items = await prisma.item.findMany({
-    where: {
+
+  // (2) Per-product restock list. Three independent triggers — an item enters
+  // this list if ANY of the following holds:
+  //   A. Lot row whose quantityOnHand <= threshold (including 0 / drained).
+  //      Catches "I sold every gold bar and now this needs restocking" —
+  //      previously hidden because the SOLD status was filtered out.
+  //   B. Lot row whose status is SOLD (catches edge case where qty cleanup
+  //      drifted; defensive).
+  //   C. Any IN_STOCK item (serialized OR lot) that lives in a low bucket.
+  //      Keeps the historical "design X at shop Y running thin" semantics
+  //      for serialized SKUs where each piece is its own row.
+  const orClauses: Prisma.ItemWhereInput[] = [
+    { isSerialized: false, quantityOnHand: { lte: threshold } },
+    { isSerialized: false, status: 'SOLD' },
+  ];
+  if (lowBuckets.length > 0) {
+    orClauses.push({
       status: 'IN_STOCK',
       OR: lowBuckets.map((b) => ({ categoryId: b.categoryId, shopId: b.shopId })),
-    },
-    orderBy: [{ shopId: 'asc' }, { categoryId: 'asc' }, { createdAt: 'desc' }],
+    });
+  }
+  const items = await prisma.item.findMany({
+    where: { OR: orClauses },
+    // Most-urgent-first: SOLD/0-qty at the top, then by ascending qty, then
+    // newest within the same urgency. The UI mirrors this order.
+    orderBy: [{ quantityOnHand: 'asc' }, { createdAt: 'desc' }],
     select: {
       id: true,
       sku: true,
+      name: true,
+      images: true,
       shopId: true,
       categoryId: true,
       weightMg: true,
@@ -500,6 +520,7 @@ export async function computeLowStock(threshold: number) {
       hallmarkStatus: true,
       isSerialized: true,
       quantityOnHand: true,
+      status: true,
     },
   });
   return { threshold, rows: lowBuckets, items };
