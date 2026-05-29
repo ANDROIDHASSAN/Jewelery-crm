@@ -785,6 +785,38 @@ export const StorefrontContentSchema = z.object({
     .max(12)
     .optional()
     .default([]),
+  // Storefront sidebar filter config (Filters tab in Website CMS).
+  //   groups            — master list of filter facets available across
+  //                       collection pages. Each has a stable key (so per-
+  //                       collection overrides can reference it), a human
+  //                       label, and an options list. Predicates for each
+  //                       label live in CollectionPage's FILTER_PREDICATES.
+  //   perCollection     — slug → ordered group-key list. Override for a
+  //                       specific collection page. Missing slug = fall back
+  //                       to defaultGroupKeys. Empty array = hide all
+  //                       filters on that page.
+  //   defaultGroupKeys  — group keys shown on any collection without a
+  //                       per-collection override.
+  //
+  // The whole block is optional so legacy content rows (saved before this
+  // landed in the schema) don't fail validation; defaults match the slice's
+  // DEFAULT_CONTENT.filters so the public storefront keeps showing the
+  // baseline metal/weight/price/purity/occasion strip out of the box.
+  filters: z
+    .object({
+      groups: z
+        .array(
+          z.object({
+            key: z.string().min(1).max(60),
+            label: z.string().min(1).max(80),
+            options: z.array(z.string().min(1).max(80)).max(40),
+          }),
+        )
+        .max(20),
+      perCollection: z.record(z.string(), z.array(z.string().min(1).max(60)).max(20)),
+      defaultGroupKeys: z.array(z.string().min(1).max(60)).max(20),
+    })
+    .optional(),
 });
 
 export type StorefrontContent = z.infer<typeof StorefrontContentSchema>;
