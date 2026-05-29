@@ -61,6 +61,20 @@ const FILTER_PREDICATES: Record<string, (p: PublicProduct) => boolean> = {
   '14K': (p) => p.purityCaratX100 === 1400,
 };
 
+// Token-split a slug for fuzzy matching. "9kt-fine-gold" → ["9kt", "gold"]
+// (the "fine" stop-word and 1-char tokens are dropped). Used to recover
+// when the nav menu still points at an old slug after a category rename:
+// e.g. the admin had a category called "9kt Fine Gold" → /collections/
+// 9kt-fine-gold, then renamed it to "9kt Gold" (slug "9kt-gold"). Exact
+// slug match fails; token overlap rescues it.
+const SLUG_STOP_TOKENS = new Set(['fine', 'pure', 'the', 'and', 'of', 'a']);
+function tokenizeSlug(slug: string): string[] {
+  return slug
+    .toLowerCase()
+    .split(/[-_/\s]+/)
+    .filter((t) => t.length >= 2 && !SLUG_STOP_TOKENS.has(t));
+}
+
 // Apply collection-slug rules to a product list. Real categories match by
 // slugified name (via /website/collections); pseudo-collections (22k, 18k,
 // under-50k, gifting, silver) use intrinsic product fields.
@@ -71,6 +85,12 @@ const FILTER_PREDICATES: Record<string, (p: PublicProduct) => boolean> = {
 // "9kt Fine Gold" → "Rings" and added a product under "Rings" would see an
 // empty page when clicking the "9kt Fine Gold" nav item, because the
 // product's categoryId is the Rings sub-cat id, not the main's.
+//
+// Slug rename recovery: when no category exactly matches the URL slug, we
+// fall back to a token-overlap match — a category whose slug tokens are a
+// subset of the URL slug tokens (after dropping stop-words). The longest
+// match wins. Prevents the storefront from silently showing ALL products
+// when the nav still points at a stale slug.
 function filterBySlug(
   products: PublicProduct[],
   categories: PublicCategory[],
@@ -89,12 +109,30 @@ function filterBySlug(
     case 'gifting':
       return products.filter((p) => priceOf(p) <= 1_00_000_00);
     default: {
-      const cat = categories.find((c) => c.slug === slug);
-      if (!cat) return products;
-      // Pull every category id that should count toward this collection:
-      // the matched category itself + (if it's a main) every sub-category
-      // directly nested under it. We don't recurse deeper than one level
-      // because the Categories UI is purposefully two-tier (Main → Sub).
+      let cat = categories.find((c) => c.slug === slug);
+      // Fuzzy fallback — token overlap, prefer the longest token-match.
+      if (!cat) {
+        const wanted = new Set(tokenizeSlug(slug));
+        let best: PublicCategory | undefined;
+        let bestScore = 0;
+        for (const c of categories) {
+          const tokens = tokenizeSlug(c.slug);
+          if (tokens.length === 0) continue;
+          // Only count a match when every token of the candidate appears in
+          // the URL slug — this keeps "rings" from matching "9kt-fine-gold".
+          const allHit = tokens.every((t) => wanted.has(t));
+          if (allHit && tokens.length > bestScore) {
+            best = c;
+            bestScore = tokens.length;
+          }
+        }
+        cat = best;
+      }
+      // Still nothing — return an empty list rather than every product.
+      // Better UX than silently showing the full catalogue under a wrong
+      // collection heading; the empty-state copy below tells the customer
+      // there's nothing here yet.
+      if (!cat) return [];
       const includedIds = new Set<string>([cat.id]);
       if (!cat.parentId) {
         for (const c of categories) {
@@ -154,16 +192,68 @@ export function CollectionPage(): JSX.Element {
       const haystack = `${p.name.toLowerCase()} ${p.slug.toLowerCase()}`;
       return tokens.every((t) => haystack.includes(t));
     };
-    // For each visible group, the product passes if either nothing is selected
-    // in that group OR at least one selected option's predicate matches.
-    // Options without a registered predicate are treated as no-op (always pass)
-    // so admin can add custom-label options without crashing the page.
+    // Build a label → category-id-set lookup so admin-added filter options
+    // like "Ring", "Bracelet", "Diamond pendant" actually filter. Matching
+    // rules (case-insensitive):
+    //   - exact name or slug match
+    //   - option label is a token of the category name/slug
+    //   - category name/slug is a token of the option label
+    // Main categories also fold in their direct sub-categories so a "Rings"
+    // chip on a parent collection picks up products in any sub.
+    const categoryIdsByOptionLabel = new Map<string, Set<string>>();
+    for (const opt of new Set(
+      visibleGroups.flatMap((g) => g.options),
+    )) {
+      const target = opt.trim().toLowerCase();
+      if (!target) continue;
+      const ids = new Set<string>();
+      for (const c of categories) {
+        const name = c.name.trim().toLowerCase();
+        const cslug = c.slug.toLowerCase();
+        const nameTokens = name.split(/\s+/);
+        const slugTokens = cslug.split(/[-_]/);
+        const hits =
+          name === target ||
+          cslug === target ||
+          nameTokens.includes(target) ||
+          slugTokens.includes(target) ||
+          target.includes(name) ||
+          target.split(/\s+/).some((t) => slugTokens.includes(t)) ||
+          // Treat singular ↔ plural the same so "Ring" matches "Rings".
+          (target.endsWith('s')
+            ? nameTokens.includes(target.slice(0, -1)) || slugTokens.includes(target.slice(0, -1))
+            : nameTokens.includes(`${target}s`) || slugTokens.includes(`${target}s`));
+        if (hits) {
+          ids.add(c.id);
+          // Roll subs into the set so "9kt Gold" chip catches Rings/Bracelets
+          // products under it.
+          if (!c.parentId) {
+            for (const sub of categories) {
+              if (sub.parentId === c.id) ids.add(sub.id);
+            }
+          }
+        }
+      }
+      if (ids.size > 0) categoryIdsByOptionLabel.set(opt, ids);
+    }
+
+    // For each visible group, the product passes if either nothing is
+    // selected in that group OR at least one selected option matches. An
+    // option matches when its hardcoded predicate fires OR its derived
+    // category set contains the product's categoryId. Options that have
+    // neither path stay as no-op so the page still renders if admin types
+    // freeform labels.
     const passGroup = (p: PublicProduct, group: FilterGroup): boolean => {
       const sel = selections[group.key];
       if (!sel || sel.size === 0) return true;
       return Array.from(sel).some((opt) => {
         const pred = FILTER_PREDICATES[opt];
-        return pred ? pred(p) : true;
+        if (pred && pred(p)) return true;
+        const catSet = categoryIdsByOptionLabel.get(opt);
+        if (catSet && catSet.has(p.categoryId)) return true;
+        // Neither path applied → treat as no-op rather than blocking the
+        // whole AND, so an unmapped chip doesn't hide every product.
+        return !pred && !catSet;
       });
     };
     return bySlug.filter(
