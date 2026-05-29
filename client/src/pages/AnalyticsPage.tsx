@@ -15,6 +15,7 @@ import type {
 import * as Dialog from '@radix-ui/react-dialog';
 import { toast } from 'sonner';
 import { MetricCard } from '@/components/ui/MetricCard';
+import { TableToolbar, useTableSearch } from '@/components/data/TableToolbar';
 import { Money, Weight } from '@/components/ui/money';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -593,12 +594,14 @@ function StaffSection(): JSX.Element {
 function TopProductsSection(): JSX.Element {
   const [from, setFrom] = useState(daysAgo(30));
   const [to, setTo] = useState(today());
+  const [search, setSearch] = useState('');
   const { data, isLoading } = useGetTopProductsQuery({
     from: new Date(from).toISOString(),
     to: new Date(`${to}T23:59:59.999Z`).toISOString(),
     limit: 20,
   });
-  const rows = data?.data ?? [];
+  const allRows = data?.data ?? [];
+  const rows = useTableSearch(allRows, (r) => [r.name, r.slug], search);
 
   function handleCsv(): void {
     downloadCsv(`top-products-${from}-to-${to}.csv`, [
@@ -635,6 +638,13 @@ function TopProductsSection(): JSX.Element {
         )}
       </ChartCard>
 
+      <TableToolbar
+        query={search}
+        onQueryChange={setSearch}
+        searchPlaceholder="Search top products by name or slug…"
+        count={rows.length}
+        countLabel={rows.length === 1 ? 'product' : 'products'}
+      />
       <section className="rounded-md border border-ink-100 bg-ink-0 overflow-x-auto">
         <table className="w-full text-sm min-w-[640px]">
           <thead className="text-eyebrow uppercase text-ink-500 bg-ink-25">
@@ -669,8 +679,15 @@ function TopProductsSection(): JSX.Element {
 
 function InventoryValuationSection(): JSX.Element {
   const [shopId, setShopId] = useState<string | undefined>(undefined);
+  const [byProductSearch, setByProductSearch] = useState('');
   const { data, isLoading } = useGetInventoryValuationQuery(shopId ? { shopId } : undefined);
   const rep = data?.data;
+  const allByProduct = rep?.byProduct ?? [];
+  const byProduct = useTableSearch(
+    allByProduct,
+    (p) => [p.productName, p.categoryName, p.metalType],
+    byProductSearch,
+  );
 
   function handleCsv(): void {
     if (!rep) return;
@@ -798,13 +815,22 @@ function InventoryValuationSection(): JSX.Element {
               they have at least one IN_STOCK item. */}
           <InventoryValuationTree tree={rep.categoryTree ?? []} />
 
+          <TableToolbar
+            query={byProductSearch}
+            onQueryChange={setByProductSearch}
+            searchPlaceholder="Search products by name, category or metal…"
+            count={byProduct.length}
+            countLabel={byProduct.length === 1 ? 'product' : 'products'}
+          />
           <section className="rounded-md border border-ink-100 bg-ink-0 overflow-x-auto">
             <header className="px-4 py-3 border-b border-ink-100 flex items-center justify-between">
               <h2 className="text-md font-medium text-ink-900">By product</h2>
-              <p className="text-xs text-ink-500">{rep.byProduct.length} products</p>
+              <p className="text-xs text-ink-500">{byProduct.length} of {allByProduct.length} products</p>
             </header>
-            {rep.byProduct.length === 0 ? (
+            {allByProduct.length === 0 ? (
               <p className="px-4 py-6 text-sm text-ink-500">No in-stock products to value.</p>
+            ) : byProduct.length === 0 ? (
+              <p className="px-4 py-6 text-sm text-ink-500">No products match the search.</p>
             ) : (
               <table className="w-full text-sm min-w-[860px]">
                 <thead className="text-eyebrow uppercase text-ink-500 bg-ink-25">
@@ -819,7 +845,7 @@ function InventoryValuationSection(): JSX.Element {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-ink-100">
-                  {rep.byProduct.map((p) => (
+                  {byProduct.map((p) => (
                     <tr key={p.productKey}>
                       <td className="px-4 py-2 font-medium text-ink-900">{p.productName}</td>
                       <td className="px-4 py-2 text-ink-700">
@@ -1039,12 +1065,18 @@ function InventoryValuationSubRow({ sub }: { sub: InventoryValuationSub }): JSX.
 
 function LowMarginSection(): JSX.Element {
   const [threshold, setThreshold] = useState('8');
+  const [search, setSearch] = useState('');
   const { data, isLoading } = useGetLowMarginQuery({
     thresholdPct: Number(threshold) || 0,
     limit: 100,
   });
   const rep = data?.data;
-  const items = rep?.items ?? [];
+  const allItems = rep?.items ?? [];
+  const items = useTableSearch(
+    allItems,
+    (it) => [it.sku, it.shopName, it.categoryName],
+    search,
+  );
 
   function handleCsv(): void {
     if (!rep) return;
@@ -1099,11 +1131,20 @@ function LowMarginSection(): JSX.Element {
       </section>
 
       {isLoading && <p className="text-sm text-ink-500">Loading…</p>}
-      {rep && items.length === 0 && (
+      {rep && allItems.length === 0 && (
         <div className="rounded-md border border-success-500/40 bg-success-50/40 px-4 py-3 text-sm text-success-700 flex items-center gap-2">
           <CheckCircle2 className="h-4 w-4" />
           No items below {threshold}% margin — healthy stock.
         </div>
+      )}
+      {allItems.length > 0 && (
+        <TableToolbar
+          query={search}
+          onQueryChange={setSearch}
+          searchPlaceholder="Search flagged items by SKU, shop or category…"
+          count={items.length}
+          countLabel={items.length === 1 ? 'item' : 'items'}
+        />
       )}
       {items.length > 0 && (
         <section className="rounded-md border border-warning-500/40 bg-ink-0">

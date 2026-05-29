@@ -20,6 +20,7 @@ import { LEAD_STATUSES, type LeadStatus } from '@goldos/shared/constants';
 import {
   useGetLeadsQuery, useUpdateLeadMutation, useDeleteLeadMutation, useCreateLeadMutation, useSendBroadcastMutation,
 } from '@/features/crm/crmApi';
+import { TableToolbar, useTableSearch } from '@/components/data/TableToolbar';
 import type { Lead } from '@goldos/shared/types';
 import { cn } from '@/lib/cn';
 
@@ -469,8 +470,9 @@ function PipelineView({ leads }: { leads: Lead[] }): JSX.Element {
 // --------------------------------------------------------------------------
 
 function CampaignsView({ leads }: { leads: Lead[] }): JSX.Element {
+  const [search, setSearch] = useState('');
   // Group leads by (utmSource → campaign).
-  const groups = useMemo(() => {
+  const allGroups = useMemo(() => {
     const map = new Map<string, { source: string; campaign: string; leads: Lead[] }>();
     for (const l of leads) {
       const source = l.utmSource ?? l.source ?? 'direct';
@@ -481,6 +483,7 @@ function CampaignsView({ leads }: { leads: Lead[] }): JSX.Element {
     }
     return Array.from(map.values()).sort((a, b) => b.leads.length - a.leads.length);
   }, [leads]);
+  const groups = useTableSearch(allGroups, (g) => [g.source, g.campaign], search);
 
   return (
     <div className="space-y-4 sm:space-y-6">
@@ -511,13 +514,24 @@ function CampaignsView({ leads }: { leads: Lead[] }): JSX.Element {
           </div>
           <Badge tone="neutral">{groups.length} groups</Badge>
         </header>
-        {groups.length === 0 ? (
+        <div className="px-4 pt-3">
+          <TableToolbar
+            query={search}
+            onQueryChange={setSearch}
+            searchPlaceholder="Search campaigns by source or campaign…"
+            count={groups.length}
+            countLabel={groups.length === 1 ? 'group' : 'groups'}
+          />
+        </div>
+        {allGroups.length === 0 ? (
           <EmptyState
             icon={<Megaphone className="h-5 w-5" />}
             title="No campaign attribution yet"
             body="Tag your inbound links with utm_source &amp; utm_campaign and they will appear here."
             inline
           />
+        ) : groups.length === 0 ? (
+          <p className="px-4 py-6 text-sm text-ink-500">No campaigns match the search.</p>
         ) : (
           <div className="overflow-x-auto">
           <table className="w-full text-sm min-w-[640px]">

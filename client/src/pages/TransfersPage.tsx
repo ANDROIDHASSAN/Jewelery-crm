@@ -24,6 +24,7 @@ import { useGetShopsQuery } from '@/features/shops/shopsApi';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { TabStrip, type TabStripItem } from '@/components/ui/TabStrip';
 import { SectionCard } from '@/components/ui/SectionCard';
+import { TableToolbar, useTableSearch } from '@/components/data/TableToolbar';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { EmptyState } from '@/components/ui/EmptyState';
@@ -90,11 +91,25 @@ export function TransfersPage(): JSX.Element {
 function TransferList({ status }: { status?: TransferStatus }): JSX.Element {
   const { data, isLoading } = useGetTransfersQuery(status ? { status } : undefined);
   const { data: shopsRes } = useGetShopsQuery();
+  const [search, setSearch] = useState('');
   const shopName = useMemo(() => {
     const m = new Map<string, string>();
     for (const s of shopsRes?.data ?? []) m.set(s.id, s.name);
     return m;
   }, [shopsRes?.data]);
+
+  const allRows = data?.data ?? [];
+  const rows = useTableSearch(
+    allRows,
+    (t) => [
+      t.fromShop?.name ?? shopName.get(t.fromShopId),
+      t.toShop?.name ?? shopName.get(t.toShopId),
+      t.reason,
+      t.status,
+      t.id,
+    ],
+    search,
+  );
 
   if (isLoading) {
     return (
@@ -104,8 +119,7 @@ function TransferList({ status }: { status?: TransferStatus }): JSX.Element {
     );
   }
 
-  const rows = data?.data ?? [];
-  if (rows.length === 0) {
+  if (allRows.length === 0) {
     return (
       <EmptyState
         eyebrow="Empty"
@@ -116,6 +130,14 @@ function TransferList({ status }: { status?: TransferStatus }): JSX.Element {
   }
 
   return (
+    <>
+    <TableToolbar
+      query={search}
+      onQueryChange={setSearch}
+      searchPlaceholder="Search by from/to shop or reason…"
+      count={rows.length}
+      countLabel={rows.length === 1 ? 'transfer' : 'transfers'}
+    />
     <SectionCard bareBody>
       <div className="overflow-x-auto">
         <table className="w-full text-sm">
@@ -142,6 +164,7 @@ function TransferList({ status }: { status?: TransferStatus }): JSX.Element {
         </table>
       </div>
     </SectionCard>
+    </>
   );
 }
 

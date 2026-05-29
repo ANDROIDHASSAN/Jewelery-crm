@@ -51,6 +51,7 @@ import {
 import { useCreateTransferMutation } from '@/features/transfers/transfersApi';
 import { useGetShopsQuery } from '@/features/shops/shopsApi';
 import { DataTable } from '@/components/data/DataTable';
+import { TableToolbar, useTableSearch } from '@/components/data/TableToolbar';
 import { Button } from '@/components/ui/button';
 import { Money, Weight, Purity } from '@/components/ui/money';
 import { Badge } from '@/components/ui/badge';
@@ -136,6 +137,15 @@ function ItemsTab(): JSX.Element {
   const [addStockOpen, setAddStockOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
   const [distributeOpen, setDistributeOpen] = useState(false);
+  // Local search + filter state. Lives client-side because the items query
+  // already returns up to 100 rows and we sort/filter in-memory elsewhere.
+  // Search drops to free-text on SKU / name / barcode; selects narrow by
+  // shop / category / status / hallmark.
+  const [search, setSearch] = useState('');
+  const [shopFilter, setShopFilter] = useState('');
+  const [categoryFilter, setCategoryFilter] = useState('');
+  const [statusFilter, setStatusFilter] = useState('');
+  const [hallmarkFilter, setHallmarkFilter] = useState('');
 
   const categoryNameById = useMemo(() => {
     const map = new Map<string, string>();
@@ -275,18 +285,26 @@ function ItemsTab(): JSX.Element {
 
       <BulkImportModal open={importOpen} onClose={() => setImportOpen(false)} />
 
-      {isLoading && <TableSkeleton rows={8} columns={8} />}
-      {!isLoading && (!data || data.data.length === 0) && (
-        <EmptyState
-          eyebrow="No items yet"
-          title="Your inventory will appear here."
-          body="Add your first item or bulk-import from Excel. Hallmarking status, weight, purity, and live valuation update automatically."
-          action={<Button onClick={() => setAddOpen(true)}>Add first item</Button>}
-        />
-      )}
-      {data && data.data.length > 0 && (
-        <DataTable columns={columns} data={data.data} onRowClick={(r) => setSelected(r)} />
-      )}
+      <InventoryItemsTable
+        rows={data?.data ?? []}
+        isLoading={isLoading}
+        columns={columns}
+        onRowSelect={setSelected}
+        onAddFirst={() => setAddOpen(true)}
+        search={search}
+        onSearch={setSearch}
+        shopFilter={shopFilter}
+        onShopFilter={setShopFilter}
+        categoryFilter={categoryFilter}
+        onCategoryFilter={setCategoryFilter}
+        statusFilter={statusFilter}
+        onStatusFilter={setStatusFilter}
+        hallmarkFilter={hallmarkFilter}
+        onHallmarkFilter={setHallmarkFilter}
+        shops={shopsRes?.data ?? []}
+        categories={catRes?.data ?? []}
+      />
+
 
       <Sheet open={!!selected} onOpenChange={(o) => !o && setSelected(null)}>
         <SheetContent>
@@ -379,6 +397,135 @@ function ItemsTab(): JSX.Element {
   );
 }
 
+// Items table extracted so the search + filter wiring + DataTable render
+// stay co-located. Keeps ItemsTab readable while adding the new toolbar.
+function InventoryItemsTable({
+  rows,
+  isLoading,
+  columns,
+  onRowSelect,
+  onAddFirst,
+  search,
+  onSearch,
+  shopFilter,
+  onShopFilter,
+  categoryFilter,
+  onCategoryFilter,
+  statusFilter,
+  onStatusFilter,
+  hallmarkFilter,
+  onHallmarkFilter,
+  shops,
+  categories,
+}: {
+  rows: Item[];
+  isLoading: boolean;
+  columns: ColumnDef<Item>[];
+  onRowSelect: (row: Item) => void;
+  onAddFirst: () => void;
+  search: string;
+  onSearch: (next: string) => void;
+  shopFilter: string;
+  onShopFilter: (next: string) => void;
+  categoryFilter: string;
+  onCategoryFilter: (next: string) => void;
+  statusFilter: string;
+  onStatusFilter: (next: string) => void;
+  hallmarkFilter: string;
+  onHallmarkFilter: (next: string) => void;
+  shops: Array<{ id: string; name: string }>;
+  categories: Array<{ id: string; name: string }>;
+}): JSX.Element {
+  // Selects narrow first (fast equality), then free-text search runs over
+  // the smaller pool.
+  const preFiltered = useMemo(() => {
+    return rows.filter((r) => {
+      if (shopFilter && r.shopId !== shopFilter) return false;
+      if (categoryFilter && r.categoryId !== categoryFilter) return false;
+      if (statusFilter && r.status !== statusFilter) return false;
+      if (hallmarkFilter && r.hallmarkStatus !== hallmarkFilter) return false;
+      return true;
+    });
+  }, [rows, shopFilter, categoryFilter, statusFilter, hallmarkFilter]);
+  const filtered = useTableSearch(
+    preFiltered,
+    (r) => [r.sku, r.name, r.barcodeData, r.hallmarkRef],
+    search,
+  );
+
+  if (isLoading) return <TableSkeleton rows={8} columns={8} />;
+  if (rows.length === 0) {
+    return (
+      <EmptyState
+        eyebrow="No items yet"
+        title="Your inventory will appear here."
+        body="Add your first item or bulk-import from Excel. Hallmarking status, weight, purity, and live valuation update automatically."
+        action={<Button onClick={onAddFirst}>Add first item</Button>}
+      />
+    );
+  }
+  return (
+    <>
+      <TableToolbar
+        query={search}
+        onQueryChange={onSearch}
+        searchPlaceholder="Search SKU, name, barcode or HUID…"
+        filters={[
+          {
+            key: 'shop',
+            label: 'Shop',
+            value: shopFilter,
+            onChange: onShopFilter,
+            options: [
+              { value: '', label: 'All shops' },
+              ...shops.map((s) => ({ value: s.id, label: s.name })),
+            ],
+          },
+          {
+            key: 'category',
+            label: 'Category',
+            value: categoryFilter,
+            onChange: onCategoryFilter,
+            options: [
+              { value: '', label: 'All categories' },
+              ...categories.map((c) => ({ value: c.id, label: c.name })),
+            ],
+          },
+          {
+            key: 'status',
+            label: 'Status',
+            value: statusFilter,
+            onChange: onStatusFilter,
+            options: [
+              { value: '', label: 'Any status' },
+              { value: 'IN_STOCK', label: 'In stock' },
+              { value: 'IN_TRANSIT', label: 'In transit' },
+              { value: 'SOLD', label: 'Sold' },
+              { value: 'MELTED', label: 'Melted' },
+            ],
+          },
+          {
+            key: 'hallmark',
+            label: 'Hallmark',
+            value: hallmarkFilter,
+            onChange: onHallmarkFilter,
+            options: [
+              { value: '', label: 'Any hallmark' },
+              { value: 'PENDING', label: 'Pending' },
+              { value: 'SUBMITTED', label: 'Submitted' },
+              { value: 'CERTIFIED', label: 'Certified' },
+              { value: 'EXEMPT', label: 'Exempt' },
+            ],
+          },
+        ]}
+        count={filtered.length}
+        countLabel={filtered.length === 1 ? 'item' : 'items'}
+      />
+      <DataTable columns={columns} data={filtered} onRowClick={onRowSelect} />
+    </>
+  );
+}
+
 function ItemMovementsList({ itemId }: { itemId: string }): JSX.Element {
   const { data } = useGetMovementsQuery({ itemId });
   const movements = data?.data ?? [];
@@ -418,13 +565,28 @@ function MovementsTab({
 }): JSX.Element {
   const { data, isLoading } = useGetMovementsQuery({ type });
   const { data: shopsRes } = useGetShopsQuery();
-  const rows = data?.data ?? [];
+  const [search, setSearch] = useState('');
+  const allRows = data?.data ?? [];
   const shopName = (id: string | null | undefined): string =>
     id ? shopsRes?.data.find((s) => s.id === id)?.name ?? id.slice(-6) : '—';
+  const rows = useTableSearch(
+    allRows,
+    (m) => [m.item?.sku, m.itemId, m.fromShop?.name, m.toShop?.name, m.reason],
+    search,
+  );
   return (
+    <>
+      <TableToolbar
+        query={search}
+        onQueryChange={setSearch}
+        searchPlaceholder="Search by SKU, shop or reason…"
+        count={rows.length}
+        countLabel={rows.length === 1 ? 'movement' : 'movements'}
+      />
     <div className="rounded-md border border-ink-100 bg-ink-0">
       {isLoading && <p className="p-5 text-sm text-ink-500">Loading…</p>}
-      {!isLoading && rows.length === 0 && <p className="p-5 text-sm text-ink-500">{emptyLabel}</p>}
+      {!isLoading && allRows.length === 0 && <p className="p-5 text-sm text-ink-500">{emptyLabel}</p>}
+      {!isLoading && allRows.length > 0 && rows.length === 0 && <p className="p-5 text-sm text-ink-500">No movements match the search.</p>}
       {rows.length > 0 && (
         <div className="overflow-x-auto">
         <table className="w-full text-sm min-w-[680px]">
@@ -460,6 +622,7 @@ function MovementsTab({
         </div>
       )}
     </div>
+    </>
   );
 }
 
@@ -553,8 +716,14 @@ function LowStockTab(): JSX.Element {
   // so the cashier never leaves the Low-stock view to top up a SKU.
   const [editTarget, setEditTarget] = useState<Item | null>(null);
   const [addStockTarget, setAddStockTarget] = useState<Item | null>(null);
+  const [search, setSearch] = useState('');
   const buckets = data?.data?.rows ?? [];
-  const items = data?.data?.items ?? [];
+  const allItems = data?.data?.items ?? [];
+  const items = useTableSearch(
+    allItems,
+    (i) => [i.sku, i.name],
+    search,
+  );
 
   const shopNameById = new Map((shopsRes?.data ?? []).map((s) => [s.id, s.name]));
   const catNameById = new Map((catRes?.data ?? []).map((c) => [c.id, c.name]));
@@ -615,6 +784,13 @@ function LowStockTab(): JSX.Element {
       )}
 
       {/* Product-first restock list */}
+      <TableToolbar
+        query={search}
+        onQueryChange={setSearch}
+        searchPlaceholder="Search restock list by SKU or product name…"
+        count={items.length}
+        countLabel={items.length === 1 ? 'product' : 'products'}
+      />
       <div className="rounded-md border border-ink-100 bg-ink-0">
         <header className="px-5 py-3 border-b border-ink-100 flex items-center justify-between gap-3">
           <div>
@@ -625,10 +801,13 @@ function LowStockTab(): JSX.Element {
           </div>
         </header>
         {isLoading && <p className="p-5 text-sm text-ink-500">Loading…</p>}
-        {!isLoading && items.length === 0 && (
+        {!isLoading && allItems.length === 0 && (
           <p className="p-5 text-sm text-ink-500">
             Every SKU is healthy at or above {threshold} units. Nothing to restock.
           </p>
+        )}
+        {!isLoading && allItems.length > 0 && items.length === 0 && (
+          <p className="p-5 text-sm text-ink-500">No restock items match the search.</p>
         )}
         {items.length > 0 && (
           <div className="overflow-x-auto">
@@ -1140,7 +1319,13 @@ function VendorsTab(): JSX.Element {
   const { data, isLoading } = useGetVendorsQuery();
   const [addOpen, setAddOpen] = useState(false);
   const [deleteVendor] = useDeleteVendorMutation();
-  const rows = data?.data ?? [];
+  const [search, setSearch] = useState('');
+  const allRows = data?.data ?? [];
+  const rows = useTableSearch(
+    allRows,
+    (v) => [v.name, v.phone, v.gstNumber, v.address],
+    search,
+  );
 
   async function handleDelete(id: string, name: string): Promise<void> {
     if (!window.confirm(`Delete vendor "${name}"?`)) return;
@@ -1157,16 +1342,25 @@ function VendorsTab(): JSX.Element {
 
   return (
     <>
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
-        <p className="text-sm text-ink-500">{rows.length} vendor{rows.length === 1 ? '' : 's'}</p>
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-end gap-2 mb-1">
         <Button onClick={() => setAddOpen(true)} className="self-start sm:self-auto">
           <Plus className="h-4 w-4" /> Add vendor
         </Button>
       </div>
+      <TableToolbar
+        query={search}
+        onQueryChange={setSearch}
+        searchPlaceholder="Search vendors by name, phone, GSTIN or address…"
+        count={rows.length}
+        countLabel={rows.length === 1 ? 'vendor' : 'vendors'}
+      />
       <div className="rounded-md border border-ink-100 bg-ink-0">
         {isLoading && <p className="p-5 text-sm text-ink-500">Loading…</p>}
-        {!isLoading && rows.length === 0 && (
+        {!isLoading && allRows.length === 0 && (
           <p className="p-5 text-sm text-ink-500">No vendors yet. Add your first supplier.</p>
+        )}
+        {!isLoading && allRows.length > 0 && rows.length === 0 && (
+          <p className="p-5 text-sm text-ink-500">No vendors match the search.</p>
         )}
         {rows.length > 0 && (
           <div className="overflow-x-auto">
@@ -1225,9 +1419,20 @@ function PurchaseOrdersTab(): JSX.Element {
   // never see this UI. (Previously this used `window.prompt` which is
   // unstylable and a UX dead-end on tablets.)
   const [receiveTargetPo, setReceiveTargetPo] = useState<string | null>(null);
-  const rows = data?.data ?? [];
+  const [search, setSearch] = useState('');
+  const [statusFilter, setStatusFilter] = useState('');
+  const allRows = data?.data ?? [];
   const shops = shopsRes?.data ?? [];
   const cats = catsRes?.data ?? [];
+  const preFiltered = useMemo(
+    () => (statusFilter ? allRows.filter((p) => p.status === statusFilter) : allRows),
+    [allRows, statusFilter],
+  );
+  const rows = useTableSearch(
+    preFiltered,
+    (po) => [po.id, po.vendor?.name, po.status],
+    search,
+  );
 
   async function performReceive(poId: string, shopId: string): Promise<void> {
     try {
@@ -1257,16 +1462,41 @@ function PurchaseOrdersTab(): JSX.Element {
 
   return (
     <>
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
-        <p className="text-sm text-ink-500">{rows.length} PO{rows.length === 1 ? '' : 's'}</p>
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-end gap-2 mb-1">
         <Button onClick={() => setCreateOpen(true)} className="self-start sm:self-auto">
           <Plus className="h-4 w-4" /> Create PO
         </Button>
       </div>
+      <TableToolbar
+        query={search}
+        onQueryChange={setSearch}
+        searchPlaceholder="Search by PO #, vendor or status…"
+        filters={[
+          {
+            key: 'status',
+            label: 'Status',
+            value: statusFilter,
+            onChange: setStatusFilter,
+            options: [
+              { value: '', label: 'Any status' },
+              { value: 'DRAFT', label: 'Draft' },
+              { value: 'PLACED', label: 'Placed' },
+              { value: 'PARTIAL', label: 'Partial' },
+              { value: 'RECEIVED', label: 'Received' },
+              { value: 'CANCELLED', label: 'Cancelled' },
+            ],
+          },
+        ]}
+        count={rows.length}
+        countLabel={rows.length === 1 ? 'PO' : 'POs'}
+      />
       <div className="rounded-md border border-ink-100 bg-ink-0">
         {isLoading && <p className="p-5 text-sm text-ink-500">Loading…</p>}
-        {!isLoading && rows.length === 0 && (
+        {!isLoading && allRows.length === 0 && (
           <p className="p-5 text-sm text-ink-500">No purchase orders yet.</p>
+        )}
+        {!isLoading && allRows.length > 0 && rows.length === 0 && (
+          <p className="p-5 text-sm text-ink-500">No POs match the filters.</p>
         )}
         {rows.length > 0 && (
           <div className="overflow-x-auto">
@@ -1488,11 +1718,69 @@ function MakingChargesTab(): JSX.Element {
 
 function AuditTab(): JSX.Element {
   const { data, isLoading } = useGetAuditLogQuery(undefined, { pollingInterval: 30_000 });
-  const rows = data?.data ?? [];
+  const [search, setSearch] = useState('');
+  const [entityFilter, setEntityFilter] = useState('');
+  const [actionFilter, setActionFilter] = useState('');
+  const allRows = data?.data ?? [];
+  const preFiltered = useMemo(
+    () =>
+      allRows.filter((a) => {
+        if (entityFilter && a.entityType !== entityFilter) return false;
+        if (actionFilter && a.action !== actionFilter) return false;
+        return true;
+      }),
+    [allRows, entityFilter, actionFilter],
+  );
+  const rows = useTableSearch(
+    preFiltered,
+    (a) => [a.entityType, a.entityId, a.action, a.userId],
+    search,
+  );
+  // Unique entity / action sets for the filter selects — driven by data so
+  // new entity types appear automatically.
+  const entityOptions = useMemo(
+    () => Array.from(new Set(allRows.map((a) => a.entityType))).sort(),
+    [allRows],
+  );
+  const actionOptions = useMemo(
+    () => Array.from(new Set(allRows.map((a) => a.action))).sort(),
+    [allRows],
+  );
   return (
+    <>
+      <TableToolbar
+        query={search}
+        onQueryChange={setSearch}
+        searchPlaceholder="Search by entity, ID, action or user…"
+        filters={[
+          {
+            key: 'entity',
+            label: 'Entity',
+            value: entityFilter,
+            onChange: setEntityFilter,
+            options: [
+              { value: '', label: 'All entities' },
+              ...entityOptions.map((e) => ({ value: e, label: e })),
+            ],
+          },
+          {
+            key: 'action',
+            label: 'Action',
+            value: actionFilter,
+            onChange: setActionFilter,
+            options: [
+              { value: '', label: 'All actions' },
+              ...actionOptions.map((a) => ({ value: a, label: a.toLowerCase() })),
+            ],
+          },
+        ]}
+        count={rows.length}
+        countLabel={rows.length === 1 ? 'event' : 'events'}
+      />
     <div className="rounded-md border border-ink-100 bg-ink-0">
       {isLoading && <p className="p-5 text-sm text-ink-500">Loading…</p>}
-      {!isLoading && rows.length === 0 && <p className="p-5 text-sm text-ink-500">No audit events yet.</p>}
+      {!isLoading && allRows.length === 0 && <p className="p-5 text-sm text-ink-500">No audit events yet.</p>}
+      {!isLoading && allRows.length > 0 && rows.length === 0 && <p className="p-5 text-sm text-ink-500">No events match the filters.</p>}
       {rows.length > 0 && (
         <div className="overflow-x-auto">
         <table className="w-full text-sm min-w-[720px]">
@@ -1524,6 +1812,7 @@ function AuditTab(): JSX.Element {
         </div>
       )}
     </div>
+    </>
   );
 }
 

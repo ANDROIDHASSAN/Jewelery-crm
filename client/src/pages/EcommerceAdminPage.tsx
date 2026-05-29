@@ -9,6 +9,7 @@ import { Badge } from '@/components/ui/badge';
 import { Money } from '@/components/ui/money';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { TabStrip, type TabStripItem } from '@/components/ui/TabStrip';
+import { TableToolbar, useTableSearch } from '@/components/data/TableToolbar';
 import { uploadImageToCloudinary, isCloudinaryConfigured, cloudinaryThumb } from '@/lib/cloudinary';
 import {
   useGetOrdersQuery,
@@ -359,7 +360,7 @@ function LiveOrdersBanner({
 }
 
 function ProductsTable({
-  products,
+  products: allProducts,
   loading,
   onEdit,
 }: {
@@ -369,6 +370,22 @@ function ProductsTable({
 }): JSX.Element {
   const [updateProduct] = useUpdateAdminProductMutation();
   const [deleteProduct] = useDeleteAdminProductMutation();
+  const [search, setSearch] = useState('');
+  const [publishFilter, setPublishFilter] = useState('');
+  const preFiltered = useMemo(
+    () =>
+      publishFilter === ''
+        ? allProducts
+        : allProducts.filter((p) =>
+            publishFilter === 'published' ? p.isPublished : !p.isPublished,
+          ),
+    [allProducts, publishFilter],
+  );
+  const products = useTableSearch(
+    preFiltered,
+    (p) => [p.name, p.slug, p.descriptionMd],
+    search,
+  );
 
   async function togglePublish(p: AdminProduct): Promise<void> {
     try {
@@ -390,6 +407,27 @@ function ProductsTable({
   }
 
   return (
+    <>
+    <TableToolbar
+      query={search}
+      onQueryChange={setSearch}
+      searchPlaceholder="Search products by name, slug or description…"
+      filters={[
+        {
+          key: 'publish',
+          label: 'Published',
+          value: publishFilter,
+          onChange: setPublishFilter,
+          options: [
+            { value: '', label: 'All products' },
+            { value: 'published', label: 'Published only' },
+            { value: 'draft', label: 'Drafts only' },
+          ],
+        },
+      ]}
+      count={products.length}
+      countLabel={products.length === 1 ? 'product' : 'products'}
+    />
     <section className="rounded-md border border-ink-100 bg-ink-0 overflow-hidden">
       <div className="overflow-x-auto">
       <table className="w-full text-sm min-w-[800px]">
@@ -458,11 +496,12 @@ function ProductsTable({
       </table>
       </div>
     </section>
+    </>
   );
 }
 
 function OrdersTable({
-  orders,
+  orders: allOrders,
   loading,
   statusFilter,
   onFilter,
@@ -474,6 +513,18 @@ function OrdersTable({
   onFilter: (s: OrderStatus | '') => void;
   onOpen: (o: AdminOrder) => void;
 }): JSX.Element {
+  const [search, setSearch] = useState('');
+  const orders = useTableSearch(
+    allOrders,
+    (o) => [
+      o.id,
+      o.customer?.name,
+      o.customer?.phone,
+      o.paymentMethod,
+      o.status,
+    ],
+    search,
+  );
   const [updateOrder, { isLoading: updating }] = useUpdateOrderMutation();
   // Lifted cancel-reason dialog so the inline status select can fire it when
   // a row is dragged to CANCELLED / RETURNED. The drawer keeps its own dialog
@@ -503,24 +554,33 @@ function OrdersTable({
 
   return (
     <>
+      <TableToolbar
+        query={search}
+        onQueryChange={setSearch}
+        searchPlaceholder="Search orders by ID, customer, phone or payment method…"
+        filters={[
+          {
+            key: 'status',
+            label: 'Status',
+            value: statusFilter,
+            onChange: (v) => onFilter(v as OrderStatus | ''),
+            options: [
+              { value: '', label: 'All statuses' },
+              ...ORDER_STATUSES.map((s) => ({ value: s, label: s })),
+            ],
+          },
+        ]}
+        count={orders.length}
+        countLabel={orders.length === 1 ? 'order' : 'orders'}
+      />
       <section className="rounded-md border border-ink-100 bg-ink-0">
-        <div className="px-4 py-3 border-b border-ink-100 flex items-center justify-between gap-3">
-          <h2 className="text-md font-medium text-ink-900">Orders</h2>
-          <select
-            value={statusFilter}
-            onChange={(e) => onFilter(e.target.value as OrderStatus | '')}
-            className="h-9 text-sm border border-ink-200 rounded-md px-2"
-          >
-            <option value="">All statuses</option>
-            {ORDER_STATUSES.map((s) => (
-              <option key={s} value={s}>{s}</option>
-            ))}
-          </select>
-        </div>
         <ul className="divide-y divide-ink-100 text-sm">
           {loading && <li className="px-4 py-3 text-ink-500">Loading…</li>}
-          {!loading && orders.length === 0 && (
+          {!loading && allOrders.length === 0 && (
             <li className="px-4 py-3 text-ink-500">No orders.</li>
+          )}
+          {!loading && allOrders.length > 0 && orders.length === 0 && (
+            <li className="px-4 py-3 text-ink-500">No orders match the search.</li>
           )}
           {orders.map((o) => (
             <li key={o.id} className="flex items-center gap-3 px-4 py-3 hover:bg-ink-25">
@@ -1702,13 +1762,19 @@ function Row({ label, children }: { label: string; children: React.ReactNode }):
 }
 
 function ReservationsTable({
-  reservations,
+  reservations: allReservations,
   loading,
 }: {
   reservations: AdminOrder[];
   loading: boolean;
 }): JSX.Element {
   const [updateOrder, { isLoading: updating }] = useUpdateOrderMutation();
+  const [search, setSearch] = useState('');
+  const reservations = useTableSearch(
+    allReservations,
+    (o) => [o.id, o.customer?.name, o.customer?.phone, o.status],
+    search,
+  );
 
   async function setStatus(id: string, status: OrderStatus, msg: string): Promise<void> {
     try {
@@ -1720,19 +1786,30 @@ function ReservationsTable({
   }
 
   return (
+    <>
+    <TableToolbar
+      query={search}
+      onQueryChange={setSearch}
+      searchPlaceholder="Search reservations by customer, phone or order ID…"
+      count={reservations.length}
+      countLabel={reservations.length === 1 ? 'reservation' : 'reservations'}
+    />
     <section className="rounded-md border border-ink-100 bg-ink-0">
       <header className="px-4 py-3 border-b border-ink-100">
         <h2 className="text-md font-medium text-ink-900">Storefront reservations</h2>
         <p className="text-xs text-ink-500 mt-0.5">
           Every &ldquo;Reserve at store&rdquo; from the public site lands here in real time.
-          {reservations.length > 0 && ` · ${reservations.length} total`}
+          {allReservations.length > 0 && ` · ${allReservations.length} total`}
         </p>
       </header>
       {loading && <p className="px-4 py-6 text-sm text-ink-500">Loading…</p>}
-      {!loading && reservations.length === 0 && (
+      {!loading && allReservations.length === 0 && (
         <p className="px-4 py-6 text-sm text-ink-500">
           No reservations yet. Place one from <code className="font-mono">/store</code> to see it appear here within 15 seconds.
         </p>
+      )}
+      {!loading && allReservations.length > 0 && reservations.length === 0 && (
+        <p className="px-4 py-6 text-sm text-ink-500">No reservations match the search.</p>
       )}
       {reservations.length > 0 && (
         <div className="overflow-x-auto">
@@ -1819,5 +1896,6 @@ function ReservationsTable({
         </div>
       )}
     </section>
+    </>
   );
 }
