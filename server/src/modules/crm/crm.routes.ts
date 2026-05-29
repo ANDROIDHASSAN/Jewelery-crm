@@ -143,3 +143,20 @@ crmRouter.patch('/leads/:id', requirePermission('crm.write'), async (req, res, n
     next(err);
   }
 });
+
+// Hard-delete a lead and its activity history. Gated by crm.write — anyone
+// who can create / edit leads can also remove them. Lead.activities cascades
+// via the schema's onDelete: Cascade, so we don't need to clean those up by
+// hand. WhatsApp messages linked to the lead are NOT deleted — they're a
+// separate compliance record and stay on the customer's timeline.
+crmRouter.delete('/leads/:id', requirePermission('crm.write'), async (req, res, next) => {
+  try {
+    const id = req.params['id']!;
+    const existing = await prisma.lead.findUnique({ where: { id } });
+    if (!existing) throw new NotFoundError();
+    await prisma.lead.delete({ where: { id } });
+    res.status(204).end();
+  } catch (err) {
+    next(err);
+  }
+});

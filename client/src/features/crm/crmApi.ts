@@ -58,6 +58,29 @@ export const crmApi = baseApi.injectEndpoints({
       query: (body) => ({ url: '/crm/broadcasts', method: 'POST', body }),
       invalidatesTags: [{ type: 'Lead', id: 'LIST' }],
     }),
+    // Hard-delete a lead. The server cascades activities; WhatsApp message
+    // history stays on the customer's timeline so compliance is preserved.
+    // Optimistic remove: drop the row from the LIST cache immediately so the
+    // pipeline column updates without waiting for the server round-trip.
+    deleteLead: b.mutation<void, string>({
+      query: (id) => ({ url: `/crm/leads/${id}`, method: 'DELETE' }),
+      async onQueryStarted(id, { dispatch, queryFulfilled }) {
+        const undo = dispatch(
+          crmApi.util.updateQueryData('getLeads', undefined, (draft) => {
+            draft.data = draft.data.filter((l) => l.id !== id);
+          }),
+        );
+        try {
+          await queryFulfilled;
+        } catch {
+          undo.undo();
+        }
+      },
+      invalidatesTags: (_r, _e, id) => [
+        { type: 'Lead', id },
+        { type: 'Lead', id: 'LIST' },
+      ],
+    }),
   }),
 });
 
@@ -65,5 +88,6 @@ export const {
   useGetLeadsQuery,
   useCreateLeadMutation,
   useUpdateLeadMutation,
+  useDeleteLeadMutation,
   useSendBroadcastMutation,
 } = crmApi;

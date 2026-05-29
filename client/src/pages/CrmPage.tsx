@@ -10,7 +10,7 @@ import { toast } from 'sonner';
 import {
   Inbox, Kanban, Megaphone, Send, BellRing, BarChart3, Plus, X, Phone,
   MessageCircle, Cake, ShieldCheck, Sparkles, Users, Tag, Hash, Repeat,
-  ArrowUpRight, CheckCircle2, AlertTriangle, Calendar, ChevronRight, Search,
+  ArrowUpRight, CheckCircle2, AlertTriangle, Calendar, ChevronRight, Search, Trash2,
 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -18,7 +18,7 @@ import { PageHeader } from '@/components/ui/PageHeader';
 import { TabStrip, type TabStripItem } from '@/components/ui/TabStrip';
 import { LEAD_STATUSES, type LeadStatus } from '@goldos/shared/constants';
 import {
-  useGetLeadsQuery, useUpdateLeadMutation, useCreateLeadMutation, useSendBroadcastMutation,
+  useGetLeadsQuery, useUpdateLeadMutation, useDeleteLeadMutation, useCreateLeadMutation, useSendBroadcastMutation,
 } from '@/features/crm/crmApi';
 import type { Lead } from '@goldos/shared/types';
 import { cn } from '@/lib/cn';
@@ -153,10 +153,34 @@ function CapabilityStrip(): JSX.Element {
 // Tab 1: Unified Inbox — chronological, with channel chips & quick actions.
 // --------------------------------------------------------------------------
 
+// Shared confirm + delete handler reused by InboxView and PipelineView so
+// the "are you sure?" copy and toast wording stay consistent across both
+// surfaces. Returns a curried function that takes a Lead.
+function useDeleteLeadAction(): (lead: Lead) => Promise<void> {
+  const [deleteLead] = useDeleteLeadMutation();
+  return async (lead: Lead) => {
+    if (
+      !window.confirm(
+        `Delete lead "${lead.name}"?\n\nActivities tied to this lead are removed. WhatsApp message history stays on the customer's timeline.`,
+      )
+    ) {
+      return;
+    }
+    try {
+      await deleteLead(lead.id).unwrap();
+      toast.success(`Deleted lead ${lead.name}`);
+    } catch (err) {
+      const e = err as { data?: { error?: { message?: string } } };
+      toast.error(e?.data?.error?.message ?? `Could not delete ${lead.name}`);
+    }
+  };
+}
+
 function InboxView({ leads }: { leads: Lead[] }): JSX.Element {
   const [q, setQ] = useState('');
   const [channel, setChannel] = useState<string>('');
   const [updateLead] = useUpdateLeadMutation();
+  const deleteLead = useDeleteLeadAction();
 
   const filtered = useMemo(() => {
     return leads.filter((l) => {
@@ -261,6 +285,17 @@ function InboxView({ leads }: { leads: Lead[] }): JSX.Element {
                           Move to {NEXT_STATUS[l.status]!.toLowerCase()} <ArrowUpRight className="h-3.5 w-3.5" />
                         </button>
                       )}
+                      <button
+                        type="button"
+                        onClick={() => void deleteLead(l)}
+                        className={cn(
+                          'text-xs text-ink-500 hover:text-danger-700 inline-flex items-center gap-1',
+                          !NEXT_STATUS[l.status] && 'ml-auto',
+                        )}
+                        title="Delete lead"
+                      >
+                        <Trash2 className="h-3.5 w-3.5" /> Delete
+                      </button>
                     </div>
                   </div>
                 </div>
@@ -295,6 +330,7 @@ function ChannelButton({ label, count, active, onClick }: { label: string; count
 
 function PipelineView({ leads }: { leads: Lead[] }): JSX.Element {
   const [updateLead] = useUpdateLeadMutation();
+  const deleteLead = useDeleteLeadAction();
   // Track the dragging lead and the currently hovered drop column for visual
   // feedback. Native HTML5 drag-and-drop — zero deps, works in every modern
   // desktop browser. Touch is handled by the explicit "→ next" button per card.
@@ -373,7 +409,7 @@ function PipelineView({ leads }: { leads: Lead[] }): JSX.Element {
                       onDragStart={(e) => onCardDragStart(e, l)}
                       onDragEnd={() => { setDragId(null); setOverStatus(null); }}
                       className={cn(
-                        'rounded-md border bg-ink-0 p-2.5 select-none cursor-grab active:cursor-grabbing transition-all',
+                        'group rounded-md border bg-ink-0 p-2.5 select-none cursor-grab active:cursor-grabbing transition-all',
                         'hover:border-brand-400 hover:shadow-sm',
                         isDragging && 'opacity-40 scale-[0.98] border-brand-400',
                       )}
@@ -384,6 +420,24 @@ function PipelineView({ leads }: { leads: Lead[] }): JSX.Element {
                           <p className="text-sm font-medium text-ink-800 truncate">{l.name}</p>
                           <p className="text-xs text-ink-500 font-mono truncate">{l.phone}</p>
                         </div>
+                        {/* draggable=false stops HTML5 DnD intercepting the
+                            click; without it the trash icon was sometimes
+                            grabbed as a drag handle and the confirm dialog
+                            never opened. */}
+                        <button
+                          type="button"
+                          draggable={false}
+                          onPointerDown={(e) => e.stopPropagation()}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            void deleteLead(l);
+                          }}
+                          className="opacity-0 group-hover:opacity-100 transition-opacity h-6 w-6 inline-flex items-center justify-center rounded text-ink-400 hover:text-danger-700 hover:bg-danger-50"
+                          aria-label={`Delete ${l.name}`}
+                          title="Delete lead"
+                        >
+                          <Trash2 className="h-3 w-3" />
+                        </button>
                       </div>
                       {l.interest && <p className="text-xs text-ink-600 mt-1.5 line-clamp-2">{l.interest}</p>}
                       <div className="flex items-center gap-1 mt-1.5">
