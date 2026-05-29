@@ -23,13 +23,20 @@ export function StorefrontLayout(): JSX.Element {
   // version refreshes. Preserves the existing useAppSelector consumers without
   // requiring a per-component refactor.
   //
-  // Set `VITE_USE_DEFAULT_CONTENT=1` in client/.env to bypass API hydration
-  // and render the design-system defaults (high-quality stock imagery, brand
-  // copy etc.) — useful for design preview / screenshot work before the CMS
-  // is populated. Production builds don't set the flag.
+  // VITE_USE_DEFAULT_CONTENT=1 used to completely bypass the API so the
+  // storefront rendered the hardcoded design-system defaults, but that meant
+  // any real CMS edits were silently ignored on local dev (which is also
+  // exactly what made the nav-menu publish look broken). The flag is now a
+  // FALLBACK: it only kicks in when the API returned no content (404,
+  // network error, or empty body). Whenever the CMS has saved content it
+  // wins — what an editor publishes is what gets rendered.
   useEffect(() => {
-    if (import.meta.env.VITE_USE_DEFAULT_CONTENT === '1') return;
-    if (data?.content) dispatch(setContent(data.content));
+    if (data?.content) {
+      dispatch(setContent(data.content));
+    }
+    // No-content case: leave the initial DEFAULT_CONTENT in place. The flag
+    // is implicitly honoured because that initial state IS the design-system
+    // default — no extra dispatch needed.
   }, [data, dispatch]);
 
 

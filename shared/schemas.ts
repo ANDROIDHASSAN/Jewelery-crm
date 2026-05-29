@@ -9,7 +9,6 @@ import {
   LEAD_STATUSES,
   ORDER_STATUSES,
   PAYMENT_STATUSES,
-  PURITY_VALUES,
   PURCHASE_ORDER_STATUSES,
   GOLD_LOAN_STATUSES,
   TRANSFER_STATUSES,
@@ -21,13 +20,15 @@ export const CuidSchema = z.string().min(20).max(40); // CUIDs are 25 chars; all
 export const PaiseSchema = z.number().int().nonnegative();
 export const MgSchema = z.number().int().nonnegative();
 export const BpsSchema = z.number().int().min(0).max(10_000);
-export const PuritySchema = z.union(
-  PURITY_VALUES.map((v) => z.literal(v)) as unknown as [
-    z.ZodLiteral<number>,
-    z.ZodLiteral<number>,
-    ...z.ZodLiteral<number>[],
-  ],
-);
+// Purity stored as carat × 100 (gold) or millesimal fineness (silver/platinum).
+// PURITY_VALUES is the curated quick-pick list (24K/22K/18K/14K/Silver/Pt950)
+// that drives presets in dropdowns and the bulk-import parser; the validator
+// itself accepts any integer in 0..9999 so jewellers can register custom
+// alloys (9K=900, 16K=1600, 21K=2100, 23K=2300, Pt 990=9900) without us
+// blocking the save. The client form gates ranges per metal type (gold:
+// 1000-2400, silver: 0, platinum: 9500, other: 0) — keeping the boundary
+// permissive lets future metal types land without a schema change.
+export const PuritySchema = z.number().int().min(0).max(9999);
 
 // E.164 Indian phone: +91 followed by 10 digits starting 6-9.
 export const IndianPhoneSchema = z

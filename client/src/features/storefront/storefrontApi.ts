@@ -42,6 +42,8 @@ export interface PublicCategory {
   id: string;
   name: string;
   slug: string;
+  /** parent category id when this is a sub-category, null for main categories. */
+  parentId: string | null;
 }
 
 export interface PublicGoldRate {

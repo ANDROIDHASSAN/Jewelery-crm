@@ -64,6 +64,13 @@ const FILTER_PREDICATES: Record<string, (p: PublicProduct) => boolean> = {
 // Apply collection-slug rules to a product list. Real categories match by
 // slugified name (via /website/collections); pseudo-collections (22k, 18k,
 // under-50k, gifting, silver) use intrinsic product fields.
+//
+// Main-category rollup: when the slug points to a top-level category
+// (parentId === null), products tagged to either that main OR any of its
+// sub-categories are included. Without this, an admin who created
+// "9kt Fine Gold" → "Rings" and added a product under "Rings" would see an
+// empty page when clicking the "9kt Fine Gold" nav item, because the
+// product's categoryId is the Rings sub-cat id, not the main's.
 function filterBySlug(
   products: PublicProduct[],
   categories: PublicCategory[],
@@ -84,14 +91,23 @@ function filterBySlug(
     default: {
       const cat = categories.find((c) => c.slug === slug);
       if (!cat) return products;
-      return products.filter((p) => p.categoryId === cat.id);
+      // Pull every category id that should count toward this collection:
+      // the matched category itself + (if it's a main) every sub-category
+      // directly nested under it. We don't recurse deeper than one level
+      // because the Categories UI is purposefully two-tier (Main → Sub).
+      const includedIds = new Set<string>([cat.id]);
+      if (!cat.parentId) {
+        for (const c of categories) {
+          if (c.parentId === cat.id) includedIds.add(c.id);
+        }
+      }
+      return products.filter((p) => includedIds.has(p.categoryId));
     }
   }
 }
 
 export function CollectionPage(): JSX.Element {
   const { slug } = useParams();
-  const meta = slug ? TITLES[slug] ?? { title: slug, subtitle: '' } : { title: 'All collections', subtitle: 'Every piece in our catalogue, ready to view.' };
 
   const [sort, setSort] = useState<Sort>('Featured');
   const [sortOpen, setSortOpen] = useState(false);
@@ -103,6 +119,18 @@ export function CollectionPage(): JSX.Element {
 
   const { data: products = [], isLoading: productsLoading } = useGetPublicProductsQuery();
   const { data: categories = [] } = useGetPublicCollectionsQuery();
+
+  // Title resolution order:
+  //   1. Hardcoded TITLES entry (legacy pseudo-collections + curated copy)
+  //   2. Live category name from /website/collections — picks up admin-
+  //      added main categories like "9kt Fine Gold" automatically.
+  //   3. The raw slug as a last resort so the header never renders blank.
+  const meta = !slug
+    ? { title: 'All collections', subtitle: 'Every piece in our catalogue, ready to view.' }
+    : TITLES[slug] ?? {
+        title: categories.find((c) => c.slug === slug)?.name ?? slug,
+        subtitle: '',
+      };
 
   // Pull filter config from the CMS. Per-collection override > defaults.
   const filtersConfig = useAppSelector((s) => s.storefrontContent.filters);

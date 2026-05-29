@@ -1648,13 +1648,13 @@ function AddItemDialog({ open, onClose }: { open: boolean; onClose: () => void }
       quantityOnHand = parsed;
     }
 
-    // Validate purity per metal type. Gold now accepts any carat in the
-    // 10K–24K window so jewellers can register non-standard alloys (9K,
-    // 16K, 21K, 23K) without us blocking the save. Silver / Platinum /
-    // Other still require their canonical values.
+    // Validate purity per metal type. Gold accepts any carat from 0 up to
+    // 24K — covers every alloy a jeweller might stock (9K rolled gold,
+    // 16K, 21K, 23K), low-K novelty pieces, and pure 24K bullion. Silver /
+    // Platinum / Other still require their canonical values.
     if (metalType === 'GOLD') {
-      if (purityCaratX100 < 1000 || purityCaratX100 > 2400) {
-        return void toast.error('Purity must be between 10K and 24K for Gold');
+      if (purityCaratX100 < 0 || purityCaratX100 > 2400) {
+        return void toast.error('Purity must be between 0K and 24K for Gold');
       }
     } else if (metalType === 'SILVER') {
       if (purityCaratX100 !== 0) return void toast.error('Purity must be Silver (0) for Silver category');
@@ -2161,8 +2161,8 @@ function EditItemDialog({
     const costPricePaise = Math.round(parseFloat(form.costPriceRupees) * 100);
     if (!form.name.trim()) return void toast.error('Item name is required');
     if (!Number.isFinite(weightMg) || weightMg <= 0) return void toast.error('Weight must be > 0');
-    if (metalType === 'GOLD' && (purityCaratX100 < 1000 || purityCaratX100 > 2400)) {
-      return void toast.error('Purity must be between 10K and 24K for Gold');
+    if (metalType === 'GOLD' && (purityCaratX100 < 0 || purityCaratX100 > 2400)) {
+      return void toast.error('Purity must be between 0K and 24K for Gold');
     }
     if (!Number.isFinite(costPricePaise) || costPricePaise <= 0) {
       return void toast.error('Cost price must be > 0');
@@ -3074,14 +3074,14 @@ function PurityPicker({
           <input
             type="number"
             step="0.5"
-            min={10}
+            min={0}
             max={24}
             value={value}
             onChange={(e) => onChange(e.target.value)}
-            placeholder="e.g. 21"
+            placeholder="e.g. 9"
             className={`${fieldCls} flex-1`}
           />
-          <span className="text-xs text-ink-500 whitespace-nowrap">K (10–24)</span>
+          <span className="text-xs text-ink-500 whitespace-nowrap">K (0–24)</span>
         </div>
       )}
     </div>
@@ -3165,7 +3165,10 @@ function DistributeStockDialog({
   const [toShopId, setToShopId] = useState('');
   const [search, setSearch] = useState('');
   const [selectedCatId, setSelectedCatId] = useState<string>('ALL');
-  const [selectedIds, setSelectedIds] = useState<Record<string, boolean>>({});
+  // Per-item quantity to transfer. Missing key OR value <= 0 = not selected.
+  // For serialized rows the value is always 1 (UI locks the input). For lot
+  // rows it's whatever the admin typed, capped at the source's quantityOnHand.
+  const [selectedQty, setSelectedQty] = useState<Record<string, number>>({});
   const [reason, setReason] = useState('Bulk stock distribution from warehouse');
   const [distributing, setDistributing] = useState(false);
 
@@ -3220,43 +3223,96 @@ function DistributeStockDialog({
 
   // Clear selections when source shop changes
   useEffect(() => {
-    setSelectedIds({});
+    setSelectedQty({});
   }, [sourceShopId]);
 
+  // Toggling a row: if currently unselected, default to qty=1 for serialized
+  // rows and qty=quantityOnHand for lot rows (operators typically want to
+  // ship the whole bin); if selected, clear it.
   const toggleSelect = (id: string) => {
-    setSelectedIds((prev) => ({ ...prev, [id]: !prev[id] }));
+    setSelectedQty((prev) => {
+      if (prev[id] && prev[id]! > 0) {
+        const next = { ...prev };
+        delete next[id];
+        return next;
+      }
+      const it = sourceItems.find((x) => x.id === id);
+      const defaultQty = it && it.isSerialized === false
+        ? Math.max(1, it.quantityOnHand ?? 1)
+        : 1;
+      return { ...prev, [id]: defaultQty };
+    });
   };
 
-  const selectedCount = Object.values(selectedIds).filter(Boolean).length;
+  // Update the qty input for a lot row. Clamped 0..quantityOnHand at the
+  // input layer; 0 removes the row from the selection.
+  const setRowQty = (id: string, raw: number, max: number) => {
+    const v = Math.max(0, Math.min(Math.floor(raw) || 0, max));
+    setSelectedQty((prev) => {
+      const next = { ...prev };
+      if (v <= 0) delete next[id];
+      else next[id] = v;
+      return next;
+    });
+  };
+
+  const selectedCount = Object.values(selectedQty).filter((q) => q > 0).length;
+  const selectedUnits = Object.values(selectedQty).reduce((sum, q) => sum + (q > 0 ? q : 0), 0);
 
   const toggleSelectAll = () => {
-    const allActiveSelected = filteredItems.length > 0 && filteredItems.every((i) => selectedIds[i.id]);
-    const next: Record<string, boolean> = { ...selectedIds };
-    for (const i of filteredItems) {
-      next[i.id] = !allActiveSelected;
-    }
-    setSelectedIds(next);
+    const allActiveSelected =
+      filteredItems.length > 0 && filteredItems.every((i) => (selectedQty[i.id] ?? 0) > 0);
+    setSelectedQty((prev) => {
+      const next: Record<string, number> = { ...prev };
+      for (const i of filteredItems) {
+        if (allActiveSelected) {
+          delete next[i.id];
+        } else {
+          const def = i.isSerialized === false
+            ? Math.max(1, i.quantityOnHand ?? 1)
+            : 1;
+          next[i.id] = def;
+        }
+      }
+      return next;
+    });
   };
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
-    const ids = Object.keys(selectedIds).filter((id) => selectedIds[id]);
-    if (ids.length === 0) return void toast.error('Select at least one item to distribute');
+    // Build the per-line payload. Skip rows whose qty was zeroed; clamp lot
+    // qty defensively in case the source's stock was decremented between
+    // open and submit (UI input already caps, but a race could slip past).
+    const lines: Array<{ itemId: string; quantity: number }> = [];
+    for (const it of sourceItems) {
+      const qty = selectedQty[it.id] ?? 0;
+      if (qty <= 0) continue;
+      const onHand = it.isSerialized === false ? Math.max(1, it.quantityOnHand ?? 1) : 1;
+      const finalQty = it.isSerialized === false ? Math.min(qty, onHand) : 1;
+      lines.push({ itemId: it.id, quantity: finalQty });
+    }
+    if (lines.length === 0) return void toast.error('Select at least one item to distribute');
     if (!toShopId) return void toast.error('Pick a destination shop');
     if (!reason.trim()) return void toast.error('Reason is required');
 
+    const totalUnits = lines.reduce((s, l) => s + l.quantity, 0);
     setDistributing(true);
-    const toastId = toast.loading(`Submitting transfer for ${ids.length} item(s)…`);
+    const toastId = toast.loading(
+      `Submitting transfer for ${totalUnits} unit${totalUnits === 1 ? '' : 's'}…`,
+    );
 
     try {
       await createTransfer({
         fromShopId: sourceShopId,
         toShopId,
-        itemIds: ids,
+        lines,
         reason: reason.trim(),
       }).unwrap();
-      toast.success(`Transfer requested for ${ids.length} item(s) — awaiting approval`, { id: toastId });
-      setSelectedIds({});
+      toast.success(
+        `Transfer requested for ${totalUnits} unit${totalUnits === 1 ? '' : 's'} across ${lines.length} SKU${lines.length === 1 ? '' : 's'} — awaiting approval`,
+        { id: toastId },
+      );
+      setSelectedQty({});
       onClose();
     } catch (err) {
       const message =
@@ -3343,7 +3399,10 @@ function DistributeStockDialog({
                         <th className="p-2 w-10">
                           <input
                             type="checkbox"
-                            checked={filteredItems.length > 0 && filteredItems.every((i) => selectedIds[i.id])}
+                            checked={
+                              filteredItems.length > 0 &&
+                              filteredItems.every((i) => (selectedQty[i.id] ?? 0) > 0)
+                            }
                             onChange={toggleSelectAll}
                             aria-label="Select all"
                           />
@@ -3351,31 +3410,71 @@ function DistributeStockDialog({
                         <th className="p-2">SKU / Name</th>
                         <th className="p-2">Category</th>
                         <th className="p-2 text-right">Weight</th>
+                        <th className="p-2 text-right">On hand</th>
+                        <th className="p-2 text-right">Qty to send</th>
                       </tr>
                     </thead>
                     <tbody>
-                      {filteredItems.map((it) => (
-                        <tr key={it.id} className="border-b border-ink-100 hover:bg-ink-50">
-                          <td className="p-2">
-                            <input
-                              type="checkbox"
-                              checked={!!selectedIds[it.id]}
-                              onChange={() => toggleSelect(it.id)}
-                              aria-label={`Select ${it.sku}`}
-                            />
-                          </td>
-                          <td className="p-2">
-                            <p className="font-semibold text-ink-900">{it.sku}</p>
-                            {it.name && <p className="text-[10px] text-ink-500 truncate max-w-[200px]">{it.name}</p>}
-                          </td>
-                          <td className="p-2 text-ink-600">
-                            {categories.find((c) => c.id === it.categoryId)?.name ?? '—'}
-                          </td>
-                          <td className="p-2 text-right font-mono">
-                            {(it.weightMg / 1000).toFixed(3)}g
-                          </td>
-                        </tr>
-                      ))}
+                      {filteredItems.map((it) => {
+                        const isLot = it.isSerialized === false;
+                        const onHand = isLot ? Math.max(1, it.quantityOnHand ?? 1) : 1;
+                        const sendQty = selectedQty[it.id] ?? 0;
+                        const isSelected = sendQty > 0;
+                        return (
+                          <tr key={it.id} className="border-b border-ink-100 hover:bg-ink-50">
+                            <td className="p-2">
+                              <input
+                                type="checkbox"
+                                checked={isSelected}
+                                onChange={() => toggleSelect(it.id)}
+                                aria-label={`Select ${it.sku}`}
+                              />
+                            </td>
+                            <td className="p-2">
+                              <div className="flex items-center gap-1.5">
+                                <p className="font-semibold text-ink-900">{it.sku}</p>
+                                <Badge tone={isLot ? 'info' : 'neutral'} className="text-[9px]">
+                                  {isLot ? 'LOT' : 'UNIQUE'}
+                                </Badge>
+                              </div>
+                              {it.name && (
+                                <p className="text-[10px] text-ink-500 truncate max-w-[200px]">
+                                  {it.name}
+                                </p>
+                              )}
+                            </td>
+                            <td className="p-2 text-ink-600">
+                              {categories.find((c) => c.id === it.categoryId)?.name ?? '—'}
+                            </td>
+                            <td className="p-2 text-right font-mono">
+                              {(it.weightMg / 1000).toFixed(3)}g
+                            </td>
+                            <td className="p-2 text-right font-mono tabular-nums text-ink-700">
+                              {onHand}
+                            </td>
+                            <td className="p-2 text-right">
+                              {isLot ? (
+                                <input
+                                  type="number"
+                                  min={0}
+                                  max={onHand}
+                                  step={1}
+                                  value={sendQty || ''}
+                                  onChange={(e) =>
+                                    setRowQty(it.id, Number(e.target.value), onHand)
+                                  }
+                                  placeholder="0"
+                                  className="h-7 w-16 px-1.5 rounded border border-ink-200 bg-ink-0 text-xs text-right font-mono tabular-nums focus:outline-none focus:border-brand-500"
+                                />
+                              ) : (
+                                <span className="font-mono tabular-nums text-ink-500">
+                                  {isSelected ? 1 : '—'}
+                                </span>
+                              )}
+                            </td>
+                          </tr>
+                        );
+                      })}
                     </tbody>
                   </table>
                 )}
@@ -3393,7 +3492,8 @@ function DistributeStockDialog({
 
             <div className="flex gap-2 pt-2 border-t border-ink-100 mt-4">
               <span className="text-xs text-ink-500 flex-1 flex items-center">
-                {selectedCount} item(s) selected
+                {selectedCount} SKU{selectedCount === 1 ? '' : 's'} ·{' '}
+                {selectedUnits} unit{selectedUnits === 1 ? '' : 's'} to transfer
               </span>
               <Button variant="outline" type="button" onClick={onClose} disabled={distributing}>
                 Cancel

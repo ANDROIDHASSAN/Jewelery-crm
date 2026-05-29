@@ -1139,13 +1139,27 @@ websiteRouter.post('/customers/identify', async (req, res, next) => {
     // customer row in one go. Wrap in runWithTenant so the Prisma extension
     // injects tenantId on the customer create.
     const result = await runWithTenant({ tenantId }, async () => {
-      const existing = await rawPrisma.customer.findFirst({
+      // The previous findFirst → create flow had a race: two concurrent
+      // identify requests (very common — clicking "Buy now" twice, or the
+      // browser retrying a slow request) both saw existing == null and then
+      // both tried create(), one of which 500'd with a P2002 unique
+      // constraint violation on (tenantId, phone). Using upsert with the
+      // composite unique key (tenantId, phone) collapses both calls into
+      // one row at the DB layer — no race window.
+      //
+      // The trade-off: upsert always runs the update branch even when the
+      // row already had non-placeholder profile data, so we have to look
+      // before deciding what to update. The findFirst probe is still
+      // needed for that, but we wrap the actual write in a try/catch that
+      // re-resolves the existing row on P2002 (concurrent writer beat us
+      // to the insert).
+      const preExisting = await rawPrisma.customer.findFirst({
         where: { tenantId, phone: body.phone },
       });
       // NB: the Customer model intentionally stores no email — admin POS
       // bills use phone as the canonical contact. Email coming in on the
       // identify payload is kept client-side only (shopSlice.account.email).
-      const isNew = !existing;
+      const isNew = !preExisting;
       const intentMeta = deriveLeadIntent(body.intent);
       // Build the tag list for new signups: Storefront source + warmth tag
       // from intent + optional Pin:<6-digit> so the admin CRM can filter by
@@ -1153,29 +1167,32 @@ websiteRouter.post('/customers/identify', async (req, res, next) => {
       const newCustomerTags = ['Storefront', intentMeta.warmthTag];
       if (body.pincode) newCustomerTags.push(`Pin:${body.pincode}`);
 
-      const customer = existing
-        ? // Existing customer — patch any missing profile fields the visitor
-          // just supplied (dob/anniversary), but never overwrite values the
-          // admin has already set. Name only gets touched if the existing one
-          // is the placeholder "Customer".
-          await rawPrisma.customer.update({
-            where: { id: existing.id },
-            data: {
-              name:
-                existing.name && existing.name !== 'Customer'
-                  ? existing.name
-                  : body.name ?? existing.name,
-              dob: existing.dob ?? (body.dob ? new Date(body.dob) : null),
-              anniversary:
-                existing.anniversary ?? (body.anniversary ? new Date(body.anniversary) : null),
-              // Append Pin:<code> tag if missing — non-destructive.
-              tags:
-                body.pincode && !existing.tags.includes(`Pin:${body.pincode}`)
-                  ? [...existing.tags, `Pin:${body.pincode}`]
-                  : existing.tags,
-            },
-          })
-        : await rawPrisma.customer.create({
+      let customer: NonNullable<typeof preExisting>;
+      if (preExisting) {
+        // Existing customer — patch any missing profile fields the visitor
+        // just supplied (dob/anniversary), but never overwrite values the
+        // admin has already set. Name only gets touched if the existing one
+        // is the placeholder "Customer".
+        customer = await rawPrisma.customer.update({
+          where: { id: preExisting.id },
+          data: {
+            name:
+              preExisting.name && preExisting.name !== 'Customer'
+                ? preExisting.name
+                : body.name ?? preExisting.name,
+            dob: preExisting.dob ?? (body.dob ? new Date(body.dob) : null),
+            anniversary:
+              preExisting.anniversary ?? (body.anniversary ? new Date(body.anniversary) : null),
+            // Append Pin:<code> tag if missing — non-destructive.
+            tags:
+              body.pincode && !preExisting.tags.includes(`Pin:${body.pincode}`)
+                ? [...preExisting.tags, `Pin:${body.pincode}`]
+                : preExisting.tags,
+          },
+        });
+      } else {
+        try {
+          customer = await rawPrisma.customer.create({
             data: {
               tenantId,
               name: body.name ?? 'Customer',
@@ -1185,6 +1202,22 @@ websiteRouter.post('/customers/identify', async (req, res, next) => {
               tags: newCustomerTags,
             },
           });
+        } catch (err) {
+          // P2002 = unique constraint on (tenantId, phone). Lost the race
+          // with another concurrent identify call. Re-fetch the winner's
+          // row and continue as if we found it on the first pass.
+          const code = (err as { code?: string }).code;
+          if (code === 'P2002') {
+            const winner = await rawPrisma.customer.findFirst({
+              where: { tenantId, phone: body.phone },
+            });
+            if (!winner) throw err; // can't happen but keeps TS happy
+            customer = winner;
+          } else {
+            throw err;
+          }
+        }
+      }
 
       // Lead creation rules:
       //   • New customer → always create a Lead so the sales team gets a fresh
