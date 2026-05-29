@@ -485,15 +485,24 @@ analyticsRouter.get('/inventory-valuation', async (req, res, next) => {
         costPaise: s.costPaise + costTotal,
         marketPaise: s.marketPaise + marketTotal,
       });
-      const c = byCategory.get(it.category.id) ?? {
+      // Roll sub-categories under their main so the "By category" surface
+      // shows one row per top-level category, not one per leaf. Avoids the
+      // duplicate-category problem the donut + table both had before, where
+      // "Rings (gold)" + "Rings (silver)" + their parent "9kt Fine Gold"
+      // all rendered as separate slices. Items tagged directly to a main
+      // (parent === null branch) stay keyed by their own id.
+      const byCatMainId = it.category.parent?.id ?? it.category.id;
+      const byCatMainName = it.category.parent?.name ?? it.category.name;
+      const byCatMainMetal = it.category.parent?.metalType ?? it.category.metalType;
+      const c = byCategory.get(byCatMainId) ?? {
         count: 0,
         weightMg: 0,
         costPaise: 0,
         marketPaise: 0,
-        categoryName: it.category.name,
-        metalType: it.category.metalType,
+        categoryName: byCatMainName,
+        metalType: byCatMainMetal,
       };
-      byCategory.set(it.category.id, {
+      byCategory.set(byCatMainId, {
         ...c,
         count: c.count + units,
         weightMg: c.weightMg + weightTotal,

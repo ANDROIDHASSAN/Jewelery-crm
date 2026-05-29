@@ -30,9 +30,15 @@ function priceOf(p: PublicProduct): number {
   return p.basePricePaise + p.stoneChargePaise;
 }
 
+// 0 = silver (the canonical "no carat info" value); 9500 = Pt 950; any
+// value 1..2400 is a gold carat × 100 (including custom alloys like 9K =
+// 900). Previously every value < 1000 collapsed to "Silver", so a 9K
+// gold Rose Ring rendered as "Silver hallmarked" on the storefront.
 function purityLabel(p: PublicProduct): string {
-  if (p.purityCaratX100 < 1000) return 'Silver';
-  return `${p.purityCaratX100 / 100}K`;
+  if (p.purityCaratX100 === 0) return 'Silver';
+  if (p.purityCaratX100 === 9500) return 'Pt 950';
+  const k = p.purityCaratX100 / 100;
+  return `${Number.isInteger(k) ? k.toFixed(0) : k.toFixed(1)}K`;
 }
 
 // Predicate registry — keyed by the option label inside each FilterGroup
@@ -44,7 +50,7 @@ const FILTER_PREDICATES: Record<string, (p: PublicProduct) => boolean> = {
   // metal
   '22K Gold': (p) => p.purityCaratX100 === 2200,
   '18K Gold': (p) => p.purityCaratX100 === 1800,
-  Silver: (p) => p.purityCaratX100 < 1000,
+  Silver: (p) => p.purityCaratX100 === 0,
   Platinum: (p) => p.purityCaratX100 === 9500,
   // weight
   'Under 10 g': (p) => p.weightMg < 10_000,
@@ -103,7 +109,7 @@ function filterBySlug(
     case '18k':
       return products.filter((p) => p.purityCaratX100 === 1800);
     case 'silver':
-      return products.filter((p) => p.purityCaratX100 < 1000);
+      return products.filter((p) => p.purityCaratX100 === 0);
     case 'under-50k':
       return products.filter((p) => priceOf(p) < 50_00_000);
     case 'gifting':
@@ -198,35 +204,37 @@ export function CollectionPage(): JSX.Element {
     //   - exact name or slug match
     //   - option label is a token of the category name/slug
     //   - category name/slug is a token of the option label
-    // Main categories also fold in their direct sub-categories so a "Rings"
-    // chip on a parent collection picks up products in any sub.
+    //   - singular ↔ plural normalisation
+    // Main categories also fold in their direct sub-categories.
     const categoryIdsByOptionLabel = new Map<string, Set<string>>();
-    for (const opt of new Set(
-      visibleGroups.flatMap((g) => g.options),
-    )) {
+    // Singular/plural normalisation helper for both category match and
+    // product-name match. "Rings" → "ring"; "Ring" → "ring".
+    const stem = (s: string): string => {
+      const t = s.trim().toLowerCase();
+      return t.endsWith('s') && t.length > 3 ? t.slice(0, -1) : t;
+    };
+    for (const opt of new Set(visibleGroups.flatMap((g) => g.options))) {
       const target = opt.trim().toLowerCase();
       if (!target) continue;
+      const targetStem = stem(target);
       const ids = new Set<string>();
       for (const c of categories) {
         const name = c.name.trim().toLowerCase();
         const cslug = c.slug.toLowerCase();
         const nameTokens = name.split(/\s+/);
         const slugTokens = cslug.split(/[-_]/);
+        const nameTokenStems = nameTokens.map(stem);
+        const slugTokenStems = slugTokens.map(stem);
         const hits =
           name === target ||
           cslug === target ||
-          nameTokens.includes(target) ||
-          slugTokens.includes(target) ||
-          target.includes(name) ||
-          target.split(/\s+/).some((t) => slugTokens.includes(t)) ||
-          // Treat singular ↔ plural the same so "Ring" matches "Rings".
-          (target.endsWith('s')
-            ? nameTokens.includes(target.slice(0, -1)) || slugTokens.includes(target.slice(0, -1))
-            : nameTokens.includes(`${target}s`) || slugTokens.includes(`${target}s`));
+          nameTokenStems.includes(targetStem) ||
+          slugTokenStems.includes(targetStem) ||
+          target.split(/\s+/).map(stem).some((t) => slugTokenStems.includes(t));
         if (hits) {
           ids.add(c.id);
-          // Roll subs into the set so "9kt Gold" chip catches Rings/Bracelets
-          // products under it.
+          // Roll subs into the set so a parent-level chip catches sub-cat
+          // products too.
           if (!c.parentId) {
             for (const sub of categories) {
               if (sub.parentId === c.id) ids.add(sub.id);
@@ -239,10 +247,17 @@ export function CollectionPage(): JSX.Element {
 
     // For each visible group, the product passes if either nothing is
     // selected in that group OR at least one selected option matches. An
-    // option matches when its hardcoded predicate fires OR its derived
-    // category set contains the product's categoryId. Options that have
-    // neither path stay as no-op so the page still renders if admin types
-    // freeform labels.
+    // option matches via FOUR independent paths, in order of precision:
+    //   1. Hardcoded predicate (22K Gold / Under 10 g / Under ₹50,000 / …)
+    //   2. Category-id match (exact tag like Rings sub of 9kt Fine Gold)
+    //   3. Product-name token match — "Rings" chip catches "Rose Ring"
+    //      even when the product was tagged to the parent main rather
+    //      than the Rings sub. This is the fallback that makes the
+    //      jewellery-vocab filters (Rings / Earrings / Bracelets /
+    //      Necklaces / Pendants etc.) work without forcing admins to
+    //      re-tag every product to a leaf sub-category.
+    // Options with NO mapping at all stay as no-op so the page still
+    // renders if admin types something nobody mapped.
     const passGroup = (p: PublicProduct, group: FilterGroup): boolean => {
       const sel = selections[group.key];
       if (!sel || sel.size === 0) return true;
@@ -251,9 +266,15 @@ export function CollectionPage(): JSX.Element {
         if (pred && pred(p)) return true;
         const catSet = categoryIdsByOptionLabel.get(opt);
         if (catSet && catSet.has(p.categoryId)) return true;
-        // Neither path applied → treat as no-op rather than blocking the
-        // whole AND, so an unmapped chip doesn't hide every product.
-        return !pred && !catSet;
+        // Name-token fallback. Split product name into stem tokens, and
+        // see if the option's stem is in there. So "Rose Ring" → tokens
+        // ["rose", "ring"], stems same; "Rings" → stem "ring"; match.
+        const optStem = stem(opt);
+        const nameTokens = p.name.toLowerCase().split(/\s+/).map(stem);
+        if (optStem.length >= 3 && nameTokens.includes(optStem)) return true;
+        // Nothing matched and there's no mapping registered → no-op (don't
+        // block every product just because admin typed a freeform label).
+        return !pred && !catSet && optStem.length < 3;
       });
     };
     return bySlug.filter(

@@ -424,7 +424,13 @@ function ProductsTable({
               </td>
               <td className="px-4 py-3 font-mono text-xs text-ink-600">{p.slug}</td>
               <td className="px-4 py-3 tabular-nums">{(p.weightMg / 1000).toFixed(2)} g</td>
-              <td className="px-4 py-3 tabular-nums">{p.purityCaratX100 < 1000 ? 'Silver' : `${p.purityCaratX100 / 100}K`}</td>
+              <td className="px-4 py-3 tabular-nums">
+                {p.purityCaratX100 === 0
+                  ? 'Silver'
+                  : p.purityCaratX100 === 9500
+                    ? 'Pt 950'
+                    : `${p.purityCaratX100 / 100}K`}
+              </td>
               <td className="px-4 py-3 text-right tabular-nums font-mono">
                 <Money paise={p.basePricePaise + p.stoneChargePaise} />
               </td>

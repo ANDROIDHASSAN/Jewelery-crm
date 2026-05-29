@@ -116,7 +116,15 @@ export function SearchResultsPage(): JSX.Element {
           <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-x-3 gap-y-8 sm:gap-x-5 sm:gap-y-10">
             {productMatches.map((p) => {
               const price = p.basePricePaise + p.stoneChargePaise;
-              const purity = p.purityCaratX100 < 1000 ? 'Silver' : `${p.purityCaratX100 / 100}K`;
+              // 0 = silver, 9500 = Pt 950, anything else is gold carat × 100
+              // (including custom alloys like 9K = 900). Previously every
+              // value < 1000 collapsed to "Silver".
+              const purity =
+                p.purityCaratX100 === 0
+                  ? 'Silver'
+                  : p.purityCaratX100 === 9500
+                    ? 'Pt 950'
+                    : `${p.purityCaratX100 / 100}K`;
               return (
                 <Link key={p.id} to={`/store/products/${p.slug}`} className="group block">
                   <div className="aspect-[4/5] overflow-hidden bg-ink-100">

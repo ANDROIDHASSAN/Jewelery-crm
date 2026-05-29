@@ -113,10 +113,15 @@ export function ProductDetailPage(): JSX.Element {
   const gst = Math.round((subtotal * GST_BPS) / 10000);
   const total = subtotal + gst;
 
-  // Human label for the pill — "22K", "18K", "Silver", or the exact carat
-  // for anything odd. Matches the header ticker's vocabulary.
+  // Human label for the pill — "22K", "18K", "Silver", "Pt 950", or the
+  // exact carat for custom alloys. 0 = silver canonical; 9500 = Pt 950;
+  // any positive value <= 2400 is gold carat × 100 (including 9K = 900).
   const purityLabelShort =
-    product.purityCaratX100 < 1000 ? 'Silver' : `${purityK}K`;
+    product.purityCaratX100 === 0
+      ? 'Silver'
+      : product.purityCaratX100 === 9500
+        ? 'Pt 950'
+        : `${Number.isInteger(purityK) ? purityK.toFixed(0) : purityK.toFixed(1)}K`;
   // "Updated 4:12 PM IST" — null until the live feed lands, in which case
   // we hide the "Updated …" portion rather than showing a fake time.
   const rateUpdatedLabel = liveRate

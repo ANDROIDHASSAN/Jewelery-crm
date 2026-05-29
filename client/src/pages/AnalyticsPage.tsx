@@ -7,11 +7,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { Download, Mail, Plus, Trash2, X, AlertTriangle, CheckCircle2, ChevronRight, ChevronDown } from 'lucide-react';
-import type {
-  InventoryValuationMain,
-  InventoryValuationSub,
-} from '@/features/analytics/analyticsApi';
+import { Download, Mail, Plus, Trash2, X, AlertTriangle, CheckCircle2 } from 'lucide-react';
 import * as Dialog from '@radix-ui/react-dialog';
 import { toast } from 'sonner';
 import { MetricCard } from '@/components/ui/MetricCard';
@@ -825,12 +821,12 @@ function InventoryValuationSection(): JSX.Element {
             </table>
           </section>
 
-          {/* Hierarchical breakdown: Main category → Sub category → Items.
-              Updates as new categories land in Inventory because the server
-              builds the tree from each item's category.parent. Collapsed by
-              default so the page reads as the same shape; expand main rows
-              to drill in. */}
-          <InventoryValuationTree tree={rep.categoryTree ?? []} />
+          {/* The "By category tree" section used to live here. It rendered
+              the same numbers as the "By category" table above (just with
+              an expand-to-drill UI), so the page felt duplicate. The
+              "By category" table + donut already roll sub-categories under
+              their main on the server, so a single flat row per main is
+              all you need. */}
 
           <section className="rounded-md border border-ink-100 bg-ink-0 overflow-x-auto">
             <header className="px-4 py-3 border-b border-ink-100 flex items-center justify-between">
@@ -881,191 +877,6 @@ function InventoryValuationSection(): JSX.Element {
   );
 }
 
-// Hierarchical Main → Sub → Items breakdown for the Inventory value
-// section. Renders as a collapsible nested table. Main rows always show;
-// click the chevron (or the row body) to drill into sub categories, then
-// drill again into the items inside each sub. Mirrors the same shape as
-// the Categories tab in Inventory so the same mental model applies on
-// both pages — new main categories appear here as soon as they have at
-// least one IN_STOCK item.
-function InventoryValuationTree({
-  tree,
-}: {
-  tree: InventoryValuationMain[];
-}): JSX.Element {
-  const [openMains, setOpenMains] = useState<Set<string>>(new Set());
-
-  function toggleMain(id: string): void {
-    setOpenMains((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-  }
-
-  if (tree.length === 0) {
-    return (
-      <section className="rounded-md border border-ink-100 bg-ink-0">
-        <header className="px-4 py-3 border-b border-ink-100">
-          <h2 className="text-md font-medium text-ink-900">By category tree</h2>
-          <p className="text-xs text-ink-500">
-            Hierarchical breakdown will appear here once items are linked to main / sub
-            categories in <strong>Inventory → Categories</strong>.
-          </p>
-        </header>
-      </section>
-    );
-  }
-
-  return (
-    <section className="rounded-md border border-ink-100 bg-ink-0 overflow-x-auto">
-      <header className="px-4 py-3 border-b border-ink-100 flex items-center justify-between">
-        <div>
-          <h2 className="text-md font-medium text-ink-900">By category tree</h2>
-          <p className="text-xs text-ink-500">
-            Main category → sub category → items. Click any row to drill in.
-          </p>
-        </div>
-        <p className="text-xs text-ink-500">
-          {tree.length} main categor{tree.length === 1 ? 'y' : 'ies'}
-        </p>
-      </header>
-      <table className="w-full text-sm min-w-[860px]">
-        <thead className="text-eyebrow uppercase text-ink-500 bg-ink-25">
-          <tr>
-            <th className="text-left px-4 py-2.5">Category</th>
-            <th className="text-right px-4 py-2.5">Qty</th>
-            <th className="text-right px-4 py-2.5">Weight</th>
-            <th className="text-right px-4 py-2.5">Cost</th>
-            <th className="text-right px-4 py-2.5">Market</th>
-            <th className="text-right px-4 py-2.5">Unrealized</th>
-          </tr>
-        </thead>
-        <tbody className="divide-y divide-ink-100">
-          {tree.map((main) => (
-            <InventoryValuationMainRow
-              key={main.mainCategoryId}
-              main={main}
-              isOpen={openMains.has(main.mainCategoryId)}
-              onToggle={() => toggleMain(main.mainCategoryId)}
-            />
-          ))}
-        </tbody>
-      </table>
-    </section>
-  );
-}
-
-function InventoryValuationMainRow({
-  main,
-  isOpen,
-  onToggle,
-}: {
-  main: InventoryValuationMain;
-  isOpen: boolean;
-  onToggle: () => void;
-}): JSX.Element {
-  return (
-    <>
-      <tr className="bg-ink-25/50 hover:bg-ink-25 cursor-pointer" onClick={onToggle}>
-        <td className="px-4 py-2.5 font-semibold text-ink-900">
-          <button
-            type="button"
-            onClick={(e) => {
-              e.stopPropagation();
-              onToggle();
-            }}
-            className="inline-flex items-center gap-1.5 text-left"
-            aria-expanded={isOpen}
-          >
-            {isOpen ? (
-              <ChevronDown className="h-3.5 w-3.5 text-ink-500" />
-            ) : (
-              <ChevronRight className="h-3.5 w-3.5 text-ink-500" />
-            )}
-            <span>{main.mainCategoryName}</span>
-            <span className="text-[10px] uppercase tracking-wider text-ink-500 ml-1">
-              {main.metalType}
-            </span>
-            <span className="text-[10px] text-ink-500 ml-2">
-              · {main.subs.length} sub{main.subs.length === 1 ? '' : 's'}
-            </span>
-          </button>
-        </td>
-        <td className="px-4 py-2.5 text-right tabular-nums">{main.count}</td>
-        <td className="px-4 py-2.5 text-right"><Weight mg={main.weightMg} /></td>
-        <td className="px-4 py-2.5 text-right"><Money paise={main.costPaise} /></td>
-        <td className="px-4 py-2.5 text-right text-ink-900 font-medium">
-          <Money paise={main.marketPaise} />
-        </td>
-        <td className={cn('px-4 py-2.5 text-right font-semibold', main.unrealizedProfitPaise >= 0 ? 'text-success-700' : 'text-danger-700')}>
-          <Money paise={main.unrealizedProfitPaise} />
-        </td>
-      </tr>
-      {isOpen &&
-        main.subs.map((sub) => (
-          <InventoryValuationSubRow key={sub.subCategoryId} sub={sub} />
-        ))}
-    </>
-  );
-}
-
-function InventoryValuationSubRow({ sub }: { sub: InventoryValuationSub }): JSX.Element {
-  const [open, setOpen] = useState(false);
-  return (
-    <>
-      <tr className="hover:bg-ink-25 cursor-pointer" onClick={() => setOpen((v) => !v)}>
-        <td className="px-4 py-2 text-ink-800 pl-10">
-          <button
-            type="button"
-            onClick={(e) => {
-              e.stopPropagation();
-              setOpen((v) => !v);
-            }}
-            className="inline-flex items-center gap-1.5 text-left"
-            aria-expanded={open}
-          >
-            {open ? (
-              <ChevronDown className="h-3 w-3 text-ink-500" />
-            ) : (
-              <ChevronRight className="h-3 w-3 text-ink-500" />
-            )}
-            <span>{sub.subCategoryName}</span>
-            <span className="text-[10px] text-ink-500 ml-2">
-              · {sub.items.length} product{sub.items.length === 1 ? '' : 's'}
-            </span>
-          </button>
-        </td>
-        <td className="px-4 py-2 text-right tabular-nums">{sub.count}</td>
-        <td className="px-4 py-2 text-right"><Weight mg={sub.weightMg} /></td>
-        <td className="px-4 py-2 text-right"><Money paise={sub.costPaise} /></td>
-        <td className="px-4 py-2 text-right text-ink-900">
-          <Money paise={sub.marketPaise} />
-        </td>
-        <td className={cn('px-4 py-2 text-right', sub.unrealizedProfitPaise >= 0 ? 'text-success-700' : 'text-danger-700')}>
-          <Money paise={sub.unrealizedProfitPaise} />
-        </td>
-      </tr>
-      {open &&
-        sub.items.map((item, idx) => (
-          <tr key={`${sub.subCategoryId}-${item.itemId}-${idx}`} className="bg-ink-0">
-            <td className="px-4 py-2 text-ink-700 pl-16 text-xs">
-              <span>{item.productName}</span>
-              <span className="ml-2 text-[10px] text-ink-400 font-mono">{item.itemId}</span>
-            </td>
-            <td className="px-4 py-2 text-right text-xs tabular-nums">{item.count}</td>
-            <td className="px-4 py-2 text-right text-xs"><Weight mg={item.weightMg} /></td>
-            <td className="px-4 py-2 text-right text-xs"><Money paise={item.costPaise} /></td>
-            <td className="px-4 py-2 text-right text-xs"><Money paise={item.marketPaise} /></td>
-            <td className={cn('px-4 py-2 text-right text-xs', item.unrealizedProfitPaise >= 0 ? 'text-success-700' : 'text-danger-700')}>
-              <Money paise={item.unrealizedProfitPaise} />
-            </td>
-          </tr>
-        ))}
-    </>
-  );
-}
 
 // =====================================================================
 // 7. Low-margin alert

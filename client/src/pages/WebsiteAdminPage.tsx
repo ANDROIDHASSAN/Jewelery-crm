@@ -735,12 +735,13 @@ export function WebsiteAdminPage(): JSX.Element {
             <HomepageSectionsTab content={content} onPatch={(patch) => { dispatch(setContent({ ...content, ...patch })); notify(); }} />
           )}
           {tab === 'labels' && (
-            <Card title="Section labels & headlines" desc="Eyebrows, titles and sub-copy for every homepage section. Edit as JSON.">
-              <JsonSectionEditor
-                value={content.sectionLabels}
-                onSave={(next) => { dispatch(setContent({ ...content, sectionLabels: next })); notify(); }}
-              />
-            </Card>
+            <SectionLabelsTab
+              labels={content.sectionLabels}
+              onPatch={(next) => {
+                dispatch(setContent({ ...content, sectionLabels: next }));
+                notify();
+              }}
+            />
           )}
           {tab === 'footer' && (
             <FooterSectionsTab content={content} onPatch={(patch) => { dispatch(setContent({ ...content, ...patch })); notify(); }} />
@@ -1444,51 +1445,467 @@ const Textarea = (props: React.TextareaHTMLAttributes<HTMLTextAreaElement>): JSX
  * Phase-2 pass can replace each section with a proper repeater UI.
  * ────────────────────────────────────────────────────────────────────── */
 
-function JsonSectionEditor<T>({
-  value,
-  onSave,
-  rows = 12,
+
+// Generic per-item form editor for arrays of objects in the CMS. Replaces
+// the old "paste JSON, click Apply" textareas which were error-prone (one
+// missing comma broke the whole save). Each section now declares a fields
+// schema; the editor renders the right input per field type and handles
+// add / remove / reorder. Saves on every keystroke through onChange so the
+// existing notify() → publish path keeps working without an explicit Apply
+// button per row.
+type FieldType = 'text' | 'textarea' | 'url' | 'image' | 'number' | 'select';
+interface FieldDef<T> {
+  key: keyof T & string;
+  label: string;
+  type: FieldType;
+  placeholder?: string;
+  /** Required for 'select'. */
+  options?: ReadonlyArray<string>;
+  /** Rough relative width in the row (1..3). Defaults to 1. */
+  span?: 1 | 2 | 3;
+}
+
+function ListItemEditor<T extends Record<string, unknown>>({
+  items,
+  fields,
+  newItem,
+  onChange,
+  itemLabel,
+  max,
 }: {
-  value: T;
-  onSave: (next: T) => void;
-  rows?: number;
+  items: readonly T[];
+  fields: ReadonlyArray<FieldDef<T>>;
+  newItem: () => T;
+  onChange: (next: T[]) => void;
+  /** Function returning a short label for the row header — usually the title field. */
+  itemLabel?: (item: T, index: number) => string;
+  max?: number;
 }): JSX.Element {
-  const [draft, setDraft] = useState(() => JSON.stringify(value, null, 2));
-  const [err, setErr] = useState<string | null>(null);
-  // Refresh the draft when the source value changes (e.g. after publish).
-  useEffect(() => {
-    setDraft(JSON.stringify(value, null, 2));
-    setErr(null);
-  }, [value]);
-  function save(): void {
-    try {
-      const parsed = JSON.parse(draft) as T;
-      setErr(null);
-      onSave(parsed);
-    } catch (e) {
-      setErr(e instanceof Error ? e.message : 'Invalid JSON');
-    }
+  function patchItem(idx: number, key: keyof T, value: unknown): void {
+    // Cast through unknown: callers know the value-type match (select →
+    // literal union, number → number, text → string). TS can't track this
+    // narrowing through the generic, so we widen at the assignment line.
+    const next = items.map((it, i) =>
+      i === idx ? (({ ...it, [key]: value }) as unknown as T) : it,
+    );
+    onChange(next as T[]);
   }
+  function removeAt(idx: number): void {
+    onChange(items.filter((_, i) => i !== idx) as T[]);
+  }
+  function addNew(): void {
+    if (max && items.length >= max) return;
+    onChange([...items, newItem()] as T[]);
+  }
+  function move(idx: number, delta: -1 | 1): void {
+    const target = idx + delta;
+    if (target < 0 || target >= items.length) return;
+    const next = items.slice() as T[];
+    const tmp = next[idx];
+    next[idx] = next[target] as T;
+    next[target] = tmp as T;
+    onChange(next);
+  }
+
   return (
     <div className="space-y-3">
-      <Textarea
-        rows={rows}
-        value={draft}
-        onChange={(e) => setDraft(e.target.value)}
-        className="font-mono text-xs"
-        spellCheck={false}
-      />
-      <div className="flex items-center justify-between gap-3">
-        <p className="text-xs text-ink-500">Edit the JSON above, then click <strong>Apply</strong>. The changes save to the database when you click <strong>Publish changes</strong> at the top.</p>
-        <button
-          type="button"
-          onClick={save}
-          className="h-8 px-4 rounded-md bg-ink-900 text-ink-0 text-sm hover:bg-ink-800 transition-colors shrink-0"
+      {items.length === 0 && (
+        <p className="text-xs text-ink-500 italic">
+          No entries yet — click <strong>+ Add</strong> to create one.
+        </p>
+      )}
+      {items.map((it, idx) => (
+        <div
+          key={idx}
+          className="rounded-md border border-ink-100 bg-ink-25 p-3 space-y-2"
         >
-          Apply
-        </button>
+          <div className="flex items-center justify-between gap-2">
+            <p className="text-[11px] uppercase tracking-wider text-ink-500">
+              {itemLabel ? itemLabel(it, idx) : `Item ${idx + 1}`}
+            </p>
+            <div className="flex items-center gap-0.5">
+              <button
+                type="button"
+                onClick={() => move(idx, -1)}
+                disabled={idx === 0}
+                className="h-7 w-7 inline-flex items-center justify-center rounded text-ink-500 hover:text-ink-900 hover:bg-ink-100 disabled:opacity-30"
+                aria-label="Move up"
+                title="Move up"
+              >
+                ↑
+              </button>
+              <button
+                type="button"
+                onClick={() => move(idx, 1)}
+                disabled={idx === items.length - 1}
+                className="h-7 w-7 inline-flex items-center justify-center rounded text-ink-500 hover:text-ink-900 hover:bg-ink-100 disabled:opacity-30"
+                aria-label="Move down"
+                title="Move down"
+              >
+                ↓
+              </button>
+              <button
+                type="button"
+                onClick={() => removeAt(idx)}
+                className="h-7 w-7 inline-flex items-center justify-center rounded text-ink-500 hover:text-danger-700 hover:bg-danger-50"
+                aria-label="Remove"
+                title="Remove"
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+              </button>
+            </div>
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-6 gap-2">
+            {fields.map((f) => (
+              <div
+                key={f.key}
+                className={cn(
+                  f.span === 3 && 'sm:col-span-6',
+                  f.span === 2 && 'sm:col-span-3',
+                  (!f.span || f.span === 1) && 'sm:col-span-2',
+                  f.type === 'textarea' && 'sm:col-span-6',
+                )}
+              >
+                <Label className="text-[11px] text-ink-600">{f.label}</Label>
+                {f.type === 'textarea' ? (
+                  <textarea
+                    value={String((it[f.key] ?? '') as string)}
+                    placeholder={f.placeholder}
+                    rows={3}
+                    onChange={(e) => patchItem(idx, f.key, e.target.value)}
+                    className="w-full mt-1 rounded-md border border-ink-200 px-2 py-1.5 text-xs bg-ink-0 focus:outline-none focus:ring-1 focus:ring-brand-500/40 focus:border-brand-500"
+                  />
+                ) : f.type === 'select' ? (
+                  <select
+                    value={String((it[f.key] ?? '') as string)}
+                    onChange={(e) => patchItem(idx, f.key, e.target.value)}
+                    className="w-full h-8 mt-1 rounded-md border border-ink-200 px-2 text-xs bg-ink-0 focus:outline-none focus:border-brand-500"
+                  >
+                    {(f.options ?? []).map((o) => (
+                      <option key={o} value={o}>
+                        {o}
+                      </option>
+                    ))}
+                  </select>
+                ) : f.type === 'number' ? (
+                  <Input
+                    type="number"
+                    value={Number((it[f.key] ?? 0) as number)}
+                    placeholder={f.placeholder}
+                    onChange={(e) =>
+                      patchItem(idx, f.key, Number(e.target.value) || 0)
+                    }
+                    className="h-8 mt-1 text-xs"
+                  />
+                ) : (
+                  <Input
+                    value={String((it[f.key] ?? '') as string)}
+                    placeholder={f.placeholder}
+                    onChange={(e) => patchItem(idx, f.key, e.target.value)}
+                    className={cn(
+                      'h-8 mt-1 text-xs',
+                      (f.type === 'url' || f.type === 'image') && 'font-mono',
+                    )}
+                  />
+                )}
+                {/* Inline preview for image-typed fields */}
+                {f.type === 'image' && it[f.key] ? (
+                  <img
+                    src={String(it[f.key] as string)}
+                    alt=""
+                    className="mt-1 max-h-20 rounded-md border border-ink-100 object-cover"
+                    onError={(e) => {
+                      (e.currentTarget as HTMLImageElement).style.display = 'none';
+                    }}
+                  />
+                ) : null}
+              </div>
+            ))}
+          </div>
+        </div>
+      ))}
+      <div className="flex items-center justify-between">
+        <Button
+          type="button"
+          variant="outline"
+          onClick={addNew}
+          disabled={max !== undefined && items.length >= max}
+        >
+          <Plus className="h-4 w-4" /> Add
+        </Button>
+        {max !== undefined && (
+          <p className="text-xs text-ink-500">
+            {items.length} / {max}
+          </p>
+        )}
       </div>
-      {err && <p className="text-xs text-danger-700">JSON error: {err}</p>}
+    </div>
+  );
+}
+
+// Lightweight chip-style editor for string[] (e.g. press logos). Mirrors the
+// filter-option chips elsewhere in this file.
+function StringListEditor({
+  items,
+  onChange,
+  placeholder,
+  max,
+}: {
+  items: readonly string[];
+  onChange: (next: string[]) => void;
+  placeholder?: string;
+  max?: number;
+}): JSX.Element {
+  const [draft, setDraft] = useState('');
+  function add(): void {
+    const v = draft.trim();
+    if (!v) return;
+    if (max !== undefined && items.length >= max) return;
+    if (items.includes(v)) return;
+    onChange([...items, v]);
+    setDraft('');
+  }
+  function removeAt(idx: number): void {
+    onChange(items.filter((_, i) => i !== idx));
+  }
+  return (
+    <div className="space-y-2">
+      <ul className="flex flex-wrap gap-1.5">
+        {items.length === 0 && (
+          <p className="text-xs text-ink-500 italic">No entries yet.</p>
+        )}
+        {items.map((opt, idx) => (
+          <li
+            key={opt + idx}
+            className="inline-flex items-center gap-1 px-2 py-1 rounded-md bg-ink-25 border border-ink-200 text-xs text-ink-700"
+          >
+            <span>{opt}</span>
+            <button
+              type="button"
+              onClick={() => removeAt(idx)}
+              className="text-ink-400 hover:text-danger-700"
+              aria-label={`Remove ${opt}`}
+            >
+              <X className="h-3 w-3" />
+            </button>
+          </li>
+        ))}
+      </ul>
+      <div className="flex items-center gap-2">
+        <Input
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') {
+              e.preventDefault();
+              add();
+            }
+          }}
+          placeholder={placeholder ?? 'Add entry (Enter to confirm)'}
+          className="h-8 flex-1"
+        />
+        <Button
+          type="button"
+          variant="secondary"
+          size="sm"
+          disabled={!draft.trim() || (max !== undefined && items.length >= max)}
+          onClick={add}
+        >
+          Add
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+// -- Field schemas per section --
+const SHOP_BY_OCCASION_FIELDS = [
+  { key: 'name', label: 'Tile name', type: 'text', span: 2 },
+  { key: 'slug', label: 'Collection slug', type: 'text', placeholder: 'bridal', span: 2 },
+  { key: 'count', label: 'Product count', type: 'number', span: 1 },
+  { key: 'img', label: 'Image URL', type: 'image', span: 3 },
+] as const;
+
+const BROWSE_CATEGORY_FIELDS = [
+  { key: 'label', label: 'Tile label', type: 'text', span: 2 },
+  { key: 'slug', label: 'Collection slug', type: 'text', placeholder: 'rings', span: 2 },
+  { key: 'img', label: 'Image URL', type: 'image', span: 3 },
+] as const;
+
+const REEL_FIELDS = [
+  { key: 'handle', label: '@handle', type: 'text', placeholder: '@priya.bridal', span: 2 },
+  { key: 'slug', label: 'Collection slug', type: 'text', placeholder: 'bridal', span: 2 },
+  { key: 'caption', label: 'Caption', type: 'text', span: 3 },
+  { key: 'poster', label: 'Poster image URL', type: 'image', span: 3 },
+] as const;
+
+const DEAL_FIELDS = [
+  { key: 'name', label: 'Product name', type: 'text', span: 2 },
+  { key: 'slug', label: 'Product slug', type: 'text', span: 2 },
+  { key: 'category', label: 'Category label', type: 'text', placeholder: 'NECKLACES', span: 1 },
+  { key: 'priceLabel', label: 'Price label', type: 'text', placeholder: '₹29,000', span: 2 },
+  {
+    key: 'badge',
+    label: 'Badge',
+    type: 'select',
+    options: ['NEW', 'SALE', 'OUT'],
+    span: 1,
+  },
+  { key: 'img', label: 'Image URL', type: 'image', span: 3 },
+] as const;
+
+const TESTIMONIAL_FIELDS = [
+  { key: 'author', label: 'Author', type: 'text', span: 2 },
+  { key: 'city', label: 'City', type: 'text', span: 1 },
+  { key: 'occasion', label: 'Occasion', type: 'text', span: 1 },
+  { key: 'quote', label: 'Quote', type: 'textarea', span: 3 },
+] as const;
+
+const DOOR_CARD_FIELDS = [
+  { key: 'eyebrow', label: 'Eyebrow', type: 'text', span: 2 },
+  { key: 'title', label: 'Title', type: 'text', span: 2 },
+  { key: 'href', label: 'Link', type: 'url', span: 2 },
+  { key: 'body', label: 'Body', type: 'textarea', span: 3 },
+  { key: 'img', label: 'Image URL', type: 'image', span: 3 },
+] as const;
+
+const TRUST_BADGE_FIELDS = [
+  {
+    key: 'icon',
+    label: 'Icon',
+    type: 'select',
+    options: ['shield', 'sparkles', 'award'],
+    span: 1,
+  },
+  { key: 'title', label: 'Title', type: 'text', span: 2 },
+  { key: 'body', label: 'Body', type: 'textarea', span: 3 },
+] as const;
+
+const FOOTER_LINK_FIELDS = [
+  { key: 'label', label: 'Label', type: 'text', span: 2 },
+  { key: 'href', label: 'Link', type: 'url', span: 3 },
+] as const;
+
+// Per-section list of label keys → friendly field labels, used by
+// SectionLabelsTab. Grouped so editors can update one storefront strip at
+// a time without scrolling through 30 unlabeled inputs.
+type SectionLabelKey = keyof NonNullable<StorefrontContent['sectionLabels']>;
+const SECTION_LABEL_GROUPS: Array<{
+  title: string;
+  fields: Array<{ key: SectionLabelKey; label: string; type?: 'text' | 'textarea' }>;
+}> = [
+  {
+    title: 'Browse by category',
+    fields: [
+      { key: 'categoriesEyebrow', label: 'Eyebrow' },
+      { key: 'categoriesTitle', label: 'Title' },
+      { key: 'categoriesSub', label: 'Sub-copy', type: 'textarea' },
+    ],
+  },
+  {
+    title: 'Shop by occasion',
+    fields: [
+      { key: 'occasionEyebrow', label: 'Eyebrow' },
+      { key: 'occasionTitle', label: 'Title' },
+      { key: 'occasionSub', label: 'Sub-copy', type: 'textarea' },
+    ],
+  },
+  {
+    title: 'Watch & wear reels',
+    fields: [
+      { key: 'reelsEyebrow', label: 'Eyebrow' },
+      { key: 'reelsTitle', label: 'Title' },
+      { key: 'reelsSub', label: 'Sub-copy', type: 'textarea' },
+    ],
+  },
+  {
+    title: 'Customer reviews',
+    fields: [
+      { key: 'reviewsEyebrow', label: 'Eyebrow' },
+      { key: 'reviewsTitle', label: 'Title' },
+      { key: 'reviewsSub', label: 'Sub-copy', type: 'textarea' },
+    ],
+  },
+  {
+    title: 'Visit our showrooms',
+    fields: [
+      { key: 'visitEyebrow', label: 'Eyebrow' },
+      { key: 'visitTitle', label: 'Title' },
+      { key: 'visitSub', label: 'Sub-copy', type: 'textarea' },
+      { key: 'visitCtaLabel', label: 'CTA label' },
+      { key: 'visitCtaHref', label: 'CTA link' },
+    ],
+  },
+  {
+    title: 'Deals of the week',
+    fields: [
+      { key: 'dealsEyebrow', label: 'Eyebrow' },
+      { key: 'dealsTitle', label: 'Title' },
+      { key: 'dealsSub', label: 'Sub-copy', type: 'textarea' },
+      { key: 'dealsCtaLabel', label: 'CTA label' },
+      { key: 'dealsCtaHref', label: 'CTA link' },
+    ],
+  },
+  {
+    title: 'Trust band',
+    fields: [
+      { key: 'trustEyebrow', label: 'Eyebrow' },
+    ],
+  },
+  {
+    title: 'Newsletter',
+    fields: [
+      { key: 'newsletterEyebrow', label: 'Eyebrow' },
+      { key: 'newsletterTitle', label: 'Title' },
+      { key: 'newsletterSub', label: 'Sub-copy', type: 'textarea' },
+    ],
+  },
+];
+
+function SectionLabelsTab({
+  labels,
+  onPatch,
+}: {
+  labels: NonNullable<StorefrontContent['sectionLabels']>;
+  onPatch: (next: NonNullable<StorefrontContent['sectionLabels']>) => void;
+}): JSX.Element {
+  function set(key: SectionLabelKey, value: string): void {
+    onPatch({ ...labels, [key]: value });
+  }
+  return (
+    <div className="space-y-4">
+      {SECTION_LABEL_GROUPS.map((group) => (
+        <Card
+          key={group.title}
+          title={group.title}
+          desc="Headline strip shown above this section on the homepage."
+        >
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            {group.fields.map((f) => (
+              <div
+                key={f.key}
+                className={cn(f.type === 'textarea' && 'sm:col-span-2')}
+              >
+                <Label className="text-xs text-ink-600">{f.label}</Label>
+                {f.type === 'textarea' ? (
+                  <textarea
+                    value={String(labels[f.key] ?? '')}
+                    rows={2}
+                    onChange={(e) => set(f.key, e.target.value)}
+                    className="w-full mt-1 rounded-md border border-ink-200 px-2 py-1.5 text-xs bg-ink-0 focus:outline-none focus:ring-1 focus:ring-brand-500/40 focus:border-brand-500"
+                  />
+                ) : (
+                  <Input
+                    value={String(labels[f.key] ?? '')}
+                    onChange={(e) => set(f.key, e.target.value)}
+                    className="h-8 mt-1"
+                  />
+                )}
+              </div>
+            ))}
+          </div>
+        </Card>
+      ))}
     </div>
   );
 }
@@ -1507,39 +1924,100 @@ function HomepageSectionsTab({
           to update what reads as one section on the live site. */}
 
       <Card title="Shop by occasion (6-tile body-shot grid)" desc="Each tile: name, slug (existing collection), product count, image URL.">
-        <JsonSectionEditor value={content.shopByOccasion} onSave={(v) => onPatch({ shopByOccasion: v })} />
+        <ListItemEditor
+          items={content.shopByOccasion ?? []}
+          fields={SHOP_BY_OCCASION_FIELDS as ReadonlyArray<FieldDef<{ name: string; slug: string; count: number; img: string }>>}
+          newItem={() => ({ name: '', slug: '', count: 0, img: '' })}
+          onChange={(v) => onPatch({ shopByOccasion: v })}
+          itemLabel={(it) => it.name || it.slug || 'New tile'}
+          max={12}
+        />
       </Card>
 
       <Card title="Browse by category (circular marquee)" desc="Each tile: label, slug, image URL. 6–12 tiles recommended.">
-        <JsonSectionEditor value={content.browseCategories} onSave={(v) => onPatch({ browseCategories: v })} />
+        <ListItemEditor
+          items={content.browseCategories ?? []}
+          fields={BROWSE_CATEGORY_FIELDS as ReadonlyArray<FieldDef<{ label: string; slug: string; img: string }>>}
+          newItem={() => ({ label: '', slug: '', img: '' })}
+          onChange={(v) => onPatch({ browseCategories: v })}
+          itemLabel={(it) => it.label || it.slug || 'New tile'}
+          max={24}
+        />
       </Card>
 
       <Card title="Watch & wear reels" desc="Up to 12 vertical 9:16 reel tiles. Each: @handle, caption, poster image, collection slug.">
-        <JsonSectionEditor value={content.reels} onSave={(v) => onPatch({ reels: v })} />
+        <ListItemEditor
+          items={content.reels ?? []}
+          fields={REEL_FIELDS as ReadonlyArray<FieldDef<{ handle: string; caption: string; poster: string; slug: string }>>}
+          newItem={() => ({ handle: '', caption: '', poster: '', slug: '' })}
+          onChange={(v) => onPatch({ reels: v })}
+          itemLabel={(it) => it.handle || it.caption?.slice(0, 24) || 'New reel'}
+          max={12}
+        />
       </Card>
 
       <Card title="Deals of the week" desc="Up to 8 product cards. Each: slug, name, category, price label, badge (NEW/SALE/OUT), image URL.">
-        <JsonSectionEditor value={content.deals} onSave={(v) => onPatch({ deals: v })} />
+        <ListItemEditor
+          items={content.deals ?? []}
+          fields={DEAL_FIELDS as ReadonlyArray<FieldDef<{ slug: string; name: string; category: string; priceLabel: string; badge: 'NEW' | 'SALE' | 'OUT'; img: string }>>}
+          newItem={() => ({ slug: '', name: '', category: '', priceLabel: '', badge: 'NEW' as const, img: '' })}
+          onChange={(v) => onPatch({ deals: v })}
+          itemLabel={(it) => it.name || it.slug || 'New deal'}
+          max={16}
+        />
       </Card>
 
-      <Card title="Customer reviews — row 1 (scrolls left)" desc="Each review: quote, author, city, occasion.">
-        <JsonSectionEditor value={content.testimonialsRow1} onSave={(v) => onPatch({ testimonialsRow1: v })} />
+      <Card title="Customer reviews — row 1 (scrolls left)" desc="Each review: author, city, occasion, quote.">
+        <ListItemEditor
+          items={content.testimonialsRow1 ?? []}
+          fields={TESTIMONIAL_FIELDS as ReadonlyArray<FieldDef<{ quote: string; author: string; city: string; occasion: string }>>}
+          newItem={() => ({ quote: '', author: '', city: '', occasion: '' })}
+          onChange={(v) => onPatch({ testimonialsRow1: v })}
+          itemLabel={(it) => it.author || 'New review'}
+          max={12}
+        />
       </Card>
 
-      <Card title="Customer reviews — row 2 (scrolls right)" desc="Each review: quote, author, city, occasion.">
-        <JsonSectionEditor value={content.testimonialsRow2} onSave={(v) => onPatch({ testimonialsRow2: v })} />
+      <Card title="Customer reviews — row 2 (scrolls right)" desc="Each review: author, city, occasion, quote.">
+        <ListItemEditor
+          items={content.testimonialsRow2 ?? []}
+          fields={TESTIMONIAL_FIELDS as ReadonlyArray<FieldDef<{ quote: string; author: string; city: string; occasion: string }>>}
+          newItem={() => ({ quote: '', author: '', city: '', occasion: '' })}
+          onChange={(v) => onPatch({ testimonialsRow2: v })}
+          itemLabel={(it) => it.author || 'New review'}
+          max={12}
+        />
       </Card>
 
-      <Card title="Press logos (under the reviews)" desc="Array of strings — magazine / newspaper names.">
-        <JsonSectionEditor value={content.pressLogos} onSave={(v) => onPatch({ pressLogos: v })} rows={6} />
+      <Card title="Press logos (under the reviews)" desc="Magazine / newspaper names — appear as a logo strip.">
+        <StringListEditor
+          items={content.pressLogos ?? []}
+          onChange={(v) => onPatch({ pressLogos: v })}
+          placeholder="Vogue India, Femina, …"
+          max={10}
+        />
       </Card>
 
-      <Card title="Doors-opening promo cards (2)" desc="Each: eyebrow, title, body, link href, image URL.">
-        <JsonSectionEditor value={content.doorCards} onSave={(v) => onPatch({ doorCards: v })} />
+      <Card title="Doors-opening promo cards (2)" desc="Each: eyebrow, title, body, link, image URL.">
+        <ListItemEditor
+          items={content.doorCards ?? []}
+          fields={DOOR_CARD_FIELDS as ReadonlyArray<FieldDef<{ eyebrow: string; title: string; body: string; href: string; img: string }>>}
+          newItem={() => ({ eyebrow: '', title: '', body: '', href: '', img: '' })}
+          onChange={(v) => onPatch({ doorCards: v })}
+          itemLabel={(it) => it.title || 'New card'}
+          max={2}
+        />
       </Card>
 
-      <Card title="Trust badges (3)" desc="Each badge: icon (one of: shield, sparkles, award), title, body.">
-        <JsonSectionEditor value={content.trustBadges} onSave={(v) => onPatch({ trustBadges: v })} rows={10} />
+      <Card title="Trust badges (3)" desc="Each badge: icon, title, body.">
+        <ListItemEditor
+          items={content.trustBadges ?? []}
+          fields={TRUST_BADGE_FIELDS as ReadonlyArray<FieldDef<{ icon: 'shield' | 'sparkles' | 'award'; title: string; body: string }>>}
+          newItem={() => ({ icon: 'shield' as const, title: '', body: '' })}
+          onChange={(v) => onPatch({ trustBadges: v })}
+          itemLabel={(it) => it.title || 'New badge'}
+          max={6}
+        />
       </Card>
     </div>
   );
@@ -1575,15 +2053,36 @@ function FooterSectionsTab({
       </Card>
 
       <Card title="Footer — Shop column" desc="Each link: label and href.">
-        <JsonSectionEditor value={content.footerShop} onSave={(v) => onPatch({ footerShop: v })} rows={8} />
+        <ListItemEditor
+          items={content.footerShop ?? []}
+          fields={FOOTER_LINK_FIELDS as ReadonlyArray<FieldDef<{ label: string; href: string }>>}
+          newItem={() => ({ label: '', href: '' })}
+          onChange={(v) => onPatch({ footerShop: v })}
+          itemLabel={(it) => it.label || 'New link'}
+          max={10}
+        />
       </Card>
 
       <Card title="Footer — Visit column" desc="Each link: label and href.">
-        <JsonSectionEditor value={content.footerVisit} onSave={(v) => onPatch({ footerVisit: v })} rows={8} />
+        <ListItemEditor
+          items={content.footerVisit ?? []}
+          fields={FOOTER_LINK_FIELDS as ReadonlyArray<FieldDef<{ label: string; href: string }>>}
+          newItem={() => ({ label: '', href: '' })}
+          onChange={(v) => onPatch({ footerVisit: v })}
+          itemLabel={(it) => it.label || 'New link'}
+          max={10}
+        />
       </Card>
 
       <Card title="Footer — Help column" desc="Each link: label and href.">
-        <JsonSectionEditor value={content.footerHelp} onSave={(v) => onPatch({ footerHelp: v })} rows={8} />
+        <ListItemEditor
+          items={content.footerHelp ?? []}
+          fields={FOOTER_LINK_FIELDS as ReadonlyArray<FieldDef<{ label: string; href: string }>>}
+          newItem={() => ({ label: '', href: '' })}
+          onChange={(v) => onPatch({ footerHelp: v })}
+          itemLabel={(it) => it.label || 'New link'}
+          max={10}
+        />
       </Card>
     </div>
   );
