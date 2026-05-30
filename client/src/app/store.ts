@@ -12,6 +12,7 @@ import {
 import { authReducer, logout, setAccessToken } from '@/features/auth/authSlice';
 import { storefrontContentReducer } from '@/features/storefront/storefrontContentSlice';
 import { shopReducer, persistShopState } from '@/features/storefront/shopSlice';
+import { shopFilterReducer } from '@/features/ui/shopFilterSlice';
 import { registerCloudinaryAuthSource } from '@/lib/cloudinary';
 
 const rawBaseQuery = fetchBaseQuery({
@@ -138,6 +139,10 @@ export const store = configureStore({
     auth: authReducer,
     storefrontContent: storefrontContentReducer,
     shop: shopReducer,
+    // Global "active shop" scope picked from the top-bar ShopSwitcher.
+    // Pages opt in by reading useSelectedShopId() — landing this is
+    // backwards-compatible because the default (null) means "no filter".
+    shopFilter: shopFilterReducer,
     [baseApi.reducerPath]: baseApi.reducer,
   },
   middleware: (getDefault) => getDefault().concat(baseApi.middleware),

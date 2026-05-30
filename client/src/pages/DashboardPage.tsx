@@ -34,6 +34,7 @@ import {
   RevenueAreaChart,
 } from '@/components/ui/charts';
 import { useGetDashboardSummaryQuery } from '@/features/dashboard/dashboardApi';
+import { useSelectedShopId } from '@/features/ui/shopFilterSlice';
 import { useGetPlQuery, useGetExpensesByCategoryQuery } from '@/features/finance/financeApi';
 import { useGetLeadsQuery } from '@/features/crm/crmApi';
 import { useGetOrdersQuery, type AdminOrder } from '@/features/ecommerce/ecommerceApi';
@@ -128,7 +129,12 @@ const ORDER_STATUS_TONE: Record<string, 'success' | 'info' | 'warning' | 'neutra
 export function DashboardPage(): JSX.Element {
   // Stable per-day reference — see monthRange() comment for why.
   const range = useMemo(() => monthRange(), []);
-  const { data: summaryRes, isLoading, isError } = useGetDashboardSummaryQuery(undefined, {
+  // Top-bar shop scope. null = consolidated; a specific id narrows every
+  // shop-aware query on the page (currently the dashboard summary, which
+  // already accepts ?shopId=).
+  const selectedShopId = useSelectedShopId();
+  const summaryArg = selectedShopId ? { shopId: selectedShopId } : undefined;
+  const { data: summaryRes, isLoading, isError } = useGetDashboardSummaryQuery(summaryArg, {
     pollingInterval: 60_000,
   });
   const { data: plRes, isLoading: plLoading, isError: plError, error: plErrorObj } = useGetPlQuery(range, { pollingInterval: 60_000 });
