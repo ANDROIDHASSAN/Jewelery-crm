@@ -8,6 +8,7 @@ import { applyBps, computeGoldValuePaise } from '../../lib/money.js';
 import { getTenantId } from '../../lib/async-context.js';
 import { withCache, bustKey } from '../../lib/cache.js';
 import { requirePermission } from '../../middleware/require-permission.js';
+import { renderReceiptPdf } from '../../lib/receipt-pdf.js';
 
 export const ecommerceRouter: Router = Router();
 
@@ -276,6 +277,153 @@ ecommerceRouter.get('/orders/:id', async (req, res, next) => {
       return;
     }
     res.json({ data: order });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Tax-invoice PDF for an e-commerce order. Mirrors the POS bill receipt
+// surface so the same template ships from the same renderer — only the
+// data source differs (Order vs Bill). Inline preview by default; pass
+// ?download=1 for a forced save. Read-only — no permission gate beyond
+// the parent ecommerce.read, since admins on the order detail page can
+// already see the underlying numbers.
+ecommerceRouter.get('/orders/:id/invoice.pdf', async (req, res, next) => {
+  try {
+    const id = z.string().min(1).parse(req.params.id);
+    const download = req.query.download === '1';
+    const order = await prisma.order.findUnique({
+      where: { id },
+      include: {
+        customer: { select: { name: true, phone: true } },
+        items: {
+          include: {
+            product: {
+              select: {
+                name: true,
+                weightMg: true,
+                purityCaratX100: true,
+                makingChargeBps: true,
+              },
+            },
+          },
+        },
+        tenant: { select: { businessName: true, gstNumber: true, id: true } },
+      },
+    });
+    if (!order) {
+      res.status(404).json({ error: { code: 'NOT_FOUND', message: 'Order not found' } });
+      return;
+    }
+
+    // Pull invoice layout overrides from the storefront CMS blob. Failure is
+    // non-fatal — the renderer's footerNote has a baked default.
+    let invoiceLayout: {
+      footerNote?: string;
+      headerNote?: string;
+      termsAndConditions?: string;
+      signatoryName?: string;
+      showLogo?: boolean;
+    } = {};
+    try {
+      const sf = await prisma.storefrontContent.findUnique({
+        where: { tenantId: order.tenant?.id ?? order.tenantId },
+        select: { content: true },
+      });
+      const blob = sf?.content as { invoiceLayout?: typeof invoiceLayout } | null | undefined;
+      if (blob?.invoiceLayout) invoiceLayout = blob.invoiceLayout;
+    } catch {
+      // ignore — fall back to defaults below
+    }
+
+    // Compose a tax-invoice footer from the CMS overrides. Combine the
+    // termsAndConditions line below the footerNote so both surfaces are
+    // visible on the printed PDF.
+    const composedFooter = [invoiceLayout.footerNote, invoiceLayout.termsAndConditions]
+      .filter((s) => typeof s === 'string' && s.trim().length > 0)
+      .join(' · ');
+
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader(
+      'Content-Disposition',
+      `${download ? 'attachment' : 'inline'}; filename="invoice-${order.id}.pdf"`,
+    );
+    res.setHeader('Cache-Control', 'private, no-store');
+
+    // Build the shipping address line — captured at checkout, so it survives
+    // a later edit on the customer record.
+    const shippingAddress = [
+      order.shippingLine1,
+      order.shippingLine2,
+      order.shippingCity,
+      order.shippingState,
+      order.shippingPincode,
+    ]
+      .filter((s) => typeof s === 'string' && s.trim().length > 0)
+      .join(', ');
+
+    await renderReceiptPdf(
+      {
+        business: {
+          name: order.tenant?.businessName ?? 'Jeweller',
+          address: shippingAddress || '',
+          gstin: order.tenant?.gstNumber ?? null,
+          phone: order.shippingPhone ?? '',
+        },
+        invoice: {
+          number: order.id,
+          dateIso: order.createdAt.toISOString(),
+          // E-commerce orders ship across states — derive place of supply
+          // from the shipping address state code when available, else fall
+          // back to '06' (Haryana) to match the POS default.
+          placeOfSupply: order.shippingState ?? '06',
+        },
+        customer: {
+          name: order.customer?.name ?? order.shippingName ?? 'Customer',
+          phone: order.customer?.phone ?? order.shippingPhone ?? '',
+        },
+        lines: order.items.map((l) => {
+          const purity = l.product?.purityCaratX100 ?? null;
+          const weightMg = l.product?.weightMg ?? null;
+          return {
+            description: l.product?.name ?? 'Jewellery piece',
+            details: [
+              purity ? `${(purity / 100).toFixed(0)}K` : null,
+              weightMg ? `${(weightMg / 1000).toFixed(2)} g` : null,
+              l.product?.makingChargeBps
+                ? `making ${(l.product.makingChargeBps / 100).toFixed(2)}%`
+                : null,
+            ]
+              .filter(Boolean)
+              .join(' · ') || undefined,
+            qty: l.qty,
+            unitPaise: l.pricePaise,
+            amountPaise: l.pricePaise * l.qty,
+          };
+        }),
+        subtotalPaise: order.subtotalPaise,
+        // E-commerce currently stores total tax as a single number rather
+        // than CGST/SGST/IGST split — surface it as IGST on the invoice
+        // (matches inter-state default for an online order).
+        cgstPaise: 0,
+        sgstPaise: 0,
+        igstPaise: order.taxPaise,
+        discountPaise: 0,
+        totalPaise: order.totalPaise,
+        payments:
+          order.paymentStatus === 'PAID'
+            ? [
+                {
+                  mode: order.paymentMethod,
+                  amountPaise: order.totalPaise,
+                  referenceId: order.razorpayPaymentId ?? undefined,
+                },
+              ]
+            : [],
+        footerNote: composedFooter || undefined,
+      },
+      res,
+    );
   } catch (err) {
     next(err);
   }

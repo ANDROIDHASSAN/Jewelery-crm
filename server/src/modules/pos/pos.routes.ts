@@ -124,6 +124,28 @@ posRouter.get('/bills/:id/receipt.pdf', async (req, res, next) => {
     });
     if (!bill) throw new NotFoundError('Bill not found');
 
+    // CMS-controlled invoice layout — same blob as the e-commerce invoice
+    // route consumes, so editing once in Website CMS → Invoice Layout
+    // affects both POS receipts and online order invoices. Read failure is
+    // non-fatal, the renderer has a baked-in default footer.
+    let invoiceLayout: {
+      footerNote?: string;
+      termsAndConditions?: string;
+    } = {};
+    try {
+      const sf = await prisma.storefrontContent.findUnique({
+        where: { tenantId: bill.tenantId },
+        select: { content: true },
+      });
+      const blob = sf?.content as { invoiceLayout?: typeof invoiceLayout } | null | undefined;
+      if (blob?.invoiceLayout) invoiceLayout = blob.invoiceLayout;
+    } catch {
+      // ignore — fall back to defaults below
+    }
+    const composedFooter = [invoiceLayout.footerNote, invoiceLayout.termsAndConditions]
+      .filter((s) => typeof s === 'string' && s.trim().length > 0)
+      .join(' · ');
+
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader(
       'Content-Disposition',
@@ -180,6 +202,7 @@ posRouter.get('/bills/:id/receipt.pdf', async (req, res, next) => {
           amountPaise: p.amountPaise,
           referenceId: p.referenceId ?? undefined,
         })),
+        footerNote: composedFooter || undefined,
       },
       res,
     );

@@ -4,6 +4,7 @@ import { Provider } from 'react-redux';
 import { Toaster } from 'sonner';
 import { store } from '@/app/store';
 import { AppRouter } from '@/app/routes';
+import { DocumentHead } from '@/components/DocumentHead';
 import { syncPending } from '@/features/pos/offline';
 import '@/styles/globals.css';
 
@@ -13,6 +14,7 @@ if (!rootEl) throw new Error('root element not found');
 createRoot(rootEl).render(
   <StrictMode>
     <Provider store={store}>
+      <DocumentHead />
       <AppRouter />
       <Toaster position="top-right" richColors closeButton />
     </Provider>

@@ -39,7 +39,9 @@ import {
   updateHero,
   updateLocation,
   updateNavItem,
+  updateInvoiceLayout,
   updateRates,
+  updateSocials,
   updateStory,
   updateTestimonial,
   updateWhatsapp,
@@ -63,7 +65,8 @@ type TabKey =
   | 'filters'
   | 'homepage'
   | 'labels'
-  | 'footer';
+  | 'footer'
+  | 'invoice';
 
 const TABS: Array<{ key: TabKey; label: string }> = [
   { key: 'brand', label: 'Brand' },
@@ -79,6 +82,7 @@ const TABS: Array<{ key: TabKey; label: string }> = [
   { key: 'homepage', label: 'Homepage sections' },
   { key: 'labels', label: 'Section labels' },
   { key: 'footer', label: 'Footer' },
+  { key: 'invoice', label: 'Invoice layout' },
 ];
 
 export function WebsiteAdminPage(): JSX.Element {
@@ -174,6 +178,7 @@ export function WebsiteAdminPage(): JSX.Element {
       <div className="grid grid-cols-1 lg:grid-cols-[1fr_360px] gap-4 lg:gap-8">
         <div className="space-y-4 sm:space-y-6 lg:max-w-2xl">
           {tab === 'brand' && (
+            <div className="space-y-6">
             <Card title="Brand identity" desc="Logo, shop name and tagline used in the header and footer.">
               <Field
                 label="Logo"
@@ -258,6 +263,110 @@ export function WebsiteAdminPage(): JSX.Element {
                 />
               </Field>
             </Card>
+
+            <Card title="Browser tab & SEO" desc="Favicon, browser tab title, and search-engine metadata. All optional — leave blank to fall back to brand defaults.">
+              <Field
+                label="Favicon"
+                hint="Square, ≤ 64×64 PNG/SVG. Upload or paste a URL. Falls back to the logo if blank."
+              >
+                <div className="flex items-start gap-4">
+                  <div
+                    className="h-12 w-12 rounded-md bg-ink-50 border border-ink-100 flex items-center justify-center overflow-hidden shrink-0"
+                    aria-hidden="true"
+                  >
+                    {(content.brand.favicon || content.brand.logo) ? (
+                      <img src={content.brand.favicon || content.brand.logo} alt="" className="h-full w-full object-cover" />
+                    ) : (
+                      <span className="text-[10px] text-ink-400">None</span>
+                    )}
+                  </div>
+                  <div className="flex-1 space-y-2">
+                    <Input
+                      placeholder="https://… or /favicon.png"
+                      value={content.brand.favicon ?? ''}
+                      onChange={(e) => dispatch(updateBrand({ favicon: e.target.value }))}
+                      onBlur={notify}
+                    />
+                    <div className="flex items-center gap-2">
+                      <label
+                        htmlFor="favicon-upload"
+                        className="inline-flex items-center gap-1.5 h-8 px-3 rounded-md border border-ink-200 bg-ink-0 text-xs text-ink-700 hover:bg-ink-50 cursor-pointer"
+                      >
+                        Upload image
+                      </label>
+                      <input
+                        id="favicon-upload"
+                        type="file"
+                        accept="image/png,image/jpeg,image/svg+xml,image/webp,image/x-icon"
+                        className="sr-only"
+                        onChange={(e) => {
+                          const file = e.target.files?.[0];
+                          if (!file) return;
+                          if (file.size > 256 * 1024) {
+                            toast.error('Favicon must be under 256 KB');
+                            e.target.value = '';
+                            return;
+                          }
+                          const reader = new FileReader();
+                          reader.onload = () => {
+                            dispatch(updateBrand({ favicon: String(reader.result ?? '') }));
+                            notify();
+                          };
+                          reader.onerror = () => toast.error('Could not read file');
+                          reader.readAsDataURL(file);
+                          e.target.value = '';
+                        }}
+                      />
+                      {content.brand.favicon && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            dispatch(updateBrand({ favicon: '' }));
+                            notify();
+                          }}
+                          className="inline-flex items-center gap-1.5 h-8 px-3 rounded-md text-xs text-ink-600 hover:text-ink-900 hover:bg-ink-50"
+                        >
+                          <Trash2 className="h-3.5 w-3.5" /> Remove
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              </Field>
+              <Field label="Browser tab title" hint="Used for document.title. Falls back to shop name if blank.">
+                <Input
+                  value={content.brand.siteTitle ?? ''}
+                  onChange={(e) => dispatch(updateBrand({ siteTitle: e.target.value }))}
+                  onBlur={notify}
+                  placeholder="Your shop — short tagline"
+                />
+              </Field>
+              <Field label="Meta description" hint="1–2 sentences. Shown by search engines. Max 320 chars.">
+                <Textarea
+                  rows={3}
+                  value={content.brand.metaDescription ?? ''}
+                  onChange={(e) => dispatch(updateBrand({ metaDescription: e.target.value }))}
+                  onBlur={notify}
+                />
+              </Field>
+              <Field label="Meta keywords" hint="Comma-separated. Optional and lightly weighted by search engines.">
+                <Input
+                  value={content.brand.metaKeywords ?? ''}
+                  onChange={(e) => dispatch(updateBrand({ metaKeywords: e.target.value }))}
+                  onBlur={notify}
+                  placeholder="jewellery, gold, bridal"
+                />
+              </Field>
+              <Field label="OG share image URL" hint="Image used when the link is shared on WhatsApp / Facebook. 1200×630 recommended.">
+                <Input
+                  value={content.brand.ogImage ?? ''}
+                  onChange={(e) => dispatch(updateBrand({ ogImage: e.target.value }))}
+                  onBlur={notify}
+                  placeholder="https://… or /og/cover.jpg"
+                />
+              </Field>
+            </Card>
+            </div>
           )}
 
           {tab === 'hero' && (
@@ -509,23 +618,57 @@ export function WebsiteAdminPage(): JSX.Element {
           )}
 
           {tab === 'testimonial' && (
-            <Card title="Customer quote" desc="The dark press block on the home page.">
-              <Field label="Quote">
-                <Textarea
-                  rows={3}
-                  value={content.testimonial.quote}
-                  onChange={(e) => dispatch(updateTestimonial({ quote: e.target.value }))}
-                  onBlur={notify}
+            <div className="space-y-6">
+              <Card title="Customer quote" desc="The dark press block on the home page.">
+                <Field label="Quote">
+                  <Textarea
+                    rows={3}
+                    value={content.testimonial.quote}
+                    onChange={(e) => dispatch(updateTestimonial({ quote: e.target.value }))}
+                    onBlur={notify}
+                  />
+                </Field>
+                <Field label="Attribution">
+                  <Input
+                    value={content.testimonial.author}
+                    onChange={(e) => dispatch(updateTestimonial({ author: e.target.value }))}
+                    onBlur={notify}
+                  />
+                </Field>
+              </Card>
+
+              {/* Customer reviews moved here from the Homepage Sections tab —
+                  this is the natural home for "what real customers said".
+                  Editing here updates the two scrolling rows on the storefront
+                  reviews band. */}
+              <Card title="Customer reviews — row 1 (scrolls left)" desc="Each review: author, city, occasion, quote.">
+                <ListItemEditor
+                  items={content.testimonialsRow1 ?? []}
+                  fields={TESTIMONIAL_FIELDS as ReadonlyArray<FieldDef<{ quote: string; author: string; city: string; occasion: string }>>}
+                  newItem={() => ({ quote: '', author: '', city: '', occasion: '' })}
+                  onChange={(v) => {
+                    dispatch(setContent({ ...content, testimonialsRow1: v }));
+                    notify();
+                  }}
+                  itemLabel={(it) => it.author || 'New review'}
+                  max={12}
                 />
-              </Field>
-              <Field label="Attribution">
-                <Input
-                  value={content.testimonial.author}
-                  onChange={(e) => dispatch(updateTestimonial({ author: e.target.value }))}
-                  onBlur={notify}
+              </Card>
+
+              <Card title="Customer reviews — row 2 (scrolls right)" desc="Each review: author, city, occasion, quote.">
+                <ListItemEditor
+                  items={content.testimonialsRow2 ?? []}
+                  fields={TESTIMONIAL_FIELDS as ReadonlyArray<FieldDef<{ quote: string; author: string; city: string; occasion: string }>>}
+                  newItem={() => ({ quote: '', author: '', city: '', occasion: '' })}
+                  onChange={(v) => {
+                    dispatch(setContent({ ...content, testimonialsRow2: v }));
+                    notify();
+                  }}
+                  itemLabel={(it) => it.author || 'New review'}
+                  max={12}
                 />
-              </Field>
-            </Card>
+              </Card>
+            </div>
           )}
 
           {tab === 'locations' && (
@@ -682,21 +825,58 @@ export function WebsiteAdminPage(): JSX.Element {
           )}
 
           {tab === 'contact' && (
-            <Card title="WhatsApp contact" desc="Used by the floating WhatsApp button on every storefront page.">
-              <Field
-                label="WhatsApp number"
-                hint="Country code + number, digits only. Example: 919876543210"
-              >
-                <Input
-                  value={content.whatsappNumber}
-                  onChange={(e) => dispatch(updateWhatsapp(e.target.value.replace(/\D/g, '')))}
-                  onBlur={notify}
-                />
-              </Field>
-              <p className="text-xs text-ink-500">
-                Link generated: <span className="font-mono text-ink-700">https://wa.me/{content.whatsappNumber}</span>
-              </p>
-            </Card>
+            <div className="space-y-6">
+              <Card title="WhatsApp contact" desc="Used by the floating WhatsApp button on every storefront page.">
+                <Field
+                  label="WhatsApp number"
+                  hint="Country code + number, digits only. Example: 919876543210"
+                >
+                  <Input
+                    value={content.whatsappNumber}
+                    onChange={(e) => dispatch(updateWhatsapp(e.target.value.replace(/\D/g, '')))}
+                    onBlur={notify}
+                  />
+                </Field>
+                <p className="text-xs text-ink-500">
+                  Link generated: <span className="font-mono text-ink-700">https://wa.me/{content.whatsappNumber}</span>
+                </p>
+              </Card>
+
+              <Card title="Social media links" desc="Shown as icons in the storefront footer. Leave blank to hide an icon.">
+                <Field label="Instagram URL" hint="Full URL, e.g. https://instagram.com/yourbrand">
+                  <Input
+                    value={content.socials?.instagram ?? ''}
+                    onChange={(e) => dispatch(updateSocials({ instagram: e.target.value }))}
+                    onBlur={notify}
+                    placeholder="https://instagram.com/…"
+                  />
+                </Field>
+                <Field label="Facebook URL" hint="Full URL, e.g. https://facebook.com/yourbrand">
+                  <Input
+                    value={content.socials?.facebook ?? ''}
+                    onChange={(e) => dispatch(updateSocials({ facebook: e.target.value }))}
+                    onBlur={notify}
+                    placeholder="https://facebook.com/…"
+                  />
+                </Field>
+                <Field label="YouTube URL" hint="Full channel URL, e.g. https://youtube.com/@yourbrand">
+                  <Input
+                    value={content.socials?.youtube ?? ''}
+                    onChange={(e) => dispatch(updateSocials({ youtube: e.target.value }))}
+                    onBlur={notify}
+                    placeholder="https://youtube.com/@…"
+                  />
+                </Field>
+                <Field label="WhatsApp share link" hint="A click-to-chat link, e.g. https://wa.me/91XXXXXXXXXX">
+                  <Input
+                    value={content.socials?.whatsapp ?? ''}
+                    onChange={(e) => dispatch(updateSocials({ whatsapp: e.target.value }))}
+                    onBlur={notify}
+                    placeholder="https://wa.me/…"
+                  />
+                </Field>
+              </Card>
+            </div>
           )}
 
           {tab === 'filters' && (
@@ -745,6 +925,58 @@ export function WebsiteAdminPage(): JSX.Element {
           )}
           {tab === 'footer' && (
             <FooterSectionsTab content={content} onPatch={(patch) => { dispatch(setContent({ ...content, ...patch })); notify(); }} />
+          )}
+          {tab === 'invoice' && (
+            <Card
+              title="Invoice layout"
+              desc="Header, footer, T&Cs, and signatory printed on POS receipts and e-commerce order invoices. All optional — the renderer falls back to BIS-hallmark defaults when blank."
+            >
+              <Field label="Header note" hint="Short tagline printed under the business name (max 400 chars).">
+                <Input
+                  value={content.invoiceLayout?.headerNote ?? ''}
+                  onChange={(e) => dispatch(updateInvoiceLayout({ headerNote: e.target.value }))}
+                  onBlur={notify}
+                  placeholder="Family jewellers since 1972 · BIS-hallmarked"
+                />
+              </Field>
+              <Field label="Footer note" hint="Single line printed under the totals.">
+                <Input
+                  value={content.invoiceLayout?.footerNote ?? ''}
+                  onChange={(e) => dispatch(updateInvoiceLayout({ footerNote: e.target.value }))}
+                  onBlur={notify}
+                  placeholder="Thank you for your business."
+                />
+              </Field>
+              <Field label="Terms & conditions" hint="Appended to the footer, separated by ' · '.">
+                <Textarea
+                  rows={4}
+                  value={content.invoiceLayout?.termsAndConditions ?? ''}
+                  onChange={(e) => dispatch(updateInvoiceLayout({ termsAndConditions: e.target.value }))}
+                  onBlur={notify}
+                />
+              </Field>
+              <Field label="Signatory name" hint="Optional. Printed near the bottom of the invoice.">
+                <Input
+                  value={content.invoiceLayout?.signatoryName ?? ''}
+                  onChange={(e) => dispatch(updateInvoiceLayout({ signatoryName: e.target.value }))}
+                  onBlur={notify}
+                  placeholder="Anant Kamal, Proprietor"
+                />
+              </Field>
+              <Field label="Show logo on invoice">
+                <label className="inline-flex items-center gap-2 text-sm text-ink-700 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={content.invoiceLayout?.showLogo ?? true}
+                    onChange={(e) => {
+                      dispatch(updateInvoiceLayout({ showLogo: e.target.checked }));
+                      notify();
+                    }}
+                  />
+                  Print the brand logo at the top of each invoice
+                </label>
+              </Field>
+            </Card>
           )}
         </div>
 
@@ -1967,27 +2199,8 @@ function HomepageSectionsTab({
         />
       </Card>
 
-      <Card title="Customer reviews — row 1 (scrolls left)" desc="Each review: author, city, occasion, quote.">
-        <ListItemEditor
-          items={content.testimonialsRow1 ?? []}
-          fields={TESTIMONIAL_FIELDS as ReadonlyArray<FieldDef<{ quote: string; author: string; city: string; occasion: string }>>}
-          newItem={() => ({ quote: '', author: '', city: '', occasion: '' })}
-          onChange={(v) => onPatch({ testimonialsRow1: v })}
-          itemLabel={(it) => it.author || 'New review'}
-          max={12}
-        />
-      </Card>
-
-      <Card title="Customer reviews — row 2 (scrolls right)" desc="Each review: author, city, occasion, quote.">
-        <ListItemEditor
-          items={content.testimonialsRow2 ?? []}
-          fields={TESTIMONIAL_FIELDS as ReadonlyArray<FieldDef<{ quote: string; author: string; city: string; occasion: string }>>}
-          newItem={() => ({ quote: '', author: '', city: '', occasion: '' })}
-          onChange={(v) => onPatch({ testimonialsRow2: v })}
-          itemLabel={(it) => it.author || 'New review'}
-          max={12}
-        />
-      </Card>
+      {/* Customer reviews rows moved to the Testimonial tab — same data, but
+          editing reviews next to the testimonial quote is more discoverable. */}
 
       <Card title="Press logos (under the reviews)" desc="Magazine / newspaper names — appear as a logo strip.">
         <StringListEditor

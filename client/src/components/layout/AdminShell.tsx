@@ -6,6 +6,8 @@ import { CommandPalette } from './CommandPalette';
 import { useMeQuery } from '@/features/auth/authApi';
 import { useAppDispatch } from '@/app/hooks';
 import { setUser } from '@/features/auth/authSlice';
+import { useGetPublicStorefrontQuery } from '@/features/storefront/storefrontApi';
+import { setContent } from '@/features/storefront/storefrontContentSlice';
 
 export function AdminShell(): JSX.Element {
   const [cmdOpen, setCmdOpen] = useState(false);
@@ -19,6 +21,15 @@ export function AdminShell(): JSX.Element {
   useEffect(() => {
     if (data?.data) dispatch(setUser(data.data));
   }, [data, dispatch]);
+
+  // Hydrate the storefront content slice so the admin Sidebar logo / brand
+  // name + DocumentHead favicon / title reflect the published CMS values
+  // for admins too — not just for visitors on the public storefront. The
+  // endpoint is unauthenticated and edge-cached, so this is cheap.
+  const { data: storefront } = useGetPublicStorefrontQuery();
+  useEffect(() => {
+    if (storefront?.content) dispatch(setContent(storefront.content));
+  }, [storefront, dispatch]);
 
   // Close the mobile nav whenever the route changes so it doesn't linger
   // after a navigation triggered outside the sidebar.

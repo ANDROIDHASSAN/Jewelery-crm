@@ -90,6 +90,16 @@ export interface StorefrontContent {
     tagline: string;
     /** URL or data URL of the storefront logo. Empty string = show wordmark only. */
     logo: string;
+    /** Browser tab favicon — URL or data URL. Empty = fall back to logo. */
+    favicon: string;
+    /** document.title override. Empty = use brand.name. */
+    siteTitle: string;
+    /** SEO meta description. */
+    metaDescription: string;
+    /** SEO meta keywords. Comma-separated. */
+    metaKeywords: string;
+    /** OG share image URL (1200×630). */
+    ogImage: string;
   };
   hero: {
     eyebrow: string;
@@ -141,6 +151,26 @@ export interface StorefrontContent {
   copyrightLine: string;
   sectionLabels: SectionLabels;
   navMenu: NavItem[];
+
+  // Social media URLs surfaced in the storefront footer. Each string can
+  // be empty — the footer hides the icon when blank.
+  socials: {
+    instagram: string;
+    facebook: string;
+    youtube: string;
+    whatsapp: string;
+  };
+
+  // CMS-controlled invoice / receipt overrides. Both POS receipts and
+  // e-commerce order invoices read this blob server-side. Each string
+  // can be empty — the renderer falls back to baked defaults.
+  invoiceLayout: {
+    headerNote: string;
+    footerNote: string;
+    termsAndConditions: string;
+    showLogo: boolean;
+    signatoryName: string;
+  };
 }
 
 export interface NavItem {
@@ -154,6 +184,11 @@ export const DEFAULT_CONTENT: StorefrontContent = {
     name: 'Zelora',
     tagline: 'Indian bridal jewellery, BIS-hallmarked 22K & 18K gold, certified diamond solitaires and 925 silver — family jewellers in Haryana since 1972. Priced against the live MCX gold rate, with transparent making charges on every bill.',
     logo: '/logo/zelora-mark.png',
+    favicon: '/logo/zelora-mark.png',
+    siteTitle: 'Zelora — Run your jewellery business from one screen',
+    metaDescription: 'BIS-hallmarked 22K & 18K gold, certified solitaires, and 925 silver — priced against the live MCX rate.',
+    metaKeywords: 'jewellery, gold, bridal, BIS hallmark, diamond, silver',
+    ogImage: '',
   },
   hero: {
     eyebrow: 'The 2025 Bridal Edit · BIS Hallmarked',
@@ -371,6 +406,19 @@ export const DEFAULT_CONTENT: StorefrontContent = {
   // Empty by default — StorefrontHeader falls back to its hardcoded NAV
   // until an editor adds the first entry from Website CMS → Navigation.
   navMenu: [],
+  socials: {
+    instagram: '',
+    facebook: '',
+    youtube: '',
+    whatsapp: '',
+  },
+  invoiceLayout: {
+    headerNote: '',
+    footerNote: 'Thank you for your business.',
+    termsAndConditions: 'Goods once sold cannot be returned. Hallmarked weight is final.',
+    showLogo: true,
+    signatoryName: '',
+  },
 };
 
 // Initialise state.filters on demand if a legacy payload hydrated without
@@ -417,6 +465,11 @@ const slice = createSlice({
         copyrightLine: incoming.copyrightLine || DEFAULT_CONTENT.copyrightLine,
         sectionLabels: { ...DEFAULT_CONTENT.sectionLabels, ...(incoming.sectionLabels ?? {}) },
         navMenu: incoming.navMenu ?? DEFAULT_CONTENT.navMenu,
+        // Legacy content rows pre-date these fields; defensively merge so
+        // useStorefrontContent never returns `undefined` for an editor read.
+        brand: { ...DEFAULT_CONTENT.brand, ...(incoming.brand ?? {}) },
+        socials: { ...DEFAULT_CONTENT.socials, ...(incoming.socials ?? {}) },
+        invoiceLayout: { ...DEFAULT_CONTENT.invoiceLayout, ...(incoming.invoiceLayout ?? {}) },
       };
     },
     updateBrand(state, action: PayloadAction<Partial<StorefrontContent['brand']>>) {
@@ -573,6 +626,18 @@ const slice = createSlice({
       const filters = ensureFilters(state);
       filters.defaultGroupKeys = action.payload;
     },
+    updateSocials(state, action: PayloadAction<Partial<NonNullable<StorefrontContent['socials']>>>) {
+      state.socials = { ...(state.socials ?? DEFAULT_CONTENT.socials), ...action.payload };
+    },
+    updateInvoiceLayout(
+      state,
+      action: PayloadAction<Partial<NonNullable<StorefrontContent['invoiceLayout']>>>,
+    ) {
+      state.invoiceLayout = {
+        ...(state.invoiceLayout ?? DEFAULT_CONTENT.invoiceLayout),
+        ...action.payload,
+      };
+    },
   },
 });
 
@@ -603,6 +668,8 @@ export const {
   setFiltersForCollection,
   clearFiltersOverride,
   setDefaultFilterKeys,
+  updateSocials,
+  updateInvoiceLayout,
 } = slice.actions;
 
 export const storefrontContentReducer = slice.reducer;

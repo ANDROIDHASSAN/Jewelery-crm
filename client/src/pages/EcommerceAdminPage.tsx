@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { Plus, X, Pencil, Trash2, ChevronRight, List, Kanban as KanbanIcon, Upload, Link2, Clock, CheckCircle2, Package, Truck, XCircle, RotateCcw, MapPin } from 'lucide-react';
+import { Plus, X, Pencil, Trash2, ChevronRight, List, Kanban as KanbanIcon, Upload, Link2, Clock, CheckCircle2, Package, Truck, XCircle, RotateCcw, MapPin, FileDown } from 'lucide-react';
 import * as Dialog from '@radix-ui/react-dialog';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
@@ -11,6 +11,7 @@ import { PageHeader } from '@/components/ui/PageHeader';
 import { TabStrip, type TabStripItem } from '@/components/ui/TabStrip';
 import { TableToolbar, useTableSearch } from '@/components/data/TableToolbar';
 import { uploadImageToCloudinary, isCloudinaryConfigured, cloudinaryThumb } from '@/lib/cloudinary';
+import { downloadPdf } from '@/lib/downloadPdf';
 import {
   useGetOrdersQuery,
   useGetOrderDetailQuery,
@@ -434,7 +435,7 @@ function ProductsTable({
         <thead>
           <tr className="text-left text-eyebrow uppercase text-ink-500 border-b border-ink-100">
             <th className="sticky left-0 z-10 bg-ink-0 px-4 py-3 lg:static lg:bg-transparent">Product</th>
-            <th className="px-4 py-3">SKU</th>
+            <th className="px-4 py-3">Slug</th>
             <th className="px-4 py-3">Weight</th>
             <th className="px-4 py-3">Purity</th>
             <th className="px-4 py-3 text-right">Price</th>
@@ -1625,6 +1626,42 @@ function OrderDrawer({ order, onClose }: { order: AdminOrder | null; onClose: ()
                 <div className="flex gap-2">
                   <Input value={awb} onChange={(e) => setAwb(e.target.value)} placeholder="AWB number" />
                   <Button onClick={saveAwb} disabled={updating} variant="secondary">Save</Button>
+                </div>
+              </div>
+
+              {/* Tax invoice — server renders the same PDF for both POS and
+                  e-commerce. Footer text comes from Website CMS → Invoice
+                  Layout (falls back to the baked default). Both buttons go
+                  through downloadPdf so the Bearer token is attached — a
+                  plain <a href> would 401 against the auth middleware. */}
+              <div>
+                <p className="text-eyebrow uppercase text-ink-500 mb-2">Invoice</p>
+                <div className="flex flex-wrap gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() =>
+                      void downloadPdf(`/api/v1/ecommerce/orders/${order.id}/invoice.pdf`, {
+                        mode: 'preview',
+                      })
+                    }
+                  >
+                    <FileDown className="h-4 w-4 mr-1.5" /> Preview invoice
+                  </Button>
+                  <Button
+                    size="sm"
+                    onClick={() =>
+                      void downloadPdf(
+                        `/api/v1/ecommerce/orders/${order.id}/invoice.pdf?download=1`,
+                        {
+                          mode: 'download',
+                          filename: `invoice-${order.id}.pdf`,
+                        },
+                      )
+                    }
+                  >
+                    <FileDown className="h-4 w-4 mr-1.5" /> Download invoice
+                  </Button>
                 </div>
               </div>
 

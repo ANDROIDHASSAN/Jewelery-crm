@@ -80,6 +80,11 @@ interface SidebarProps {
 
 function SidebarInner({ onNavigate }: { onNavigate?: () => void }): JSX.Element {
   const user = useAppSelector((s) => s.auth.user);
+  // Brand identity from CMS — falls back to the seeded defaults when the
+  // tenant hasn't customised it yet (DEFAULT_CONTENT.brand still resolves
+  // to the Zelora logo + name).
+  const brandName = useAppSelector((s) => s.storefrontContent.brand.name);
+  const brandLogo = useAppSelector((s) => s.storefrontContent.brand.logo);
 
   // Filter items per section by permissions, then drop any section that ends
   // up empty so we don't render a stranded heading.
@@ -95,7 +100,7 @@ function SidebarInner({ onNavigate }: { onNavigate?: () => void }): JSX.Element 
       <div className="px-5 py-5 flex items-center gap-2.5">
         <div className="relative h-9 w-9 shrink-0">
           <img
-            src="/logo/zelora-mark.png"
+            src={brandLogo || '/logo/zelora-mark.png'}
             alt=""
             aria-hidden="true"
             className="h-9 w-9 rounded-md object-cover ring-1 ring-ink-100"
@@ -107,8 +112,8 @@ function SidebarInner({ onNavigate }: { onNavigate?: () => void }): JSX.Element 
           />
         </div>
         <div className="flex flex-col min-w-0">
-          <span className="font-display text-[17px] text-ink-900 leading-none tracking-tight">
-            Zelora
+          <span className="font-display text-[17px] text-ink-900 leading-none tracking-tight truncate">
+            {brandName}
           </span>
           {user && (
             <span className="text-[10px] uppercase tracking-[0.14em] text-ink-400 mt-1 font-medium truncate">

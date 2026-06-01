@@ -718,6 +718,14 @@ export const StorefrontContentSchema = z.object({
     name: z.string().min(1).max(120),
     tagline: z.string().min(1).max(400),
     logo: z.string().max(2_500_000).default(''),
+    // CMS-controlled tab/SEO surface. All optional so legacy content rows
+    // continue to validate. DocumentHead reads these and falls back to brand
+    // defaults when blank.
+    favicon: z.string().max(2_500_000).optional().default(''),
+    siteTitle: z.string().max(160).optional().default(''),
+    metaDescription: z.string().max(320).optional().default(''),
+    metaKeywords: z.string().max(320).optional().default(''),
+    ogImage: z.string().max(2_500_000).optional().default(''),
   }),
   hero: z.object({
     eyebrow: z.string().max(120),
@@ -817,6 +825,40 @@ export const StorefrontContentSchema = z.object({
       defaultGroupKeys: z.array(z.string().min(1).max(60)).max(20),
     })
     .optional(),
+
+  // Social media URLs surfaced in the storefront footer. Each is an optional
+  // URL string; empty strings render as no-op (the footer hides the icon).
+  // Stored verbatim so users can paste full URLs (https://instagram.com/...)
+  // or WhatsApp wa.me links — we do no normalisation server-side.
+  socials: z
+    .object({
+      instagram: z.string().max(400).optional().default(''),
+      facebook: z.string().max(400).optional().default(''),
+      youtube: z.string().max(400).optional().default(''),
+      whatsapp: z.string().max(400).optional().default(''),
+    })
+    .optional()
+    .default({ instagram: '', facebook: '', youtube: '', whatsapp: '' }),
+
+  // Invoice layout CMS — drives both POS receipts and e-commerce order
+  // invoices. All fields optional with sensible defaults; the PDF renderer
+  // falls back to brand.name / brand.logo when blank.
+  invoiceLayout: z
+    .object({
+      headerNote: z.string().max(400).optional().default(''),
+      footerNote: z.string().max(400).optional().default(''),
+      termsAndConditions: z.string().max(2000).optional().default(''),
+      showLogo: z.boolean().optional().default(true),
+      signatoryName: z.string().max(160).optional().default(''),
+    })
+    .optional()
+    .default({
+      headerNote: '',
+      footerNote: '',
+      termsAndConditions: '',
+      showLogo: true,
+      signatoryName: '',
+    }),
 });
 
 export type StorefrontContent = z.infer<typeof StorefrontContentSchema>;

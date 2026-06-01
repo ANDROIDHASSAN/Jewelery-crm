@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Instagram, Facebook, Youtube, MapPin, Phone, Mail, ArrowRight } from 'lucide-react';
+import { Instagram, Facebook, Youtube, MapPin, Phone, Mail, ArrowRight, MessageCircle } from 'lucide-react';
 import { toast } from 'sonner';
 import { useAppSelector } from '@/app/hooks';
 import { useCreateEnquiryMutation } from '@/features/storefront/storefrontApi';
@@ -14,6 +14,9 @@ export function StorefrontFooter(): JSX.Element {
   const footerEmail = useAppSelector((s) => s.storefrontContent.footerEmail);
   const copyrightLine = useAppSelector((s) => s.storefrontContent.copyrightLine);
   const L = useAppSelector((s) => s.storefrontContent.sectionLabels);
+  // Social links from CMS — render only the icons that have a URL set.
+  // Empty strings are valid (means "hide that icon").
+  const socials = useAppSelector((s) => s.storefrontContent.socials);
   const [newsletterEmail, setNewsletterEmail] = useState('');
   const [subscribe, { isLoading: subscribing }] = useCreateEnquiryMutation();
 
@@ -99,9 +102,18 @@ export function StorefrontFooter(): JSX.Element {
             )}
           </ul>
           <div className="mt-5 flex items-center gap-2 text-ink-500">
-            <a href="#" aria-label="Instagram" className="h-9 w-9 inline-flex items-center justify-center rounded-full border border-ink-100 hover:border-ink-300 hover:text-ink-900"><Instagram className="h-4 w-4" /></a>
-            <a href="#" aria-label="Facebook" className="h-9 w-9 inline-flex items-center justify-center rounded-full border border-ink-100 hover:border-ink-300 hover:text-ink-900"><Facebook className="h-4 w-4" /></a>
-            <a href="#" aria-label="YouTube" className="h-9 w-9 inline-flex items-center justify-center rounded-full border border-ink-100 hover:border-ink-300 hover:text-ink-900"><Youtube className="h-4 w-4" /></a>
+            {socials?.instagram && (
+              <a href={socials.instagram} target="_blank" rel="noreferrer noopener" aria-label="Instagram" className="h-9 w-9 inline-flex items-center justify-center rounded-full border border-ink-100 hover:border-ink-300 hover:text-ink-900"><Instagram className="h-4 w-4" /></a>
+            )}
+            {socials?.facebook && (
+              <a href={socials.facebook} target="_blank" rel="noreferrer noopener" aria-label="Facebook" className="h-9 w-9 inline-flex items-center justify-center rounded-full border border-ink-100 hover:border-ink-300 hover:text-ink-900"><Facebook className="h-4 w-4" /></a>
+            )}
+            {socials?.youtube && (
+              <a href={socials.youtube} target="_blank" rel="noreferrer noopener" aria-label="YouTube" className="h-9 w-9 inline-flex items-center justify-center rounded-full border border-ink-100 hover:border-ink-300 hover:text-ink-900"><Youtube className="h-4 w-4" /></a>
+            )}
+            {socials?.whatsapp && (
+              <a href={socials.whatsapp} target="_blank" rel="noreferrer noopener" aria-label="WhatsApp" className="h-9 w-9 inline-flex items-center justify-center rounded-full border border-ink-100 hover:border-ink-300 hover:text-ink-900"><MessageCircle className="h-4 w-4" /></a>
+            )}
           </div>
         </div>
         <FooterCol title="Shop"  links={footerShop.map((l) => [l.label, l.href])} />
@@ -118,7 +130,7 @@ export function StorefrontFooter(): JSX.Element {
           <div className="flex items-center gap-4">
             <Link to="/store/privacy" className="hover:text-ink-700">Privacy</Link>
             <Link to="/store/terms" className="hover:text-ink-700">Terms</Link>
-            <span className="text-ink-400">Powered by Zelora</span>
+            <span className="text-ink-400">Powered by {brand.name}</span>
           </div>
         </div>
       </div>

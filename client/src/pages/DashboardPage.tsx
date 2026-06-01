@@ -35,6 +35,7 @@ import {
 } from '@/components/ui/charts';
 import { useGetDashboardSummaryQuery } from '@/features/dashboard/dashboardApi';
 import { useSelectedShopId } from '@/features/ui/shopFilterSlice';
+import { useAppSelector } from '@/app/hooks';
 import { useGetPlQuery, useGetExpensesByCategoryQuery } from '@/features/finance/financeApi';
 import { useGetLeadsQuery } from '@/features/crm/crmApi';
 import { useGetOrdersQuery, type AdminOrder } from '@/features/ecommerce/ecommerceApi';
@@ -137,8 +138,22 @@ export function DashboardPage(): JSX.Element {
   const { data: summaryRes, isLoading, isError } = useGetDashboardSummaryQuery(summaryArg, {
     pollingInterval: 60_000,
   });
-  const { data: plRes, isLoading: plLoading, isError: plError, error: plErrorObj } = useGetPlQuery(range, { pollingInterval: 60_000 });
-  const { data: expensesByCatRes, isLoading: expCatLoading, isError: expCatError, error: expCatErrorObj } = useGetExpensesByCategoryQuery(range);
+  // P&L + expenses live under /finance which requires finance.read (or any
+  // finance.* write). Roles like Employee don't carry finance perms by
+  // default, so firing the query unconditionally produced a hard 403 +
+  // "Failed to load P&L (403)" red banner on every employee dashboard.
+  // Skip the queries entirely when the user lacks finance.read; the tiles
+  // hide themselves below when their data is undefined.
+  const canReadFinance = useAppSelector(
+    (s) => s.auth.user?.perms.includes('finance.read') ?? false,
+  );
+  const { data: plRes, isLoading: plLoading, isError: plError, error: plErrorObj } = useGetPlQuery(range, {
+    pollingInterval: 60_000,
+    skip: !canReadFinance,
+  });
+  const { data: expensesByCatRes, isLoading: expCatLoading, isError: expCatError, error: expCatErrorObj } = useGetExpensesByCategoryQuery(range, {
+    skip: !canReadFinance,
+  });
   const { data: leadsRes } = useGetLeadsQuery(undefined, { pollingInterval: 60_000 });
   const { data: ordersRes } = useGetOrdersQuery(undefined, { pollingInterval: 60_000 });
   const { data: billsRes } = useGetBillsQuery({}, { pollingInterval: 60_000 });
@@ -574,7 +589,10 @@ export function DashboardPage(): JSX.Element {
         </SectionCard>
       </section>
 
-      {/* ---- 7. Finance — revenue/expense + GST + expense breakdown ---- */}
+      {/* ---- 7. Finance — revenue/expense + GST + expense breakdown ----
+            Hidden entirely from roles without finance.read so cashiers /
+            employees don't see two red error banners on every login. */}
+      {canReadFinance && (
       <section className="grid grid-cols-1 lg:grid-cols-3 gap-3 sm:gap-4">
         <ChartCard className="lg:col-span-2" title="Revenue vs expenses (MTD)" eyebrow="Finance">
           {plLoading ? (
@@ -627,6 +645,7 @@ export function DashboardPage(): JSX.Element {
           )}
         </ChartCard>
       </section>
+      )}
 
       {/* ---- 8. Inventory health (low stock + vendor outstanding) ---- */}
       <section className="grid grid-cols-1 md:grid-cols-2 gap-3 sm:gap-4">

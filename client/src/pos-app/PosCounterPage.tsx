@@ -37,6 +37,7 @@ import { Badge } from '@/components/ui/badge';
 import { Money } from '@/components/ui/money';
 import { Sheet, SheetContent } from '@/components/ui/sheet';
 import { cn } from '@/lib/cn';
+import { downloadPdf } from '@/lib/downloadPdf';
 import {
   cloudinaryThumb,
   isCloudinaryConfigured,
@@ -1563,9 +1564,12 @@ function StatusBar({
 }): JSX.Element {
   function printLastBill(): void {
     if (!lastBill) return;
-    // PDF endpoint streams the bytes inline so the browser shows a print
-    // preview; the cashier can paper-print from there or just save.
-    window.open(`/api/v1/pos/bills/${lastBill.id}/receipt.pdf`, '_blank', 'noopener');
+    // Use the auth-aware downloader — a bare window.open would 401 against
+    // the bearer-required POS routes. We open as a preview so the browser
+    // renders the inline PDF (cashier hits Cmd/Ctrl-P to paper-print).
+    void downloadPdf(`/api/v1/pos/bills/${lastBill.id}/receipt.pdf`, {
+      mode: 'preview',
+    });
   }
 
   function whatsAppLastBill(): void {
