@@ -28,11 +28,16 @@
   --ink-800: #1F1D1A;
   --ink-900: #0F0E0C;
 
-  /* Semantic. */
-  --success-50:  #E6F4EA; --success-500: #2E8B57; --success-700: #1E5E3A;
-  --warning-50:  #FCF1DD; --warning-500: #C68920; --warning-700: #8A5C12;
-  --danger-50:   #FBEAEA; --danger-500:  #B53A3A; --danger-700:  #7A2424;
-  --info-50:     #E6EFF5; --info-500:    #2E6EA6; --info-700:    #1B4368;
+  /* Semantic. The -600 step sits between -500 and -700 so primary action
+     buttons (POS Pay, etc.) have a deeper resting state than -500 while
+     still leaving headroom for the -700 hover. Multiple call sites
+     already use `success-600` / `danger-600` etc., assuming they exist —
+     this row makes those classes resolve instead of silently dropping out
+     (which was the "Pay button only visible on hover" bug). */
+  --success-50:  #E6F4EA; --success-500: #2E8B57; --success-600: #237247; --success-700: #1E5E3A;
+  --warning-50:  #FCF1DD; --warning-500: #C68920; --warning-600: #A87519; --warning-700: #8A5C12;
+  --danger-50:   #FBEAEA; --danger-500:  #B53A3A; --danger-600:  #973030; --danger-700:  #7A2424;
+  --info-50:     #E6EFF5; --info-500:    #2E6EA6; --info-600:    #245888; --info-700:    #1B4368;
 
   /* Typography. */
   --font-display: 'Fraunces', 'Cormorant Garamond', Georgia, serif;

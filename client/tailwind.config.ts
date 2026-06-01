@@ -37,21 +37,25 @@ export default {
         success: {
           50: 'var(--success-50)',
           500: 'var(--success-500)',
+          600: 'var(--success-600)',
           700: 'var(--success-700)',
         },
         warning: {
           50: 'var(--warning-50)',
           500: 'var(--warning-500)',
+          600: 'var(--warning-600)',
           700: 'var(--warning-700)',
         },
         danger: {
           50: 'var(--danger-50)',
           500: 'var(--danger-500)',
+          600: 'var(--danger-600)',
           700: 'var(--danger-700)',
         },
         info: {
           50: 'var(--info-50)',
           500: 'var(--info-500)',
+          600: 'var(--info-600)',
           700: 'var(--info-700)',
         },
       },

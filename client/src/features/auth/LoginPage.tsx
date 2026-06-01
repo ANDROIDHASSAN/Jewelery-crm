@@ -3,17 +3,19 @@
 // (with permission list) lands in the auth slice and the sidebar renders
 // only the modules they're allowed to see.
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate, useLocation, Link } from 'react-router-dom';
 import { toast } from 'sonner';
 import { Eye, EyeOff, ShieldCheck } from 'lucide-react';
-import { useAppDispatch } from '@/app/hooks';
+import { useAppDispatch, useAppSelector } from '@/app/hooks';
 import { signInWithFreshCache } from './authActions';
 import { useLoginMutation } from './authApi';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { isPosHost } from '@/app/routes';
+import { useGetPublicStorefrontQuery } from '@/features/storefront/storefrontApi';
+import { setContent } from '@/features/storefront/storefrontContentSlice';
 
 type Step = 'credentials' | 'mfa';
 
@@ -31,6 +33,18 @@ export function LoginPage(): JSX.Element {
   const navigate = useNavigate();
   const loc = useLocation();
   const onPosHost = isPosHost();
+
+  // Hydrate the storefront content slice from the public endpoint so the
+  // login page renders the CMS-defined brand identity (logo + name) the
+  // same way the admin Sidebar and storefront do — instead of the
+  // hardcoded Zelora literals. The endpoint is unauthenticated, so this
+  // works even before the user has signed in.
+  const { data: storefront } = useGetPublicStorefrontQuery();
+  useEffect(() => {
+    if (storefront?.content) dispatch(setContent(storefront.content));
+  }, [storefront, dispatch]);
+  const brandName = useAppSelector((s) => s.storefrontContent.brand.name);
+  const brandLogo = useAppSelector((s) => s.storefrontContent.brand.logo);
   // Default landing depends on which app the user landed on. POS subdomain
   // login → POS billing surface. Admin login → admin dashboard.
   const defaultFrom = onPosHost ? '/' : '/admin';
@@ -117,12 +131,12 @@ export function LoginPage(): JSX.Element {
         />
         <div className="relative flex items-center gap-3">
           <img
-            src="/logo/zelora-mark.png"
+            src={brandLogo || '/logo/zelora-mark.png'}
             alt=""
             aria-hidden="true"
             className="h-12 w-12 rounded-md object-cover shadow-sm"
           />
-          <div className="font-display text-2xl tracking-tight text-brand-200">Zelora</div>
+          <div className="font-display text-2xl tracking-tight text-brand-200">{brandName}</div>
         </div>
 
         <div className="relative max-w-md space-y-6">

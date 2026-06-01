@@ -1164,10 +1164,11 @@ function BillAndPaymentColumn(props: BillColumnProps): JSX.Element {
 
       {/* Payment / Customer tabs.
           flex-1 + min-h-0 lets this whole section participate in the parent
-          flex-col so PaymentTab's sticky Pay footer always wins the vertical
-          budget over the (scrollable) middle. Without this the column
-          relied on max-h-[40vh] which clipped the Pay button at common
-          1366×768 viewports — the original "Pay only shows on hover" bug. */}
+          flex-col so the scrollable middle and the sticky Pay footer share
+          the column budget sensibly on small viewports — the middle scrolls
+          when content overflows. (Note: the original "Pay only shows on
+          hover" bug was actually a missing colour token, not a layout
+          problem — see the Pay <Button> comment below.) */}
       <div className="border-t border-ink-100 flex-1 flex flex-col min-h-0">
         <div className="flex border-b border-ink-100 shrink-0">
           <TabButton active={tab === 'payment'} onClick={() => onTabChange('payment')}>Payment</TabButton>
@@ -1469,7 +1470,14 @@ function PaymentTab(p: BillColumnProps): JSX.Element {
 
       {/* Sticky pay footer — always visible regardless of payment-tab
           scroll. The "Pay" button is the primary action; it cannot be
-          allowed to fall off the fold. */}
+          allowed to fall off the fold.
+
+          The button uses bg-success-600 — that step is registered in
+          tokens.css + tailwind.config.ts. An earlier oversight had only
+          -500 and -700 registered, so this class compiled to nothing and
+          the button rendered white-on-white at rest (only :hover, which
+          uses -700, painted it visible). If you change the colour step,
+          make sure the variant exists in both files. */}
       <div className="px-4 sm:px-5 py-3 border-t border-ink-100 bg-ink-0 space-y-2 shrink-0">
         <div className="flex items-center justify-between text-xs">
           <span className="text-ink-500">Paid {paid > 0 && <>· <Money paise={paid} className="font-mono" /></>}</span>

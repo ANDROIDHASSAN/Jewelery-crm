@@ -46,6 +46,8 @@ import { PosSidebar, type PosSidebarNavItem } from './PosSidebar';
 import { isPosHost } from '@/app/routes';
 import { useGetGoldRateQuery } from '@/features/pos/posApi';
 import { startBackgroundSync, pendingCount as offlinePendingCount } from '@/features/pos/offline';
+import { useGetPublicStorefrontQuery } from '@/features/storefront/storefrontApi';
+import { setContent } from '@/features/storefront/storefrontContentSlice';
 
 export function PosShell(): JSX.Element {
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
@@ -55,6 +57,15 @@ export function PosShell(): JSX.Element {
   const user = useAppSelector((s) => s.auth.user);
   const dispatch = useAppDispatch();
   const navigate = useNavigate();
+
+  // Hydrate the storefront content slice so the PosSidebar shows the
+  // CMS-defined brand identity (logo + name) instead of the seeded
+  // Zelora defaults. The endpoint is public, so this works regardless
+  // of auth state.
+  const { data: storefront } = useGetPublicStorefrontQuery();
+  useEffect(() => {
+    if (storefront?.content) dispatch(setContent(storefront.content));
+  }, [storefront, dispatch]);
 
   // Online/offline mirror.
   const [online, setOnline] = useState<boolean>(typeof navigator === 'undefined' ? true : navigator.onLine);

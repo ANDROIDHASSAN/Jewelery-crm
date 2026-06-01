@@ -6,6 +6,7 @@ import { NavLink } from 'react-router-dom';
 import { CreditCard, LogOut, Settings, X } from 'lucide-react';
 import { cn } from '@/lib/cn';
 import { Money } from '@/components/ui/money';
+import { useAppSelector } from '@/app/hooks';
 
 export interface PosSidebarNavItem {
   to: string;
@@ -78,19 +79,24 @@ function SidebarInner({
   onSignOut,
   onNavigate,
 }: PosSidebarProps & { onNavigate?: () => void }): JSX.Element {
+  // Brand identity from the CMS — falls back to the seeded defaults when
+  // the tenant hasn't customised it yet. The POS app shell hydrates the
+  // storefront content slice on boot so this read is non-empty.
+  const brandName = useAppSelector((s) => s.storefrontContent.brand.name);
+  const brandLogo = useAppSelector((s) => s.storefrontContent.brand.logo);
   return (
     <>
       {/* Brand block ----------------------------------------------- */}
       <div className="px-5 pt-5 pb-4 border-b border-ink-100">
         <div className="flex items-center gap-2.5">
           <img
-            src="/logo/zelora-mark.png"
+            src={brandLogo || '/logo/zelora-mark.png'}
             alt=""
             aria-hidden="true"
             className="h-9 w-9 rounded-md object-cover shrink-0"
           />
           <div className="min-w-0">
-            <div className="font-display text-md text-ink-900 leading-none">Zelora POS</div>
+            <div className="font-display text-md text-ink-900 leading-none truncate">{brandName} POS</div>
             <div className="text-[10px] uppercase tracking-wider text-ink-500 mt-1 truncate">
               {shopName ?? 'No shop assigned'}
             </div>
