@@ -384,7 +384,7 @@ function ProductsTable({
   );
   const products = useTableSearch(
     preFiltered,
-    (p) => [p.name, p.slug, p.linkedItem?.sku ?? '', p.descriptionMd],
+    (p) => [p.name, p.linkedItem?.sku ?? '', p.descriptionMd],
     search,
   );
 
@@ -412,7 +412,7 @@ function ProductsTable({
     <TableToolbar
       query={search}
       onQueryChange={setSearch}
-      searchPlaceholder="Search products by name, SKU, slug or description…"
+      searchPlaceholder="Search products by name, SKU or description…"
       filters={[
         {
           key: 'publish',
