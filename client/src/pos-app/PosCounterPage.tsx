@@ -1162,9 +1162,14 @@ function BillAndPaymentColumn(props: BillColumnProps): JSX.Element {
         </div>
       </div>
 
-      {/* Payment / Customer tabs */}
-      <div className="border-t border-ink-100">
-        <div className="flex border-b border-ink-100">
+      {/* Payment / Customer tabs.
+          flex-1 + min-h-0 lets this whole section participate in the parent
+          flex-col so PaymentTab's sticky Pay footer always wins the vertical
+          budget over the (scrollable) middle. Without this the column
+          relied on max-h-[40vh] which clipped the Pay button at common
+          1366×768 viewports — the original "Pay only shows on hover" bug. */}
+      <div className="border-t border-ink-100 flex-1 flex flex-col min-h-0">
+        <div className="flex border-b border-ink-100 shrink-0">
           <TabButton active={tab === 'payment'} onClick={() => onTabChange('payment')}>Payment</TabButton>
           <TabButton active={tab === 'customer'} onClick={() => onTabChange('customer')}>Customer</TabButton>
         </div>
@@ -1268,13 +1273,18 @@ function PaymentTab(p: BillColumnProps): JSX.Element {
   const due = grandTotal - paid;
   // Two-region layout: scrollable middle (discount / exchange / payment
   // grid / splits) and a sticky footer carrying the always-visible Pay
-  // button + paid/due indicator. Earlier the Pay button lived INSIDE the
-  // scrollable region with `max-h-[55vh]` and disappeared below the fold
-  // on common viewports — that's the "only shows on hover" report.
+  // button + paid/due indicator. The previous version used `max-h-[40vh]`
+  // on the scrollable middle, but on 1366×768 viewports the cumulative
+  // column height exceeded the parent's `overflow-hidden` and the Pay
+  // footer got clipped (the "Pay only shows on hover" report still
+  // surfaced after the first attempted fix). The proper fix is to grow
+  // the OUTER PaymentTab via flex-1 inside the column, and let the inner
+  // scrollable middle shrink with flex-1 min-h-0 — so the Pay button
+  // footer wins the vertical budget regardless of viewport size.
   return (
-    <div className="flex flex-col">
+    <div className="flex flex-col flex-1 min-h-0">
       {/* Scrollable middle */}
-      <div className="px-4 sm:px-5 py-3 space-y-3 overflow-y-auto max-h-[40vh]">
+      <div className="px-4 sm:px-5 py-3 space-y-3 overflow-y-auto flex-1 min-h-0">
       {/* Total payable hero */}
       <div className="flex items-center justify-between">
         <span className="text-xs text-ink-500 uppercase tracking-wider">Total payable</span>
@@ -1488,7 +1498,7 @@ function PaymentTab(p: BillColumnProps): JSX.Element {
 function CustomerTab(p: BillColumnProps): JSX.Element {
   const { customer, phoneSearch, onPhoneSearchChange, onLookupCustomer, onClearCustomer, lookingUp } = p;
   return (
-    <div className="px-4 sm:px-5 py-3 space-y-3">
+    <div className="px-4 sm:px-5 py-3 space-y-3 flex-1 min-h-0 overflow-y-auto">
       <div className="space-y-1.5">
         <Label className="text-xs text-ink-600">Customer phone</Label>
         <div className="flex gap-2">
