@@ -124,7 +124,36 @@ export function InventoryPage(): JSX.Element {
 
 function ItemsTab(): JSX.Element {
   const navigate = useNavigate();
-  const { data, isLoading } = useGetItemsQuery({});
+  // Cursor-chain pagination — see the comment block above InventoryItemsTable
+  // for the rationale. Each entry in `cursorChain` is a cursor that has been
+  // fetched; the *active* fetch is the last cursor (or undefined for page 1).
+  // Accumulated rows are appended (deduped by id) so the table renders every
+  // page that's been loaded so far. Reset to a single fetch when the
+  // browser-side filters change, since those operate on the loaded subset.
+  const [cursorChain, setCursorChain] = useState<Array<string | undefined>>([undefined]);
+  const [allRows, setAllRows] = useState<Item[]>([]);
+  const activeCursor = cursorChain[cursorChain.length - 1];
+  const { data, isLoading, isFetching } = useGetItemsQuery({
+    cursor: activeCursor,
+    limit: 50,
+  });
+  useEffect(() => {
+    if (!data?.data) return;
+    setAllRows((prev) => {
+      const seen = new Set(prev.map((r) => r.id));
+      const fresh = data.data.filter((r) => !seen.has(r.id));
+      return fresh.length === 0 ? prev : [...prev, ...fresh];
+    });
+  }, [data]);
+  function loadMore(): void {
+    const next = data?.page.nextCursor;
+    if (!next) return;
+    // Guard: don't push the same cursor twice if the user double-clicks.
+    if (cursorChain.includes(next)) return;
+    setCursorChain((prev) => [...prev, next]);
+  }
+  const hasMore = data?.page.hasMore ?? false;
+
   const { data: catRes } = useGetCategoriesQuery();
   const { data: shopsRes } = useGetShopsQuery();
   const [selected, setSelected] = useState<Item | null>(null);
@@ -278,7 +307,8 @@ function ItemsTab(): JSX.Element {
       >
         {data && (
           <StatPill>
-            {data.data.length} item{data.data.length === 1 ? '' : 's'}
+            {allRows.length}
+            {hasMore ? '+' : ''} item{allRows.length === 1 ? '' : 's'}
           </StatPill>
         )}
       </Toolbar>
@@ -286,8 +316,8 @@ function ItemsTab(): JSX.Element {
       <BulkImportModal open={importOpen} onClose={() => setImportOpen(false)} />
 
       <InventoryItemsTable
-        rows={data?.data ?? []}
-        isLoading={isLoading}
+        rows={allRows}
+        isLoading={isLoading && allRows.length === 0}
         columns={columns}
         onRowSelect={setSelected}
         onAddFirst={() => setAddOpen(true)}
@@ -303,6 +333,9 @@ function ItemsTab(): JSX.Element {
         onHallmarkFilter={setHallmarkFilter}
         shops={shopsRes?.data ?? []}
         categories={catRes?.data ?? []}
+        hasMore={hasMore}
+        isFetchingMore={isFetching && allRows.length > 0}
+        onLoadMore={loadMore}
       />
 
 
@@ -417,6 +450,9 @@ function InventoryItemsTable({
   onHallmarkFilter,
   shops,
   categories,
+  hasMore,
+  isFetchingMore,
+  onLoadMore,
 }: {
   rows: Item[];
   isLoading: boolean;
@@ -435,6 +471,12 @@ function InventoryItemsTable({
   onHallmarkFilter: (next: string) => void;
   shops: Array<{ id: string; name: string }>;
   categories: Array<{ id: string; name: string }>;
+  /** True when the server reports a next cursor for the most recent page. */
+  hasMore: boolean;
+  /** True while a Load-more fetch is in flight (rows are already showing). */
+  isFetchingMore: boolean;
+  /** Append the next page of items. */
+  onLoadMore: () => void;
 }): JSX.Element {
   // Selects narrow first (fast equality), then free-text search runs over
   // the smaller pool.
@@ -522,6 +564,26 @@ function InventoryItemsTable({
         countLabel={filtered.length === 1 ? 'item' : 'items'}
       />
       <DataTable columns={columns} data={filtered} onRowClick={onRowSelect} />
+      {/* Pagination footer — visible when the server reports more pages.
+          Browser-side filters narrow the loaded subset; if the user has
+          filtered everything out but there are more pages on the server,
+          the button stays so they can keep loading until a match shows. */}
+      {(hasMore || isFetchingMore) && (
+        <div className="mt-4 flex items-center justify-center gap-3 text-xs text-ink-500">
+          <span>
+            Showing {filtered.length} of {rows.length} loaded
+            {hasMore ? ' · more on server' : ''}
+          </span>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={onLoadMore}
+            disabled={!hasMore || isFetchingMore}
+          >
+            {isFetchingMore ? 'Loading…' : 'Load more'}
+          </Button>
+        </div>
+      )}
     </>
   );
 }

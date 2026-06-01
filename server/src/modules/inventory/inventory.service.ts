@@ -20,7 +20,12 @@ function slugifyForProduct(raw: string): string {
   return base || 'item';
 }
 
-const DEFAULT_PAGE_LIMIT = 20;
+// The admin inventory list paginates via cursor + Load-more. A larger
+// default means a fresh page already shows ~half a typical small-shop
+// catalogue without clicking Load more once, while still capping per-
+// request work so a 100k-item tenant doesn't blow the response time.
+// Clients can override via ?limit= (capped at MAX_PAGE_LIMIT).
+const DEFAULT_PAGE_LIMIT = 50;
 const MAX_PAGE_LIMIT = 100;
 
 export async function listItems(opts: { shopId?: string; categoryId?: string; cursor?: string; limit?: number }) {
