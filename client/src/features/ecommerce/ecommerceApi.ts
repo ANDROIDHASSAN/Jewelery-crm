@@ -18,6 +18,10 @@ export interface AdminProduct {
   images: string[];
   isPublished: boolean;
   createdAt: string;
+  // Pulled from the bridged inventory Item (Product.linkedItemId). Surfaces
+  // the real stock-keeping SKU in the admin table without joining client-side.
+  // Null when the product was created without an inventory link.
+  linkedItem?: { sku: string } | null;
 }
 
 export interface AdminOrderItem {

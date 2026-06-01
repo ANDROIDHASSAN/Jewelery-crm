@@ -384,7 +384,7 @@ function ProductsTable({
   );
   const products = useTableSearch(
     preFiltered,
-    (p) => [p.name, p.slug, p.descriptionMd],
+    (p) => [p.name, p.slug, p.linkedItem?.sku ?? '', p.descriptionMd],
     search,
   );
 
@@ -412,7 +412,7 @@ function ProductsTable({
     <TableToolbar
       query={search}
       onQueryChange={setSearch}
-      searchPlaceholder="Search products by name, slug or description…"
+      searchPlaceholder="Search products by name, SKU, slug or description…"
       filters={[
         {
           key: 'publish',
@@ -435,7 +435,7 @@ function ProductsTable({
         <thead>
           <tr className="text-left text-eyebrow uppercase text-ink-500 border-b border-ink-100">
             <th className="sticky left-0 z-10 bg-ink-0 px-4 py-3 lg:static lg:bg-transparent">Product</th>
-            <th className="px-4 py-3">Slug</th>
+            <th className="px-4 py-3">SKU</th>
             <th className="px-4 py-3">Weight</th>
             <th className="px-4 py-3">Purity</th>
             <th className="px-4 py-3 text-right">Price</th>
@@ -461,7 +461,9 @@ function ProductsTable({
                   </div>
                 </div>
               </td>
-              <td className="px-4 py-3 font-mono text-xs text-ink-600">{p.slug}</td>
+              <td className="px-4 py-3 font-mono text-xs text-ink-600">
+                {p.linkedItem?.sku ?? <span className="text-ink-400">—</span>}
+              </td>
               <td className="px-4 py-3 tabular-nums">{(p.weightMg / 1000).toFixed(2)} g</td>
               <td className="px-4 py-3 tabular-nums">
                 {p.purityCaratX100 === 0

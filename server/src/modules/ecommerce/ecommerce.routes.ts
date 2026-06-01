@@ -66,7 +66,14 @@ ecommerceRouter.get('/products', async (req, res, next) => {
         orderBy: { createdAt: 'desc' },
         take: take + 1,
         ...(q.cursor ? { cursor: { id: q.cursor }, skip: 1 } : {}),
-        include: { category: { select: { metalType: true } } },
+        include: {
+          category: { select: { metalType: true } },
+          // Surface the linked inventory item's SKU so the admin product
+          // table can show it as a real identifier (slug is for URLs, SKU
+          // is for stock). Null for products created without a linked
+          // inventory row.
+          linkedItem: { select: { sku: true } },
+        },
       }),
       readGoldRatePaise(2400),
       readGoldRatePaise(0),
