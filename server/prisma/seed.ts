@@ -18,6 +18,39 @@ const DEMO_ACCOUNTS = [
 ] as const;
 
 async function main(): Promise<void> {
+  // Production safety gate. The seed historically did a destructive
+  // "delete tenant + recreate fixtures" on every run — fine while the only
+  // data was demo, catastrophic once a real merchant started using the
+  // owner@goldos.dev tenant. Render's autoDeploy runs this on every push,
+  // so without the gate every git push silently wiped live inventory,
+  // customers, bills, etc.
+  //
+  // New behaviour:
+  //   - If a tenant for owner@goldos.dev already exists AND
+  //     SEED_FORCE_RESET is NOT set to "true", we exit early without
+  //     touching anything. The deploy is a no-op for the seed step.
+  //   - On a truly empty database (first deploy ever), we still seed the
+  //     full demo fixture so the app boots with a working tenant.
+  //   - To intentionally re-fixture (e.g. for a demo refresh), set
+  //     SEED_FORCE_RESET=true in the Render env and trigger a deploy.
+  const forceReset = process.env['SEED_FORCE_RESET'] === 'true';
+
+  // First, check (outside the long transaction) whether anything already
+  // exists for the demo tenant. If yes and we're not forcing a reset,
+  // exit before opening the costly tx.
+  const existingTenant = await prisma.tenant.findUnique({
+    where: { ownerEmail: 'owner@goldos.dev' },
+    select: { id: true },
+  });
+  if (existingTenant && !forceReset) {
+    // eslint-disable-next-line no-console
+    console.log('[seed] tenant owner@goldos.dev already exists — preserving live data.');
+    // eslint-disable-next-line no-console
+    console.log('[seed] set SEED_FORCE_RESET=true to wipe and re-fixture.');
+    await redis.quit().catch(() => {});
+    return;
+  }
+
   // Long timeout because the seed touches many tables; Neon's default 5s
   // interactive-tx limit closes mid-insert otherwise.
   await prisma.$transaction(
@@ -28,6 +61,8 @@ async function main(): Promise<void> {
     //   3. Restore the captured StorefrontContent at the end, so user CMS edits
     //      survive across deploys. (If none was ever published, the seed default
     //      below is used.)
+    // This whole branch only runs when the gate above let us through:
+    // either a fresh DB, or an operator who explicitly set SEED_FORCE_RESET.
     const existing = await tx.tenant.findUnique({ where: { ownerEmail: 'owner@goldos.dev' } });
     let preservedContent: Awaited<ReturnType<typeof tx.storefrontContent.findUnique>> = null;
     if (existing) {

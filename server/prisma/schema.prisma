@@ -400,15 +400,15 @@ model Item {
   quantityOnHand  Int            @default(1)
   createdAt       DateTime       @default(now())
 
-  tenant         Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  shop           Shop           @relation(fields: [shopId], references: [id])
-  category       Category       @relation(fields: [categoryId], references: [id])
-  movements      ItemMovement[]
-  billLines      BillLine[]
-  transferLines  TransferLine[]
+  tenant            Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  shop              Shop           @relation(fields: [shopId], references: [id])
+  category          Category       @relation(fields: [categoryId], references: [id])
+  movements         ItemMovement[]
+  billLines         BillLine[]
+  transferLines     TransferLine[]
   // Reverse side of Product.linkedItemId. At most one storefront Product
   // mirrors a given inventory Item (one-to-one), so this is `Product?`.
-  storefrontProduct Product?    @relation("ProductLinkedItem")
+  storefrontProduct Product?       @relation("ProductLinkedItem")
 
   @@unique([tenantId, sku])
   @@index([tenantId])

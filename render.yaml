@@ -4,8 +4,13 @@ services:
     runtime: node
     plan: free
     rootDir: .
-    # Seed runs every build — idempotent (seed.ts nukes the prior demo tenant first).
-    # Remove the trailing `&& npx tsx server/prisma/seed.ts` once a real merchant is on this DB.
+    # Seed runs every build, but only re-fixtures the demo tenant if
+    # SEED_FORCE_RESET=true is set on the service. Otherwise it exits as a
+    # no-op so a real merchant's data (inventory, customers, bills, CMS
+    # edits) is preserved across deploys. On a truly empty database it
+    # seeds the demo fixture so the app boots with a working tenant.
+    # To trigger a fresh reseed: set SEED_FORCE_RESET=true on Render, deploy,
+    # then unset the var to lock data again.
     buildCommand: npm install --include=dev && npm run prisma:generate -w @goldos/server && npx prisma migrate deploy --schema server/prisma/schema.prisma && npx tsx server/prisma/seed.ts
     startCommand: npx tsx server/src/index.ts
     healthCheckPath: /api/v1/health
