@@ -841,22 +841,94 @@ export const StorefrontContentSchema = z.object({
     .default({ instagram: '', facebook: '', youtube: '', whatsapp: '' }),
 
   // Invoice layout CMS — drives both POS receipts and e-commerce order
-  // invoices. All fields optional with sensible defaults; the PDF renderer
-  // falls back to brand.name / brand.logo when blank.
+  // invoices. Every visible string on the branded A4 invoice is editable
+  // here so the layout adapts to a tenant's identity without code changes.
+  // The PDF renderer falls back to sensible defaults when fields are blank.
   invoiceLayout: z
     .object({
+      // --- Brand band (top-left of the invoice) ---
+      brandSubTagline: z.string().max(80).optional().default('FINE JEWELLERY'),
+      brandEstablishedLine: z.string().max(80).optional().default('HARYANA · SINCE 1972'),
+
+      // --- Hero block (under the brand band, left column) ---
+      heroHeadline: z.string().max(160).optional().default('Heirlooms, made for the modern bride.'),
+      heroBody: z.string().max(400).optional().default('Handcrafted with love in Haryana, our jewellery is priced transparently against today’s MCX rate — weight × rate + making, nothing hidden.'),
+      heroImage: z.string().max(2_500_000).optional().default(''),
+
+      // --- Tax-invoice block (top-right) ---
+      invoiceTitle: z.string().max(40).optional().default('TAX INVOICE'),
+      invoiceNumberPrefix: z.string().max(40).optional().default(''),
+
+      // --- Business details column ---
+      businessAddress: z.string().max(400).optional().default(''),
+      businessEmail: z.string().max(160).optional().default(''),
+
+      // --- Thank-you block (under the totals card) ---
+      thankYouTitle: z.string().max(160).optional().default('Thank you for choosing us.'),
+      thankYouBody: z.string().max(400).optional().default('We appreciate your trust in our craftsmanship.'),
+
+      // --- Payment details column ---
+      bankName: z.string().max(120).optional().default(''),
+      bankAccountNumber: z.string().max(60).optional().default(''),
+      bankIfsc: z.string().max(40).optional().default(''),
+      upiId: z.string().max(120).optional().default(''),
+
+      // --- Terms (multi-line, bullet-rendered) ---
+      termsAndConditions: z.string().max(2000).optional().default(''),
+
+      // --- Footer ribbon + contact bar ---
+      footerRibbon: z.string().max(160).optional().default('HEIRLOOMS TODAY, MEMORIES FOREVER.'),
+      contactWebsite: z.string().max(160).optional().default(''),
+      contactPhone: z.string().max(60).optional().default(''),
+      contactAddressLine: z.string().max(240).optional().default(''),
+
+      // --- Display toggles ---
+      showLogo: z.boolean().optional().default(true),
+      showHeroImage: z.boolean().optional().default(true),
+      showAmountInWords: z.boolean().optional().default(true),
+      showUpiQr: z.boolean().optional().default(true),
+      showStamp: z.boolean().optional().default(true),
+
+      // --- Visual accent (single hex) used for headlines, totals card,
+      //     ribbon bar. Defaults to a warm peach/copper drawn from the
+      //     reference design. ---
+      accentColor: z.string().regex(/^#[0-9a-fA-F]{6}$/).optional().default('#C7895A'),
+
+      // --- Legacy fields kept so older content rows continue to validate. ---
       headerNote: z.string().max(400).optional().default(''),
       footerNote: z.string().max(400).optional().default(''),
-      termsAndConditions: z.string().max(2000).optional().default(''),
-      showLogo: z.boolean().optional().default(true),
       signatoryName: z.string().max(160).optional().default(''),
     })
     .optional()
     .default({
+      brandSubTagline: 'FINE JEWELLERY',
+      brandEstablishedLine: 'HARYANA · SINCE 1972',
+      heroHeadline: 'Heirlooms, made for the modern bride.',
+      heroBody: 'Handcrafted with love in Haryana, our jewellery is priced transparently against today’s MCX rate — weight × rate + making, nothing hidden.',
+      heroImage: '',
+      invoiceTitle: 'TAX INVOICE',
+      invoiceNumberPrefix: '',
+      businessAddress: '',
+      businessEmail: '',
+      thankYouTitle: 'Thank you for choosing us.',
+      thankYouBody: 'We appreciate your trust in our craftsmanship.',
+      bankName: '',
+      bankAccountNumber: '',
+      bankIfsc: '',
+      upiId: '',
+      termsAndConditions: 'Goods once sold will not be taken back or exchanged.\nAny damages must be reported within 3 days of delivery.\nPrices are subject to change with MCX rate fluctuations.',
+      footerRibbon: 'HEIRLOOMS TODAY, MEMORIES FOREVER.',
+      contactWebsite: '',
+      contactPhone: '',
+      contactAddressLine: '',
+      showLogo: true,
+      showHeroImage: true,
+      showAmountInWords: true,
+      showUpiQr: true,
+      showStamp: true,
+      accentColor: '#C7895A',
       headerNote: '',
       footerNote: '',
-      termsAndConditions: '',
-      showLogo: true,
       signatoryName: '',
     }),
 });

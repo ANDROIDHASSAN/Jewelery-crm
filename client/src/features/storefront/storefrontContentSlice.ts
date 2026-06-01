@@ -165,10 +165,45 @@ export interface StorefrontContent {
   // e-commerce order invoices read this blob server-side. Each string
   // can be empty — the renderer falls back to baked defaults.
   invoiceLayout: {
+    // Brand band
+    brandSubTagline: string;
+    brandEstablishedLine: string;
+    // Hero block
+    heroHeadline: string;
+    heroBody: string;
+    heroImage: string;
+    // Tax-invoice block
+    invoiceTitle: string;
+    invoiceNumberPrefix: string;
+    // Business details
+    businessAddress: string;
+    businessEmail: string;
+    // Thank-you block
+    thankYouTitle: string;
+    thankYouBody: string;
+    // Payment details
+    bankName: string;
+    bankAccountNumber: string;
+    bankIfsc: string;
+    upiId: string;
+    // Terms (multi-line)
+    termsAndConditions: string;
+    // Footer ribbon + contact bar
+    footerRibbon: string;
+    contactWebsite: string;
+    contactPhone: string;
+    contactAddressLine: string;
+    // Display toggles
+    showLogo: boolean;
+    showHeroImage: boolean;
+    showAmountInWords: boolean;
+    showUpiQr: boolean;
+    showStamp: boolean;
+    // Accent hex
+    accentColor: string;
+    // Legacy (unused by the new renderer but kept for backward compat)
     headerNote: string;
     footerNote: string;
-    termsAndConditions: string;
-    showLogo: boolean;
     signatoryName: string;
   };
 }
@@ -413,10 +448,34 @@ export const DEFAULT_CONTENT: StorefrontContent = {
     whatsapp: '',
   },
   invoiceLayout: {
-    headerNote: '',
-    footerNote: 'Thank you for your business.',
-    termsAndConditions: 'Goods once sold cannot be returned. Hallmarked weight is final.',
+    brandSubTagline: 'FINE JEWELLERY',
+    brandEstablishedLine: 'HARYANA · SINCE 1972',
+    heroHeadline: 'Heirlooms, made for the modern bride.',
+    heroBody: 'Handcrafted with love in Haryana, our jewellery is priced transparently against today’s MCX rate — weight × rate + making, nothing hidden.',
+    heroImage: '',
+    invoiceTitle: 'TAX INVOICE',
+    invoiceNumberPrefix: '',
+    businessAddress: '',
+    businessEmail: '',
+    thankYouTitle: 'Thank you for choosing us.',
+    thankYouBody: 'We appreciate your trust in our craftsmanship.',
+    bankName: '',
+    bankAccountNumber: '',
+    bankIfsc: '',
+    upiId: '',
+    termsAndConditions: 'Goods once sold will not be taken back or exchanged.\nAny damages must be reported within 3 days of delivery.\nPrices are subject to change with MCX rate fluctuations.',
+    footerRibbon: 'HEIRLOOMS TODAY, MEMORIES FOREVER.',
+    contactWebsite: '',
+    contactPhone: '',
+    contactAddressLine: '',
     showLogo: true,
+    showHeroImage: true,
+    showAmountInWords: true,
+    showUpiQr: true,
+    showStamp: true,
+    accentColor: '#C7895A',
+    headerNote: '',
+    footerNote: '',
     signatoryName: '',
   },
 };

@@ -124,27 +124,24 @@ posRouter.get('/bills/:id/receipt.pdf', async (req, res, next) => {
     });
     if (!bill) throw new NotFoundError('Bill not found');
 
-    // CMS-controlled invoice layout — same blob as the e-commerce invoice
-    // route consumes, so editing once in Website CMS → Invoice Layout
-    // affects both POS receipts and online order invoices. Read failure is
-    // non-fatal, the renderer has a baked-in default footer.
-    let invoiceLayout: {
-      footerNote?: string;
-      termsAndConditions?: string;
-    } = {};
+    // CMS-controlled invoice layout — every visible string on the branded
+    // invoice (brand band, hero block, bank details, terms, footer ribbon,
+    // contact bar, accent colour) is editable in Website CMS → Invoice
+    // Layout. Read failure is non-fatal — the renderer has baked defaults.
+    type BrandBlob = { logo?: string; favicon?: string; name?: string };
+    let invoiceLayout: Record<string, unknown> | null = null;
+    let brand: BrandBlob | null = null;
     try {
       const sf = await prisma.storefrontContent.findUnique({
         where: { tenantId: bill.tenantId },
         select: { content: true },
       });
-      const blob = sf?.content as { invoiceLayout?: typeof invoiceLayout } | null | undefined;
+      const blob = sf?.content as { invoiceLayout?: Record<string, unknown>; brand?: BrandBlob } | null | undefined;
       if (blob?.invoiceLayout) invoiceLayout = blob.invoiceLayout;
+      if (blob?.brand) brand = blob.brand;
     } catch {
       // ignore — fall back to defaults below
     }
-    const composedFooter = [invoiceLayout.footerNote, invoiceLayout.termsAndConditions]
-      .filter((s) => typeof s === 'string' && s.trim().length > 0)
-      .join(' · ');
 
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader(
@@ -156,10 +153,14 @@ posRouter.get('/bills/:id/receipt.pdf', async (req, res, next) => {
     await renderReceiptPdf(
       {
         business: {
-          name: bill.tenant?.businessName ?? 'Zelora Jeweller',
-          address: bill.shop?.address ?? '',
+          name: brand?.name ?? bill.tenant?.businessName ?? 'Jeweller',
+          address:
+            (invoiceLayout?.['businessAddress'] as string | undefined) ||
+            (bill.shop?.address ?? ''),
           gstin: bill.tenant?.gstNumber ?? null,
           phone: bill.shop?.phone ?? '',
+          logoUrl: brand?.logo ?? null,
+          email: (invoiceLayout?.['businessEmail'] as string | undefined) ?? null,
         },
         invoice: {
           number: bill.billNumber,
@@ -173,22 +174,25 @@ posRouter.get('/bills/:id/receipt.pdf', async (req, res, next) => {
         lines: bill.lines.map((l) => {
           const purity = l.purityCaratX100 ?? l.item?.purityCaratX100 ?? null;
           const weightMg = l.weightMg ?? l.item?.weightMg ?? null;
-          // BIS hallmarking is mandatory for gold in India; the HUID on the
-          // receipt is what the customer can take to a BIS office for a
-          // weight/purity verification. Skip the HUID line for silver / lab-
-          // grown diamonds that don't carry one.
           const huid = l.item?.hallmarkStatus === 'CERTIFIED' ? l.item?.hallmarkRef : null;
+          // Net per-gram metal rate snapshotted on the bill. Falls back to
+          // null when the legacy column is absent — the renderer prints a
+          // dash in that case.
+          const ratePerGPaise = weightMg && weightMg > 0
+            ? Math.round(((l.linePaise - (l.stoneChargePaise ?? 0)) * 1000) / (weightMg * (1 + (l.makingChargeBps ?? 0) / 10000)))
+            : undefined;
           return {
             description: l.item?.name ?? 'Jewellery piece',
             details: [
-              purity ? `${(purity / 100).toFixed(0)}K` : null,
-              weightMg ? `${(weightMg / 1000).toFixed(2)} g` : null,
-              l.makingChargeBps ? `making ${(l.makingChargeBps / 100).toFixed(2)}%` : null,
-              huid ? `HUID ${huid}` : null,
+              purity ? `${(purity / 100).toFixed(0)}K Gold` : null,
+              huid ? `HUID ${huid}` : 'BIS Hallmarked',
             ].filter(Boolean).join(' · ') || undefined,
             qty: 1,
             unitPaise: l.linePaise,
             amountPaise: l.linePaise,
+            weightG: weightMg != null ? weightMg / 1000 : undefined,
+            ratePerGPaise: ratePerGPaise,
+            makingPct: l.makingChargeBps != null ? l.makingChargeBps / 100 : undefined,
           };
         }),
         subtotalPaise: bill.subtotalPaise,
@@ -202,7 +206,7 @@ posRouter.get('/bills/:id/receipt.pdf', async (req, res, next) => {
           amountPaise: p.amountPaise,
           referenceId: p.referenceId ?? undefined,
         })),
-        footerNote: composedFooter || undefined,
+        layout: invoiceLayout as never,
       },
       res,
     );

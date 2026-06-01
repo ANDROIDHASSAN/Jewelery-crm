@@ -323,32 +323,23 @@ ecommerceRouter.get('/orders/:id/invoice.pdf', async (req, res, next) => {
       return;
     }
 
-    // Pull invoice layout overrides from the storefront CMS blob. Failure is
-    // non-fatal — the renderer's footerNote has a baked default.
-    let invoiceLayout: {
-      footerNote?: string;
-      headerNote?: string;
-      termsAndConditions?: string;
-      signatoryName?: string;
-      showLogo?: boolean;
-    } = {};
+    // Pull invoice layout + brand from the storefront CMS blob. Same
+    // shape as the POS receipt route — both surfaces share one tenant
+    // invoice layout. Failure is non-fatal; the renderer ships defaults.
+    type BrandBlob = { logo?: string; name?: string };
+    let invoiceLayout: Record<string, unknown> | null = null;
+    let brand: BrandBlob | null = null;
     try {
       const sf = await prisma.storefrontContent.findUnique({
         where: { tenantId: order.tenant?.id ?? order.tenantId },
         select: { content: true },
       });
-      const blob = sf?.content as { invoiceLayout?: typeof invoiceLayout } | null | undefined;
+      const blob = sf?.content as { invoiceLayout?: Record<string, unknown>; brand?: BrandBlob } | null | undefined;
       if (blob?.invoiceLayout) invoiceLayout = blob.invoiceLayout;
+      if (blob?.brand) brand = blob.brand;
     } catch {
       // ignore — fall back to defaults below
     }
-
-    // Compose a tax-invoice footer from the CMS overrides. Combine the
-    // termsAndConditions line below the footerNote so both surfaces are
-    // visible on the printed PDF.
-    const composedFooter = [invoiceLayout.footerNote, invoiceLayout.termsAndConditions]
-      .filter((s) => typeof s === 'string' && s.trim().length > 0)
-      .join(' · ');
 
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader(
@@ -357,8 +348,8 @@ ecommerceRouter.get('/orders/:id/invoice.pdf', async (req, res, next) => {
     );
     res.setHeader('Cache-Control', 'private, no-store');
 
-    // Build the shipping address line — captured at checkout, so it survives
-    // a later edit on the customer record.
+    // Customer shipping address — captured at checkout, survives a later
+    // edit on the customer record.
     const shippingAddress = [
       order.shippingLine1,
       order.shippingLine2,
@@ -372,46 +363,39 @@ ecommerceRouter.get('/orders/:id/invoice.pdf', async (req, res, next) => {
     await renderReceiptPdf(
       {
         business: {
-          name: order.tenant?.businessName ?? 'Jeweller',
-          address: shippingAddress || '',
+          name: brand?.name ?? order.tenant?.businessName ?? 'Jeweller',
+          address: (invoiceLayout?.['businessAddress'] as string | undefined) || '',
           gstin: order.tenant?.gstNumber ?? null,
           phone: order.shippingPhone ?? '',
+          logoUrl: brand?.logo ?? null,
+          email: (invoiceLayout?.['businessEmail'] as string | undefined) ?? null,
         },
         invoice: {
           number: order.id,
           dateIso: order.createdAt.toISOString(),
-          // E-commerce orders ship across states — derive place of supply
-          // from the shipping address state code when available, else fall
-          // back to '06' (Haryana) to match the POS default.
           placeOfSupply: order.shippingState ?? '06',
         },
         customer: {
           name: order.customer?.name ?? order.shippingName ?? 'Customer',
           phone: order.customer?.phone ?? order.shippingPhone ?? '',
+          address: shippingAddress || null,
         },
         lines: order.items.map((l) => {
           const purity = l.product?.purityCaratX100 ?? null;
           const weightMg = l.product?.weightMg ?? null;
           return {
             description: l.product?.name ?? 'Jewellery piece',
-            details: [
-              purity ? `${(purity / 100).toFixed(0)}K` : null,
-              weightMg ? `${(weightMg / 1000).toFixed(2)} g` : null,
-              l.product?.makingChargeBps
-                ? `making ${(l.product.makingChargeBps / 100).toFixed(2)}%`
-                : null,
-            ]
-              .filter(Boolean)
-              .join(' · ') || undefined,
+            details: purity ? `${(purity / 100).toFixed(0)}K · BIS Hallmarked` : undefined,
             qty: l.qty,
             unitPaise: l.pricePaise,
             amountPaise: l.pricePaise * l.qty,
+            weightG: weightMg != null ? weightMg / 1000 : undefined,
+            makingPct: l.product?.makingChargeBps != null ? l.product.makingChargeBps / 100 : undefined,
           };
         }),
         subtotalPaise: order.subtotalPaise,
-        // E-commerce currently stores total tax as a single number rather
-        // than CGST/SGST/IGST split — surface it as IGST on the invoice
-        // (matches inter-state default for an online order).
+        // E-commerce stores total tax as a single number rather than
+        // CGST/SGST/IGST split — surface it as IGST (inter-state default).
         cgstPaise: 0,
         sgstPaise: 0,
         igstPaise: order.taxPaise,
@@ -427,7 +411,7 @@ ecommerceRouter.get('/orders/:id/invoice.pdf', async (req, res, next) => {
                 },
               ]
             : [],
-        footerNote: composedFooter || undefined,
+        layout: invoiceLayout as never,
       },
       res,
     );

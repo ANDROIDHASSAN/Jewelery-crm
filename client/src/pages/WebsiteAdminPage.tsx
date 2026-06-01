@@ -927,56 +927,259 @@ export function WebsiteAdminPage(): JSX.Element {
             <FooterSectionsTab content={content} onPatch={(patch) => { dispatch(setContent({ ...content, ...patch })); notify(); }} />
           )}
           {tab === 'invoice' && (
-            <Card
-              title="Invoice layout"
-              desc="Header, footer, T&Cs, and signatory printed on POS receipts and e-commerce order invoices. All optional — the renderer falls back to BIS-hallmark defaults when blank."
-            >
-              <Field label="Header note" hint="Short tagline printed under the business name (max 400 chars).">
-                <Input
-                  value={content.invoiceLayout?.headerNote ?? ''}
-                  onChange={(e) => dispatch(updateInvoiceLayout({ headerNote: e.target.value }))}
-                  onBlur={notify}
-                  placeholder="Family jewellers since 1972 · BIS-hallmarked"
-                />
-              </Field>
-              <Field label="Footer note" hint="Single line printed under the totals.">
-                <Input
-                  value={content.invoiceLayout?.footerNote ?? ''}
-                  onChange={(e) => dispatch(updateInvoiceLayout({ footerNote: e.target.value }))}
-                  onBlur={notify}
-                  placeholder="Thank you for your business."
-                />
-              </Field>
-              <Field label="Terms & conditions" hint="Appended to the footer, separated by ' · '.">
-                <Textarea
-                  rows={4}
-                  value={content.invoiceLayout?.termsAndConditions ?? ''}
-                  onChange={(e) => dispatch(updateInvoiceLayout({ termsAndConditions: e.target.value }))}
-                  onBlur={notify}
-                />
-              </Field>
-              <Field label="Signatory name" hint="Optional. Printed near the bottom of the invoice.">
-                <Input
-                  value={content.invoiceLayout?.signatoryName ?? ''}
-                  onChange={(e) => dispatch(updateInvoiceLayout({ signatoryName: e.target.value }))}
-                  onBlur={notify}
-                  placeholder="Anant Kamal, Proprietor"
-                />
-              </Field>
-              <Field label="Show logo on invoice">
-                <label className="inline-flex items-center gap-2 text-sm text-ink-700 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={content.invoiceLayout?.showLogo ?? true}
-                    onChange={(e) => {
-                      dispatch(updateInvoiceLayout({ showLogo: e.target.checked }));
-                      notify();
-                    }}
+            <div className="space-y-6">
+              <Card title="Brand band (top of invoice)" desc="The branded header strip — wordmark + tagline + established line.">
+                <Field label="Sub-tagline" hint="Small uppercase line under the brand name. e.g. FINE JEWELLERY">
+                  <Input
+                    value={content.invoiceLayout?.brandSubTagline ?? ''}
+                    onChange={(e) => dispatch(updateInvoiceLayout({ brandSubTagline: e.target.value }))}
+                    onBlur={notify}
+                    placeholder="FINE JEWELLERY"
                   />
-                  Print the brand logo at the top of each invoice
-                </label>
-              </Field>
-            </Card>
+                </Field>
+                <Field label="Established line" hint="Appears in the accent colour under the sub-tagline. The stamp seal reads its year from this line.">
+                  <Input
+                    value={content.invoiceLayout?.brandEstablishedLine ?? ''}
+                    onChange={(e) => dispatch(updateInvoiceLayout({ brandEstablishedLine: e.target.value }))}
+                    onBlur={notify}
+                    placeholder="HARYANA · SINCE 1972"
+                  />
+                </Field>
+                <Field label="Invoice title" hint="Right-side heading. Usually 'TAX INVOICE'.">
+                  <Input
+                    value={content.invoiceLayout?.invoiceTitle ?? ''}
+                    onChange={(e) => dispatch(updateInvoiceLayout({ invoiceTitle: e.target.value }))}
+                    onBlur={notify}
+                    placeholder="TAX INVOICE"
+                  />
+                </Field>
+                <Field label="Invoice number prefix" hint="Prepended to every invoice number on the PDF. e.g. ZEL/INV/2026-27/ → bill 000123 reads ZEL/INV/2026-27/000123.">
+                  <Input
+                    value={content.invoiceLayout?.invoiceNumberPrefix ?? ''}
+                    onChange={(e) => dispatch(updateInvoiceLayout({ invoiceNumberPrefix: e.target.value }))}
+                    onBlur={notify}
+                    placeholder="ZEL/INV/2026-27/"
+                  />
+                </Field>
+                <Field label="Accent colour" hint="Drives headlines, totals card and ribbon. Six-digit hex.">
+                  <div className="flex items-center gap-3">
+                    <input
+                      type="color"
+                      value={content.invoiceLayout?.accentColor ?? '#C7895A'}
+                      onChange={(e) => dispatch(updateInvoiceLayout({ accentColor: e.target.value }))}
+                      onBlur={notify}
+                      className="h-9 w-12 cursor-pointer rounded border border-ink-200"
+                    />
+                    <Input
+                      value={content.invoiceLayout?.accentColor ?? '#C7895A'}
+                      onChange={(e) => dispatch(updateInvoiceLayout({ accentColor: e.target.value }))}
+                      onBlur={notify}
+                      placeholder="#C7895A"
+                      className="flex-1"
+                    />
+                  </div>
+                </Field>
+              </Card>
+
+              <Card title="Hero block (under the brand band)" desc="A short headline + body + product image — the editorial top of the invoice.">
+                <Field label="Hero headline">
+                  <Input
+                    value={content.invoiceLayout?.heroHeadline ?? ''}
+                    onChange={(e) => dispatch(updateInvoiceLayout({ heroHeadline: e.target.value }))}
+                    onBlur={notify}
+                    placeholder="Heirlooms, made for the modern bride."
+                  />
+                </Field>
+                <Field label="Hero body" hint="One or two short sentences.">
+                  <Textarea
+                    rows={3}
+                    value={content.invoiceLayout?.heroBody ?? ''}
+                    onChange={(e) => dispatch(updateInvoiceLayout({ heroBody: e.target.value }))}
+                    onBlur={notify}
+                  />
+                </Field>
+                <Field label="Hero image URL" hint="Optional decorative product photo on the right of the hero block. PNG with transparent background works best.">
+                  <Input
+                    value={content.invoiceLayout?.heroImage ?? ''}
+                    onChange={(e) => dispatch(updateInvoiceLayout({ heroImage: e.target.value }))}
+                    onBlur={notify}
+                    placeholder="https://… or /img/hero.png"
+                  />
+                </Field>
+                <Field label="Display toggles">
+                  <div className="space-y-2">
+                    <label className="inline-flex items-center gap-2 text-sm text-ink-700 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={content.invoiceLayout?.showLogo ?? true}
+                        onChange={(e) => { dispatch(updateInvoiceLayout({ showLogo: e.target.checked })); notify(); }}
+                      />
+                      Show brand logo
+                    </label>
+                    <label className="inline-flex items-center gap-2 text-sm text-ink-700 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={content.invoiceLayout?.showHeroImage ?? true}
+                        onChange={(e) => { dispatch(updateInvoiceLayout({ showHeroImage: e.target.checked })); notify(); }}
+                      />
+                      Show hero image
+                    </label>
+                  </div>
+                </Field>
+              </Card>
+
+              <Card title="Business details" desc="Printed in the right-side card under the Tax Invoice block. Falls back to shop / tenant data when blank.">
+                <Field label="Business address" hint="Single block of text. Comma-separated; the PDF wraps automatically.">
+                  <Textarea
+                    rows={2}
+                    value={content.invoiceLayout?.businessAddress ?? ''}
+                    onChange={(e) => dispatch(updateInvoiceLayout({ businessAddress: e.target.value }))}
+                    onBlur={notify}
+                    placeholder="Haryana, India"
+                  />
+                </Field>
+                <Field label="Business email">
+                  <Input
+                    value={content.invoiceLayout?.businessEmail ?? ''}
+                    onChange={(e) => dispatch(updateInvoiceLayout({ businessEmail: e.target.value }))}
+                    onBlur={notify}
+                    placeholder="hello@yourbrand.in"
+                  />
+                </Field>
+              </Card>
+
+              <Card title="Thank-you block (under totals)" desc="A warm closing line + body. Printed in the accent colour as an italicised callout.">
+                <Field label="Thank-you headline">
+                  <Input
+                    value={content.invoiceLayout?.thankYouTitle ?? ''}
+                    onChange={(e) => dispatch(updateInvoiceLayout({ thankYouTitle: e.target.value }))}
+                    onBlur={notify}
+                    placeholder="Thank you for choosing us."
+                  />
+                </Field>
+                <Field label="Thank-you body">
+                  <Textarea
+                    rows={2}
+                    value={content.invoiceLayout?.thankYouBody ?? ''}
+                    onChange={(e) => dispatch(updateInvoiceLayout({ thankYouBody: e.target.value }))}
+                    onBlur={notify}
+                    placeholder="We appreciate your trust in our craftsmanship."
+                  />
+                </Field>
+                <Field label="Show amount in words">
+                  <label className="inline-flex items-center gap-2 text-sm text-ink-700 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={content.invoiceLayout?.showAmountInWords ?? true}
+                      onChange={(e) => { dispatch(updateInvoiceLayout({ showAmountInWords: e.target.checked })); notify(); }}
+                    />
+                    Print the Indian rupee amount-in-words card
+                  </label>
+                </Field>
+              </Card>
+
+              <Card title="Payment details + QR" desc="Bank coordinates + UPI ID. The QR is generated server-side from the UPI ID — no need to upload an image.">
+                <Field label="Bank name">
+                  <Input
+                    value={content.invoiceLayout?.bankName ?? ''}
+                    onChange={(e) => dispatch(updateInvoiceLayout({ bankName: e.target.value }))}
+                    onBlur={notify}
+                    placeholder="HDFC Bank"
+                  />
+                </Field>
+                <Field label="Account number">
+                  <Input
+                    value={content.invoiceLayout?.bankAccountNumber ?? ''}
+                    onChange={(e) => dispatch(updateInvoiceLayout({ bankAccountNumber: e.target.value }))}
+                    onBlur={notify}
+                    placeholder="5010 1234 5678 90"
+                  />
+                </Field>
+                <Field label="IFSC code">
+                  <Input
+                    value={content.invoiceLayout?.bankIfsc ?? ''}
+                    onChange={(e) => dispatch(updateInvoiceLayout({ bankIfsc: e.target.value }))}
+                    onBlur={notify}
+                    placeholder="HDFC0001234"
+                  />
+                </Field>
+                <Field label="UPI ID" hint="If set, a Scan-to-Pay QR is auto-generated using the invoice total amount.">
+                  <Input
+                    value={content.invoiceLayout?.upiId ?? ''}
+                    onChange={(e) => dispatch(updateInvoiceLayout({ upiId: e.target.value }))}
+                    onBlur={notify}
+                    placeholder="yourbrand@hdfcbank"
+                  />
+                </Field>
+                <Field label="Show UPI QR">
+                  <label className="inline-flex items-center gap-2 text-sm text-ink-700 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={content.invoiceLayout?.showUpiQr ?? true}
+                      onChange={(e) => { dispatch(updateInvoiceLayout({ showUpiQr: e.target.checked })); notify(); }}
+                    />
+                    Generate a Scan-to-Pay QR from the UPI ID
+                  </label>
+                </Field>
+              </Card>
+
+              <Card title="Terms & notes + stamp" desc="One bullet per line. The stamp is rendered as a circular seal at the bottom-right using the brand name + year from the Established line.">
+                <Field label="Terms (one per line)">
+                  <Textarea
+                    rows={5}
+                    value={content.invoiceLayout?.termsAndConditions ?? ''}
+                    onChange={(e) => dispatch(updateInvoiceLayout({ termsAndConditions: e.target.value }))}
+                    onBlur={notify}
+                    placeholder={'Goods once sold will not be taken back or exchanged.\nAny damages must be reported within 3 days of delivery.\nPrices are subject to change with MCX rate fluctuations.'}
+                  />
+                </Field>
+                <Field label="Show stamp">
+                  <label className="inline-flex items-center gap-2 text-sm text-ink-700 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={content.invoiceLayout?.showStamp ?? true}
+                      onChange={(e) => { dispatch(updateInvoiceLayout({ showStamp: e.target.checked })); notify(); }}
+                    />
+                    Print the circular brand stamp at the bottom-right
+                  </label>
+                </Field>
+              </Card>
+
+              <Card title="Footer ribbon + contact bar" desc="The full-width ribbon at the very bottom + the contact strip just above it.">
+                <Field label="Ribbon text" hint="Centred, uppercase, in the accent colour.">
+                  <Input
+                    value={content.invoiceLayout?.footerRibbon ?? ''}
+                    onChange={(e) => dispatch(updateInvoiceLayout({ footerRibbon: e.target.value }))}
+                    onBlur={notify}
+                    placeholder="HEIRLOOMS TODAY, MEMORIES FOREVER."
+                  />
+                </Field>
+                <Field label="Website">
+                  <Input
+                    value={content.invoiceLayout?.contactWebsite ?? ''}
+                    onChange={(e) => dispatch(updateInvoiceLayout({ contactWebsite: e.target.value }))}
+                    onBlur={notify}
+                    placeholder="www.yourbrand.in"
+                  />
+                </Field>
+                <Field label="Phone (contact bar)" hint="Falls back to shop phone if blank.">
+                  <Input
+                    value={content.invoiceLayout?.contactPhone ?? ''}
+                    onChange={(e) => dispatch(updateInvoiceLayout({ contactPhone: e.target.value }))}
+                    onBlur={notify}
+                    placeholder="+91 99999 88888"
+                  />
+                </Field>
+                <Field label="Full address line" hint="Single-line address shown in the contact bar.">
+                  <Input
+                    value={content.invoiceLayout?.contactAddressLine ?? ''}
+                    onChange={(e) => dispatch(updateInvoiceLayout({ contactAddressLine: e.target.value }))}
+                    onBlur={notify}
+                    placeholder="Brand Jewellery, City, State - PIN"
+                  />
+                </Field>
+              </Card>
+            </div>
           )}
         </div>
 
