@@ -237,7 +237,10 @@ export async function updateItem(id: string, patch: Partial<ItemInput>, performe
   return item;
 }
 
-export async function deleteItem(id: string, performedByUserId?: string) {
+export async function deleteItem(
+  id: string,
+  performedByUserId?: string,
+): Promise<{ hardDeleted: boolean }> {
   const tenantId = getTenantId();
   if (!tenantId) throw new Error('tenantId missing');
   const before = await prisma.item.findUnique({ where: { id } });
@@ -245,20 +248,40 @@ export async function deleteItem(id: string, performedByUserId?: string) {
   if (before.status === 'SOLD') {
     throw new BusinessRuleError('ITEM_SOLD', 'Sold items cannot be deleted — they live on the bill.');
   }
-  // Soft delete: mark MELTED and log the action. Hard-deleting an item would
-  // orphan bill lines, movements, and audit history.
-  const after = await prisma.item.update({ where: { id }, data: { status: 'MELTED' } });
-  await prisma.itemMovement.create({
-    data: {
-      tenantId,
-      itemId: id,
-      fromShopId: before.shopId,
-      type: 'WASTAGE',
-      reason: 'Manually removed from inventory',
-      performedByUserId: performedByUserId ?? null,
-    },
-  });
-  void writeAudit('Item', id, 'DELETE', before, after, performedByUserId);
+  // If the piece was ever billed it has sales history we must not destroy, so we
+  // fall back to a soft delete (mark MELTED). Otherwise we hard-delete the row
+  // and its stock outright, which is what an admin expects when removing a piece
+  // added by mistake.
+  const billLineCount = await prisma.billLine.count({ where: { itemId: id } });
+  if (billLineCount > 0) {
+    const after = await prisma.item.update({ where: { id }, data: { status: 'MELTED' } });
+    await prisma.itemMovement.create({
+      data: {
+        tenantId,
+        itemId: id,
+        fromShopId: before.shopId,
+        type: 'WASTAGE',
+        reason: 'Manually removed from inventory (has sales history — soft-deleted)',
+        performedByUserId: performedByUserId ?? null,
+      },
+    });
+    void writeAudit('Item', id, 'DELETE', before, after, performedByUserId);
+    return { hardDeleted: false };
+  }
+
+  // Hard delete: remove the item and everything that hangs off it. Movements and
+  // transfer lines are restrict-on-delete so we clear them first; the linked
+  // storefront Product is unlinked + unpublished so order history (which may
+  // reference it) survives while the dead listing leaves the storefront.
+  // ItemCollection + ItemDiamond cascade automatically.
+  await prisma.$transaction([
+    prisma.itemMovement.deleteMany({ where: { itemId: id } }),
+    prisma.transferLine.deleteMany({ where: { itemId: id } }),
+    prisma.product.updateMany({ where: { linkedItemId: id }, data: { linkedItemId: null, isPublished: false } }),
+    prisma.item.delete({ where: { id } }),
+  ]);
+  void writeAudit('Item', id, 'DELETE', before, null, performedByUserId);
+  return { hardDeleted: true };
 }
 
 // transferItem() removed — stock moves now go through the /transfers

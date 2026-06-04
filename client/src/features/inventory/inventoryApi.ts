@@ -117,8 +117,10 @@ export const inventoryApi = baseApi.injectEndpoints({
         'StockValuation',
       ],
     }),
-    // Soft-delete an item (server marks it MELTED; blocked for SOLD items).
-    deleteItem: b.mutation<void, string>({
+    // Delete an item. Hard-deletes (removes the row + stock) when the piece was
+    // never sold; falls back to a soft delete (MELTED) only if it has sales
+    // history. Blocked for SOLD items.
+    deleteItem: b.mutation<ApiOne<{ hardDeleted: boolean }>, string>({
       query: (id) => ({ url: `/inventory/items/${id}`, method: 'DELETE' }),
       invalidatesTags: (_r, _e, id) => [{ type: 'Item', id }, { type: 'Item', id: 'LIST' }, 'StockValuation'],
     }),

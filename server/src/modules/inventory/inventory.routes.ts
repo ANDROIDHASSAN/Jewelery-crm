@@ -116,8 +116,8 @@ inventoryRouter.patch('/items/:id', requirePermission('inventory.write'), async 
 
 inventoryRouter.delete('/items/:id', requirePermission('inventory.delete'), async (req, res, next) => {
   try {
-    await svc.deleteItem(req.params['id']!, req.user?.userId);
-    res.status(204).end();
+    const result = await svc.deleteItem(req.params['id']!, req.user?.userId);
+    res.json({ data: result });
   } catch (err) {
     next(err);
   }

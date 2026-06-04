@@ -2827,12 +2827,22 @@ function EditItemDialog({
     if (item.status === 'SOLD') {
       return void toast.error('Sold items cannot be deleted — they live on a bill.');
     }
-    if (!window.confirm(`Delete "${item.name ?? item.sku}"? It is removed from inventory (marked melted) but stays in the audit trail.`)) {
+    const qty = item.isSerialized ? 1 : item.quantityOnHand;
+    const stockLine = `Stock on hand: ${qty} ${qty === 1 ? 'piece' : 'pieces'}.`;
+    if (
+      !window.confirm(
+        `Are you sure you want to delete "${item.name ?? item.sku}"?\n\n${stockLine}\nThis permanently removes the item and its stock.`,
+      )
+    ) {
       return;
     }
     try {
-      await del(item.id).unwrap();
-      toast.success(`Deleted ${item.name ?? item.sku}`);
+      const res = await del(item.id).unwrap();
+      toast.success(
+        res.data.hardDeleted
+          ? `Deleted ${item.name ?? item.sku}`
+          : `Removed ${item.name ?? item.sku} (kept in records — it has sales history)`,
+      );
       onClose();
     } catch (err) {
       const msg = (err as { data?: { error?: { message?: string } } }).data?.error?.message ?? 'Could not delete item.';
