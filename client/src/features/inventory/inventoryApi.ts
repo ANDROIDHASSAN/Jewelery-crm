@@ -117,6 +117,11 @@ export const inventoryApi = baseApi.injectEndpoints({
         'StockValuation',
       ],
     }),
+    // Soft-delete an item (server marks it MELTED; blocked for SOLD items).
+    deleteItem: b.mutation<void, string>({
+      query: (id) => ({ url: `/inventory/items/${id}`, method: 'DELETE' }),
+      invalidatesTags: (_r, _e, id) => [{ type: 'Item', id }, { type: 'Item', id: 'LIST' }, 'StockValuation'],
+    }),
     // Add stock to an existing Item (serialized -> clone N rows, lot -> bump
     // quantityOnHand). Server returns { mode, added, newQuantity? } so the
     // toast can confirm exactly what happened.
@@ -307,6 +312,7 @@ export const {
   useCreateItemMutation,
   useUpdateItemMutation,
   useRecordWastageMutation,
+  useDeleteItemMutation,
   useAddStockMutation,
   useGetCategoriesQuery,
   useCreateCategoryMutation,

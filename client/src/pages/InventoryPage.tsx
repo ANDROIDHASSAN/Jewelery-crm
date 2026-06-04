@@ -48,6 +48,7 @@ import {
   useUpdateCollectionMutation,
   useDeleteCollectionMutation,
   useLazyGetSkuSuggestionQuery,
+  useDeleteItemMutation,
   useCreateItemMutation,
   useUpdateItemMutation,
   useRecordWastageMutation,
@@ -1066,6 +1067,84 @@ interface CategoryRow {
   defaultMakingChargePerGramPaise?: number | null;
   sortOrder?: number;
   code?: string | null;
+}
+
+// Resolve the item-level making-charge override from the form fields. An empty
+// value = no override (inherit the category's mode + rate). Mirrors the
+// category form's Percentage / Flat-₹/g toggle.
+function resolveItemMakingOverride(
+  mode: 'PERCENTAGE' | 'PER_GRAM',
+  pct: string,
+  perGramRupees: string,
+): {
+  makingChargeBps: number | null;
+  makingChargeMode: 'PERCENTAGE' | 'PER_GRAM' | null;
+  makingChargePerGramPaise: number | null;
+} {
+  if (mode === 'PER_GRAM') {
+    const r = parseFloat(perGramRupees);
+    if (perGramRupees.trim() && Number.isFinite(r) && r >= 0) {
+      return { makingChargeBps: null, makingChargeMode: 'PER_GRAM', makingChargePerGramPaise: Math.round(r * 100) };
+    }
+    return { makingChargeBps: null, makingChargeMode: null, makingChargePerGramPaise: null };
+  }
+  const p = parseFloat(pct);
+  if (pct.trim() && Number.isFinite(p) && p >= 0) {
+    return { makingChargeBps: Math.round(p * 100), makingChargeMode: 'PERCENTAGE', makingChargePerGramPaise: null };
+  }
+  return { makingChargeBps: null, makingChargeMode: null, makingChargePerGramPaise: null };
+}
+
+// Small toggle + input for the item-level making-charge override (Percentage vs
+// Flat ₹/g). Leaving the value blank means "use category default".
+function MakingChargeOverride({
+  mode,
+  pct,
+  perGram,
+  onMode,
+  onPct,
+  onPerGram,
+}: {
+  mode: 'PERCENTAGE' | 'PER_GRAM';
+  pct: string;
+  perGram: string;
+  onMode: (m: 'PERCENTAGE' | 'PER_GRAM') => void;
+  onPct: (v: string) => void;
+  onPerGram: (v: string) => void;
+}): JSX.Element {
+  return (
+    <div className="space-y-2">
+      <div className="flex rounded-md border border-ink-200 p-0.5 text-xs">
+        <button
+          type="button"
+          onClick={() => onMode('PERCENTAGE')}
+          className={cn('flex-1 h-7 rounded font-medium transition-colors', mode === 'PERCENTAGE' ? 'bg-brand-500 text-ink-0' : 'text-ink-600 hover:bg-ink-50')}
+        >
+          %
+        </button>
+        <button
+          type="button"
+          onClick={() => onMode('PER_GRAM')}
+          className={cn('flex-1 h-7 rounded font-medium transition-colors', mode === 'PER_GRAM' ? 'bg-brand-500 text-ink-0' : 'text-ink-600 hover:bg-ink-50')}
+        >
+          ₹/g
+        </button>
+      </div>
+      {mode === 'PERCENTAGE' ? (
+        <input
+          type="number" step="0.1" min={0} value={pct}
+          onChange={(e) => onPct(e.target.value)}
+          className={fieldCls} placeholder="uses category default"
+        />
+      ) : (
+        <input
+          type="number" step="0.5" min={0} value={perGram}
+          onChange={(e) => onPerGram(e.target.value)}
+          className={fieldCls} placeholder="₹/g · uses category default"
+        />
+      )}
+    </div>
+  );
 }
 
 // Default purity carat (as a string for the form) for a given metal type.
@@ -2175,7 +2254,9 @@ function AddItemDialog({ open, onClose }: { open: boolean; onClose: () => void }
     hallmarkStatus: 'PENDING' as 'PENDING' | 'SUBMITTED' | 'CERTIFIED' | 'EXEMPT',
     hallmarkRef: '',
     costPriceRupees: '',
+    makingMode: 'PERCENTAGE' as 'PERCENTAGE' | 'PER_GRAM',
     makingChargePct: '',
+    makingPerGramRupees: '',
   });
   // Images and publish-to-website live alongside the form but outside the
   // text/select state object so the upload UI can update images without
@@ -2307,11 +2388,7 @@ function AddItemDialog({ open, onClose }: { open: boolean; onClose: () => void }
       form.stoneWeightG && Number.isFinite(stoneRaw) && stoneRaw > 0
         ? Math.round(stoneRaw * 1000)
         : null;
-    const makingRaw = parseFloat(form.makingChargePct);
-    const makingChargeBps =
-      form.makingChargePct && Number.isFinite(makingRaw) && makingRaw >= 0
-        ? Math.round(makingRaw * 100)
-        : null;
+    const making = resolveItemMakingOverride(form.makingMode, form.makingChargePct, form.makingPerGramRupees);
 
     try {
       await create({
@@ -2328,7 +2405,9 @@ function AddItemDialog({ open, onClose }: { open: boolean; onClose: () => void }
         hallmarkStatus: form.hallmarkStatus,
         hallmarkRef: form.hallmarkRef.trim() || null,
         costPricePaise,
-        makingChargeBps,
+        makingChargeBps: making.makingChargeBps,
+        makingChargeMode: making.makingChargeMode,
+        makingChargePerGramPaise: making.makingChargePerGramPaise,
         // Hybrid stock model — Add Item form lets admins pick between
         // UNIQUE (one piece per row, cloned on add-stock) and BULK (lot
         // tracking N interchangeable pieces with an integer counter).
@@ -2381,7 +2460,9 @@ function AddItemDialog({ open, onClose }: { open: boolean; onClose: () => void }
                       hallmarkStatus: it.hallmarkStatus,
                       hallmarkRef: it.hallmarkRef || '',
                       costPriceRupees: String(it.costPricePaise / 100),
+                      makingMode: 'PERCENTAGE',
                       makingChargePct: it.makingChargeBps ? String(it.makingChargeBps / 100) : '',
+                      makingPerGramRupees: '',
                     });
                     setImages(it.images ?? []);
                     toast.success(`Copied details from ${it.sku}`);
@@ -2657,15 +2738,14 @@ function AddItemDialog({ open, onClose }: { open: boolean; onClose: () => void }
                   required
                 />
               </Field>
-              <Field label="Making charge (%) override">
-                <input
-                  type="number"
-                  step="0.1"
-                  min={0}
-                  value={form.makingChargePct}
-                  onChange={(e) => setForm({ ...form, makingChargePct: e.target.value })}
-                  className={fieldCls}
-                  placeholder="uses category default"
+              <Field label="Making charge override">
+                <MakingChargeOverride
+                  mode={form.makingMode}
+                  pct={form.makingChargePct}
+                  perGram={form.makingPerGramRupees}
+                  onMode={(m) => setForm({ ...form, makingMode: m })}
+                  onPct={(v) => setForm({ ...form, makingChargePct: v })}
+                  onPerGram={(v) => setForm({ ...form, makingPerGramRupees: v })}
                 />
               </Field>
             </div>
@@ -2741,6 +2821,24 @@ function EditItemDialog({
   const { data: cats } = useGetCategoriesQuery();
   const { data: shops } = useGetShopsQuery();
   const [update, { isLoading }] = useUpdateItemMutation();
+  const [del, { isLoading: deleting }] = useDeleteItemMutation();
+
+  const handleDelete = async (): Promise<void> => {
+    if (item.status === 'SOLD') {
+      return void toast.error('Sold items cannot be deleted — they live on a bill.');
+    }
+    if (!window.confirm(`Delete "${item.name ?? item.sku}"? It is removed from inventory (marked melted) but stays in the audit trail.`)) {
+      return;
+    }
+    try {
+      await del(item.id).unwrap();
+      toast.success(`Deleted ${item.name ?? item.sku}`);
+      onClose();
+    } catch (err) {
+      const msg = (err as { data?: { error?: { message?: string } } }).data?.error?.message ?? 'Could not delete item.';
+      toast.error(msg);
+    }
+  };
   // The list endpoint attaches collectionIds + diamonds to each item; they
   // aren't on the base Item type, so read them through a widened view.
   const itemExt = item as Item & {
@@ -2759,7 +2857,10 @@ function EditItemDialog({
     hallmarkStatus: item.hallmarkStatus,
     hallmarkRef: item.hallmarkRef ?? '',
     costPriceRupees: String(item.costPricePaise / 100),
+    makingMode: (item.makingChargeMode ?? 'PERCENTAGE') as 'PERCENTAGE' | 'PER_GRAM',
     makingChargePct: item.makingChargeBps ? String(item.makingChargeBps / 100) : '',
+    makingPerGramRupees:
+      item.makingChargePerGramPaise != null ? String(item.makingChargePerGramPaise / 100) : '',
   });
   const [images, setImages] = useState<string[]>(item.images ?? []);
   const [collectionIds, setCollectionIds] = useState<string[]>(itemExt.collectionIds ?? []);
@@ -2784,7 +2885,10 @@ function EditItemDialog({
       hallmarkStatus: item.hallmarkStatus,
       hallmarkRef: item.hallmarkRef ?? '',
       costPriceRupees: String(item.costPricePaise / 100),
+      makingMode: (item.makingChargeMode ?? 'PERCENTAGE') as 'PERCENTAGE' | 'PER_GRAM',
       makingChargePct: item.makingChargeBps ? String(item.makingChargeBps / 100) : '',
+      makingPerGramRupees:
+        item.makingChargePerGramPaise != null ? String(item.makingChargePerGramPaise / 100) : '',
     });
     setImages(item.images ?? []);
     setCollectionIds(itemExt.collectionIds ?? []);
@@ -2844,11 +2948,7 @@ function EditItemDialog({
       form.stoneWeightG && Number.isFinite(stoneRaw) && stoneRaw > 0
         ? Math.round(stoneRaw * 1000)
         : null;
-    const makingRaw = parseFloat(form.makingChargePct);
-    const makingChargeBps =
-      form.makingChargePct && Number.isFinite(makingRaw) && makingRaw >= 0
-        ? Math.round(makingRaw * 100)
-        : null;
+    const making = resolveItemMakingOverride(form.makingMode, form.makingChargePct, form.makingPerGramRupees);
 
     try {
       await update({
@@ -2865,7 +2965,9 @@ function EditItemDialog({
           hallmarkStatus: form.hallmarkStatus,
           hallmarkRef: form.hallmarkRef.trim() || null,
           costPricePaise,
-          makingChargeBps,
+          makingChargeBps: making.makingChargeBps,
+          makingChargeMode: making.makingChargeMode,
+          makingChargePerGramPaise: making.makingChargePerGramPaise,
           collectionIds,
           diamonds: diamondRowsToInput(diamonds),
         },
@@ -3092,15 +3194,14 @@ function EditItemDialog({
                   required
                 />
               </Field>
-              <Field label="Making charge (%) override">
-                <input
-                  type="number"
-                  step="0.1"
-                  min={0}
-                  value={form.makingChargePct}
-                  onChange={(e) => setForm({ ...form, makingChargePct: e.target.value })}
-                  className={fieldCls}
-                  placeholder="uses category default"
+              <Field label="Making charge override">
+                <MakingChargeOverride
+                  mode={form.makingMode}
+                  pct={form.makingChargePct}
+                  perGram={form.makingPerGramRupees}
+                  onMode={(m) => setForm({ ...form, makingMode: m })}
+                  onPct={(v) => setForm({ ...form, makingChargePct: v })}
+                  onPerGram={(v) => setForm({ ...form, makingPerGramRupees: v })}
                 />
               </Field>
             </div>
@@ -3123,11 +3224,21 @@ function EditItemDialog({
               <DiamondsEditor rows={diamonds} onChange={setDiamonds} />
             </Field>
 
-            <div className="flex gap-2 pt-2">
+            <div className="flex items-center gap-2 pt-2">
+              <button
+                type="button"
+                onClick={() => void handleDelete()}
+                disabled={deleting || item.status === 'SOLD'}
+                title={item.status === 'SOLD' ? 'Sold items cannot be deleted' : 'Delete item'}
+                className="inline-flex items-center gap-1.5 h-9 px-3 rounded-md text-sm font-medium text-rose-600 border border-rose-200 hover:bg-rose-50 disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                <Trash2 className="h-4 w-4" /> {deleting ? 'Deleting…' : 'Delete'}
+              </button>
+              <div className="flex-1" />
               <Button variant="outline" type="button" onClick={onClose} disabled={isLoading}>
                 Cancel
               </Button>
-              <Button type="submit" className="flex-1" disabled={isLoading}>
+              <Button type="submit" disabled={isLoading}>
                 {isLoading ? 'Saving…' : 'Save changes'}
               </Button>
             </div>

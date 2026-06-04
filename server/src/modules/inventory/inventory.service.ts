@@ -769,25 +769,34 @@ export async function deleteCollection(id: string) {
   void writeAudit('Collection', id, 'DELETE', before, null);
 }
 
-// Suggest the next SKU for a category: "[CODE]-[zero-padded sequence]". The
-// client prefills the SKU field with this when the category changes; the user
-// can still override it (SKU stays free-form and unique per tenant). M3 FR#6.
+// Suggest the next SKU for a category. The prefix combines the MAIN category
+// code and the SUB category code, then a per-prefix 3-digit sequence:
+//   main "18K Gold Tone" (18KGT) + sub "Ring" (RG) → 18KGT-RG-001, -002, …
+//   main "9K Fine Gold"  (9KFG)  + sub "Necklace" (NK) → 9KFG-NK-001, …
+// If a code is missing we drop that segment; with neither we fall back to SKU.
+// The client prefills the SKU field with this when the category changes; the
+// user can still override it (SKU stays free-form, unique per tenant). M3 FR#6.
 export async function suggestSku(categoryId: string): Promise<{ sku: string; code: string | null }> {
   const tenantId = getTenantId();
   if (!tenantId) throw new Error('tenantId missing');
   const cat = await prisma.category.findUnique({
     where: { id: categoryId },
-    select: { code: true },
+    select: { code: true, parentId: true, parent: { select: { code: true } } },
   });
-  const code = cat?.code?.trim().toUpperCase() || 'SKU';
+  const clean = (c?: string | null) => (c ? c.trim().toUpperCase() : '');
+  const subCode = clean(cat?.code);
+  const mainCode = clean(cat?.parent?.code);
+  // Build the prefix: [main]-[sub] for a sub-category; just [code] for a main.
+  const parts = cat?.parentId ? [mainCode, subCode] : [subCode];
+  const prefix = parts.filter(Boolean).join('-') || 'SKU';
   // Count existing items whose SKU already starts with this prefix to derive
   // the next sequence number. Cheap + good enough; collisions are caught by the
   // unique (tenantId, sku) constraint and the user can edit before saving.
   const count = await prisma.item.count({
-    where: { sku: { startsWith: `${code}-` } },
+    where: { sku: { startsWith: `${prefix}-` } },
   });
-  const seq = String(count + 1).padStart(5, '0');
-  return { sku: `${code}-${seq}`, code: cat?.code ?? null };
+  const seq = String(count + 1).padStart(3, '0');
+  return { sku: `${prefix}-${seq}`, code: prefix };
 }
 
 export async function computeValuation(opts: { shopId?: string }) {
