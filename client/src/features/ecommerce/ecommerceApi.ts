@@ -17,6 +17,9 @@ export interface AdminProduct {
   categoryId: string;
   images: string[];
   isPublished: boolean;
+  // Storefront homepage sections this product is featured in (one product can
+  // be in several; still a single inventory record).
+  sections?: string[];
   createdAt: string;
   // Pulled from the bridged inventory Item (Product.linkedItemId). Surfaces
   // the real stock-keeping SKU in the admin table without joining client-side.

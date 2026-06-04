@@ -14,6 +14,7 @@ import {
   TRANSFER_STATUSES,
   METAL_TYPES,
   MAKING_CHARGE_MODES,
+  STOREFRONT_SECTIONS,
 } from './constants.js';
 
 // --- Primitives ---
@@ -650,6 +651,10 @@ export const ProductInputSchema = z.object({
   basePricePaise: PaiseSchema,
   stoneChargePaise: PaiseSchema.default(0),
   isPublished: z.boolean().default(false),
+  // Write-time only: storefront homepage sections this product is featured in
+  // (New Arrivals, Best Sellers, …). Synced to ProductSection rows; not a
+  // Product column. One product → many sections, still one inventory record.
+  sections: z.array(z.enum(STOREFRONT_SECTIONS)).max(10).optional(),
 });
 
 export const OrderSchema = z.object({

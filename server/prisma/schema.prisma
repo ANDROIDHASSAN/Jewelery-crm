@@ -75,6 +75,7 @@ model Tenant {
   collections       Collection[]
   itemCollections   ItemCollection[]
   itemDiamonds      ItemDiamond[]
+  productSections   ProductSection[]
 
   @@index([ownerEmail])
 }
@@ -1293,10 +1294,41 @@ model Product {
   orderItems    OrderItem[]
   cartItems     CartItem[]
   wishlistItems WishlistItem[]
+  sections      ProductSection[]
 
   @@unique([tenantId, slug])
   @@index([tenantId])
   @@index([tenantId, isPublished])
+}
+
+// Curated homepage storefront sections a product can be featured in. A single
+// product (one inventory record) may belong to several — New Arrivals AND
+// Best Sellers AND Featured — without ever duplicating the Item/Product row
+// (M3 FR#1: "show in multi-sections in storefront only; in admin always once").
+enum StorefrontSection {
+  NEW_ARRIVAL
+  BEST_SELLER
+  FEATURED
+  TRENDING
+  DEAL
+}
+
+model ProductSection {
+  id           String            @id @default(cuid())
+  tenantId     String
+  productId    String
+  section      StorefrontSection
+  displayOrder Int               @default(0)
+  createdAt    DateTime          @default(now())
+
+  tenant  Tenant  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  // One row per (product, section) — adding a product to a section it's already
+  // in is a no-op, never a duplicate.
+  @@unique([productId, section])
+  @@index([tenantId])
+  @@index([tenantId, section])
 }
 
 model Order {

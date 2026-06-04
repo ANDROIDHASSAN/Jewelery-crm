@@ -74,6 +74,7 @@ ecommerceRouter.get('/products', async (req, res, next) => {
           // is for stock). Null for products created without a linked
           // inventory row.
           linkedItem: { select: { sku: true } },
+          sections: { select: { section: true } },
         },
       }),
       readGoldRatePaise(2400),
@@ -83,23 +84,51 @@ ecommerceRouter.get('/products', async (req, res, next) => {
     const rate24KPaise = rate24?.paise ?? 0;
     const rateSilverPaise = rateSilver?.paise ?? 0;
     const stale = (rate24?.stale ?? true) || (rateSilver?.stale ?? true);
-    const enriched = products.slice(0, take).map((p) => ({
-      ...p,
-      livePricePaise: computeLivePricePaise(p, rate24KPaise, rateSilverPaise),
-      livePriceStale: stale,
-    }));
+    const enriched = products.slice(0, take).map((p) => {
+      const { sections, ...rest } = p;
+      return {
+        ...rest,
+        // Flatten the join to a plain string[] the admin form round-trips.
+        sections: sections.map((s) => s.section),
+        livePricePaise: computeLivePricePaise(rest, rate24KPaise, rateSilverPaise),
+        livePriceStale: stale,
+      };
+    });
     res.json({ data: enriched, page: { nextCursor: hasMore ? products.at(-2)?.id : undefined, hasMore } });
   } catch (err) {
     next(err);
   }
 });
 
+// Replace a product's storefront-section memberships. `sections` is the full
+// desired set; we diff against existing rows so a product placed in 6 sections
+// gets 6 ProductSection rows and NEVER a duplicate Product/Item (M3 FR#1).
+async function syncProductSections(tenantId: string, productId: string, sections: string[]) {
+  const desired = new Set(sections);
+  const existing = await prisma.productSection.findMany({
+    where: { productId },
+    select: { section: true },
+  });
+  const have = new Set(existing.map((e) => e.section));
+  const toAdd = [...desired].filter((s) => !have.has(s as never));
+  const toRemove = [...have].filter((s) => !desired.has(s));
+  await prisma.$transaction([
+    ...(toRemove.length
+      ? [prisma.productSection.deleteMany({ where: { productId, section: { in: toRemove as never[] } } })]
+      : []),
+    ...toAdd.map((s) =>
+      prisma.productSection.create({ data: { tenantId, productId, section: s as never } }),
+    ),
+  ]);
+}
+
 ecommerceRouter.post('/products', requirePermission('ecommerce.product_write'), async (req, res, next) => {
   try {
-    const body = ProductInputSchema.parse(req.body);
+    const { sections, ...body } = ProductInputSchema.parse(req.body);
     const tenantId = getTenantId();
     if (!tenantId) throw new Error('tenantId missing');
     const product = await prisma.product.create({ data: { ...body, tenantId } });
+    if (sections && sections.length) await syncProductSections(tenantId, product.id, sections);
     res.status(201).json({ data: product });
   } catch (err) {
     next(err);
@@ -111,8 +140,12 @@ const ProductPatchSchema = ProductInputSchema.partial();
 ecommerceRouter.patch('/products/:id', requirePermission('ecommerce.product_write'), async (req, res, next) => {
   try {
     const { id } = z.object({ id: z.string().min(1) }).parse(req.params);
-    const body = ProductPatchSchema.parse(req.body);
+    const { sections, ...body } = ProductPatchSchema.parse(req.body);
+    const tenantId = getTenantId();
+    if (!tenantId) throw new Error('tenantId missing');
     const product = await prisma.product.update({ where: { id }, data: body });
+    // Only touch section rows when the caller included `sections` (full-set).
+    if (sections !== undefined) await syncProductSections(tenantId, id, sections);
     res.json({ data: product });
   } catch (err) {
     next(err);

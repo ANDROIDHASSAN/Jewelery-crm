@@ -389,6 +389,28 @@ export type Purity = (typeof PURITY_VALUES)[number];
 export const MAKING_CHARGE_MODES = ['PERCENTAGE', 'PER_GRAM'] as const;
 export type MakingChargeMode = (typeof MAKING_CHARGE_MODES)[number];
 
+// Storefront homepage sections a product can be featured in. One product (one
+// inventory record) can belong to several at once. M3 FR#1. The exact list is a
+// client decision (open item) — refining it here is a non-breaking change as
+// long as the Prisma enum stays in sync.
+export const STOREFRONT_SECTIONS = [
+  'NEW_ARRIVAL',
+  'BEST_SELLER',
+  'FEATURED',
+  'TRENDING',
+  'DEAL',
+] as const;
+export type StorefrontSection = (typeof STOREFRONT_SECTIONS)[number];
+
+// Human labels for the section enum (admin multi-select + storefront headings).
+export const STOREFRONT_SECTION_LABELS: Record<StorefrontSection, string> = {
+  NEW_ARRIVAL: 'New Arrivals',
+  BEST_SELLER: 'Best Sellers',
+  FEATURED: 'Featured',
+  TRENDING: 'Trending',
+  DEAL: 'Deals',
+};
+
 // Diamond 4 Cs — defaults use the GIA industry-standard scales. These drive the
 // item form dropdowns; the client may refine the allowed values from their own
 // grading chart (the DB stores them as free-form strings, so refining the list

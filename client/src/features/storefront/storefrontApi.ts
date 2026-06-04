@@ -126,8 +126,11 @@ export const storefrontApi = baseApi.injectEndpoints({
         }
       },
     }),
-    getPublicProducts: build.query<PublicProduct[], void>({
-      query: () => ({ url: '/website/products' }),
+    getPublicProducts: build.query<PublicProduct[], { section?: string } | void>({
+      query: (arg) => ({
+        url: '/website/products',
+        params: arg && arg.section ? { section: arg.section } : undefined,
+      }),
       transformResponse: (raw: { data: PublicProduct[] }) => raw.data,
       providesTags: [{ type: 'Product', id: 'PUBLIC' }],
     }),

@@ -125,11 +125,23 @@ websiteRouter.get('/collections', async (req, res, next) => {
   }
 });
 
+const STOREFRONT_SECTION_VALUES = ['NEW_ARRIVAL', 'BEST_SELLER', 'FEATURED', 'TRENDING', 'DEAL'];
+
 websiteRouter.get('/products', async (req, res, next) => {
   try {
     const tenantId = await tenantFromQueryOrFirst(req);
+    // Optional ?section=BEST_SELLER filters to products featured in that
+    // homepage section (one product can be in several — still one record).
+    const section =
+      typeof req.query['section'] === 'string' && STOREFRONT_SECTION_VALUES.includes(req.query['section'])
+        ? req.query['section']
+        : undefined;
     const products = await rawPrisma.product.findMany({
-      where: { tenantId, isPublished: true },
+      where: {
+        tenantId,
+        isPublished: true,
+        ...(section ? { sections: { some: { section: section as never } } } : {}),
+      },
       orderBy: { createdAt: 'desc' },
       take: 60,
       // Pull the linked inventory row (if any) so we can compute live stock

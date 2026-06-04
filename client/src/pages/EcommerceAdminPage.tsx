@@ -26,7 +26,12 @@ import {
   type OrderPatchPayload,
 } from '@/features/ecommerce/ecommerceApi';
 import { useGetCategoriesQuery } from '@/features/inventory/inventoryApi';
-import { ORDER_STATUSES, type OrderStatus } from '@goldos/shared/constants';
+import {
+  ORDER_STATUSES,
+  type OrderStatus,
+  STOREFRONT_SECTIONS,
+  STOREFRONT_SECTION_LABELS,
+} from '@goldos/shared/constants';
 
 const STATUS_TONE: Record<string, 'success' | 'info' | 'warning' | 'neutral'> = {
   DELIVERED: 'success',
@@ -932,7 +937,10 @@ interface ProductForm {
   basePriceRupees: string;
   stoneChargeRupees: string;
   isPublished: boolean;
+  sections: StorefrontSectionLiteral[];
 }
+
+type StorefrontSectionLiteral = (typeof STOREFRONT_SECTIONS)[number];
 
 function emptyForm(): ProductForm {
   return {
@@ -947,6 +955,7 @@ function emptyForm(): ProductForm {
     basePriceRupees: '',
     stoneChargeRupees: '0',
     isPublished: true,
+    sections: [],
   };
 }
 
@@ -975,6 +984,7 @@ function ProductDialog({
           basePriceRupees: (editing.basePricePaise / 100).toString(),
           stoneChargeRupees: (editing.stoneChargePaise / 100).toString(),
           isPublished: editing.isPublished,
+          sections: (editing.sections ?? []) as StorefrontSectionLiteral[],
         }
       : emptyForm(),
   );
@@ -998,6 +1008,7 @@ function ProductDialog({
             basePriceRupees: (editing.basePricePaise / 100).toString(),
             stoneChargeRupees: (editing.stoneChargePaise / 100).toString(),
             isPublished: editing.isPublished,
+            sections: (editing.sections ?? []) as StorefrontSectionLiteral[],
           }
         : emptyForm(),
     );
@@ -1041,6 +1052,7 @@ function ProductDialog({
       basePricePaise,
       stoneChargePaise,
       isPublished: form.isPublished,
+      sections: form.sections,
     };
     try {
       if (editing) {
@@ -1145,6 +1157,38 @@ function ProductDialog({
                 images={form.images}
                 onChange={(images) => setForm({ ...form, images })}
               />
+            </Field>
+
+            <Field label="Show in storefront sections">
+              <div className="flex flex-wrap gap-1.5">
+                {STOREFRONT_SECTIONS.map((s) => {
+                  const on = form.sections.includes(s);
+                  return (
+                    <button
+                      key={s}
+                      type="button"
+                      onClick={() =>
+                        setForm({
+                          ...form,
+                          sections: on
+                            ? form.sections.filter((x) => x !== s)
+                            : [...form.sections, s],
+                        })
+                      }
+                      className={`h-8 px-2.5 rounded-md text-xs font-medium border transition-colors ${
+                        on
+                          ? 'bg-brand-500 text-ink-0 border-brand-500'
+                          : 'bg-ink-0 text-ink-700 border-ink-200 hover:border-ink-300'
+                      }`}
+                    >
+                      {STOREFRONT_SECTION_LABELS[s]}
+                    </button>
+                  );
+                })}
+              </div>
+              <p className="mt-1 text-[11px] text-ink-500">
+                One product can appear in several sections — it stays a single inventory record.
+              </p>
             </Field>
 
             <label className="flex items-center gap-2 text-sm">
