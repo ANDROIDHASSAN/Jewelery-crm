@@ -72,6 +72,9 @@ model Tenant {
   bankTransactions  BankTransaction[]
   reconciliations   Reconciliation[]
   invitations       UserInvitation[]
+  collections       Collection[]
+  itemCollections   ItemCollection[]
+  itemDiamonds      ItemDiamond[]
 
   @@index([ownerEmail])
 }
@@ -370,6 +373,9 @@ model Category {
   // merchants pin high-traffic sub-categories (Necklaces, Chains) to the top
   // regardless of alphabetical name.
   sortOrder              Int       @default(0)
+  // Short category code (e.g. RNG, NCK) used as the SKU prefix when
+  // auto-generating item SKUs ([code]-[sequence]). Optional / uppercase.
+  code                   String?
 
   tenant   Tenant     @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   parent   Category?  @relation("CategoryTree", fields: [parentId], references: [id])
@@ -394,6 +400,9 @@ model Item {
   // Item display name shown in POS catalog & on the printed receipt. Falls
   // back to `sku` in legacy rows that pre-date this column.
   name            String?
+  // Master item description (single source of truth). Propagated to the linked
+  // storefront Product.descriptionMd and shown on slips/receipts. Set once here.
+  description     String?
   // Cloudinary-hosted product images. First entry is the hero shown in the
   // catalog grid + bill thumbnails; the rest power a future image carousel.
   images          String[]       @default([])
@@ -428,6 +437,8 @@ model Item {
   movements         ItemMovement[]
   billLines         BillLine[]
   transferLines     TransferLine[]
+  collections       ItemCollection[]
+  diamonds          ItemDiamond[]
   // Reverse side of Product.linkedItemId. At most one storefront Product
   // mirrors a given inventory Item (one-to-one), so this is `Product?`.
   storefrontProduct Product?       @relation("ProductLinkedItem")
@@ -438,6 +449,65 @@ model Item {
   @@index([tenantId, categoryId])
   @@index([barcodeData])
   @@index([tenantId, shopId, categoryId, status, isSerialized])
+}
+
+// Curated, cross-category grouping (Bridal, Festival, Corporate). An item can
+// belong to several collections; collections can mix categories + metal types.
+// Separate from the Category tree.
+model Collection {
+  id          String   @id @default(cuid())
+  tenantId    String
+  name        String
+  slug        String
+  description String?
+  sortOrder   Int      @default(0)
+  createdAt   DateTime @default(now())
+
+  tenant Tenant           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  items  ItemCollection[]
+
+  @@unique([tenantId, slug])
+  @@index([tenantId])
+}
+
+// Many-to-many join between Item and Collection. Item membership is the source
+// of truth (M1 FR#1). One inventory record, many collections — never a stock dup.
+model ItemCollection {
+  itemId       String
+  collectionId String
+  tenantId     String
+
+  item       Item       @relation(fields: [itemId], references: [id], onDelete: Cascade)
+  collection Collection @relation(fields: [collectionId], references: [id], onDelete: Cascade)
+  tenant     Tenant     @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@id([itemId, collectionId])
+  @@index([tenantId])
+  @@index([collectionId])
+}
+
+// One diamond/stone line on an item (M1 FR#4, M2 §1). An item may have several
+// of these — different shapes/grades/carats. costPaise is the diamond's
+// purchase cost, booked separately from the metal cost (Item.costPricePaise).
+// cut/clarity/color use the GIA 4Cs scales by default; the client can refine
+// the allowed values from their grading chart.
+model ItemDiamond {
+  id              String  @id @default(cuid())
+  tenantId        String
+  itemId          String
+  shape           String?
+  caratWeightX100 Int     @default(0)
+  cut             String?
+  clarity         String?
+  color           String?
+  count           Int     @default(1)
+  costPaise       Int     @default(0)
+
+  item   Item   @relation(fields: [itemId], references: [id], onDelete: Cascade)
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId])
+  @@index([itemId])
 }
 
 model ItemMovement {

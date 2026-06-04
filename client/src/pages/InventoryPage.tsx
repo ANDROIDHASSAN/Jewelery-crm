@@ -24,10 +24,18 @@ import {
   Globe,
   ChevronUp,
   ChevronDown,
+  Sparkles,
+  Trash2,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { uploadImageToCloudinary, isCloudinaryConfigured, cloudinaryThumb } from '@/lib/cloudinary';
 import type { Item } from '@goldos/shared/types';
+import {
+  DIAMOND_SHAPES,
+  DIAMOND_CUTS,
+  DIAMOND_CLARITIES,
+  DIAMOND_COLORS,
+} from '@goldos/shared/constants';
 import {
   useGetItemsQuery,
   useGetCategoriesQuery,
@@ -35,6 +43,11 @@ import {
   useUpdateCategoryMutation,
   useDeleteCategoryMutation,
   useReorderCategoriesMutation,
+  useGetCollectionsQuery,
+  useCreateCollectionMutation,
+  useUpdateCollectionMutation,
+  useDeleteCollectionMutation,
+  useLazyGetSkuSuggestionQuery,
   useCreateItemMutation,
   useUpdateItemMutation,
   useRecordWastageMutation,
@@ -72,6 +85,7 @@ import { BulkImportModal } from '@/features/inventory/BulkImportModal';
 type Tab =
   | 'items'
   | 'categories'
+  | 'collections'
   | 'transfers'
   | 'wastage'
   | 'valuation'
@@ -84,6 +98,7 @@ type Tab =
 const TABS: Array<{ id: Tab; label: string; icon: typeof Boxes }> = [
   { id: 'items', label: 'Items', icon: Boxes },
   { id: 'categories', label: 'Categories', icon: TagIcon },
+  { id: 'collections', label: 'Collections', icon: Sparkles },
   { id: 'transfers', label: 'Transfers', icon: Truck },
   { id: 'wastage', label: 'Wastage & melting', icon: Flame },
   { id: 'valuation', label: 'Valuation', icon: Coins },
@@ -110,6 +125,7 @@ export function InventoryPage(): JSX.Element {
 
       {tab === 'items' && <ItemsTab />}
       {tab === 'categories' && <CategoriesTab />}
+      {tab === 'collections' && <CollectionsManageTab />}
       {tab === 'transfers' && <MovementsTab type="TRANSFER" emptyLabel="No transfers yet." />}
       {tab === 'wastage' && <MovementsTab type="WASTAGE" emptyLabel="No wastage logged." />}
       {tab === 'valuation' && <ValuationTab />}
@@ -1049,6 +1065,7 @@ interface CategoryRow {
   makingChargeMode?: 'PERCENTAGE' | 'PER_GRAM';
   defaultMakingChargePerGramPaise?: number | null;
   sortOrder?: number;
+  code?: string | null;
 }
 
 // Default purity carat (as a string for the form) for a given metal type.
@@ -1066,6 +1083,100 @@ function defaultPurityForMetal(metalType: MetalTypeLiteral | undefined): string 
     default:
       return '9'; // GOLD / DIAMOND → 9 carat default
   }
+}
+
+// Collections management — create / rename / delete the cross-category groupings
+// (Bridal, Festival, …). Items are tagged into these from the item form.
+function CollectionsManageTab(): JSX.Element {
+  const { data, isLoading } = useGetCollectionsQuery();
+  const [create, { isLoading: creating }] = useCreateCollectionMutation();
+  const [update] = useUpdateCollectionMutation();
+  const [del] = useDeleteCollectionMutation();
+  const [name, setName] = useState('');
+  const [description, setDescription] = useState('');
+  const collections = data?.data ?? [];
+
+  const add = async (e: React.FormEvent): Promise<void> => {
+    e.preventDefault();
+    if (name.trim().length < 2) return void toast.error('Collection name must be at least 2 characters');
+    try {
+      await create({ name: name.trim(), description: description.trim() || null }).unwrap();
+      toast.success(`Added ${name.trim()}`);
+      setName('');
+      setDescription('');
+    } catch (err) {
+      const msg = (err as { data?: { error?: { message?: string } } }).data?.error?.message ?? 'Could not add collection.';
+      toast.error(msg);
+    }
+  };
+
+  const remove = async (id: string, nm: string): Promise<void> => {
+    if (!window.confirm(`Delete collection "${nm}"? Items stay in inventory; they just lose this tag.`)) return;
+    try {
+      await del(id).unwrap();
+      toast.success(`Deleted ${nm}`);
+    } catch {
+      toast.error('Could not delete collection.');
+    }
+  };
+
+  return (
+    <div className="space-y-4">
+      <p className="text-sm text-ink-500">
+        Collections group items across categories &amp; metals — Bridal, Festival, Corporate. Tag items into them from
+        the item form. An item can be in several collections but stays a single inventory record.
+      </p>
+
+      <form onSubmit={add} className="flex flex-col sm:flex-row gap-2 sm:items-end rounded-md border border-ink-100 bg-ink-0 p-3">
+        <Field label="New collection name">
+          <input value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Bridal Collection" className={fieldCls} />
+        </Field>
+        <Field label="Description (optional)">
+          <input value={description} onChange={(e) => setDescription(e.target.value)} placeholder="Short tagline" className={fieldCls} />
+        </Field>
+        <Button type="submit" disabled={creating} className="self-start sm:self-auto">
+          <Plus className="h-4 w-4" /> Add
+        </Button>
+      </form>
+
+      {isLoading && <p className="text-sm text-ink-500">Loading…</p>}
+      {!isLoading && collections.length === 0 && (
+        <EmptyState
+          eyebrow="No collections yet"
+          title="Create your first collection"
+          body="Group seasonal or themed pieces (Bridal, Festival) so they're easy to feature and tag."
+        />
+      )}
+      {collections.length > 0 && (
+        <ul className="divide-y divide-ink-100 rounded-md border border-ink-100 bg-ink-0">
+          {collections.map((c) => (
+            <li key={c.id} className="flex items-center justify-between gap-3 px-4 py-3">
+              <div className="min-w-0">
+                <input
+                  defaultValue={c.name}
+                  onBlur={(e) => {
+                    const v = e.target.value.trim();
+                    if (v && v !== c.name) void update({ id: c.id, patch: { name: v } }).unwrap().catch(() => toast.error('Rename failed'));
+                  }}
+                  className="text-sm text-ink-900 bg-transparent border-0 px-0 focus:ring-0 focus:outline-none focus:border-b focus:border-brand-400"
+                />
+                {c.description && <p className="text-[11px] text-ink-500">{c.description}</p>}
+              </div>
+              <button
+                type="button"
+                onClick={() => void remove(c.id, c.name)}
+                className="inline-flex items-center justify-center h-7 w-7 rounded-md text-ink-500 hover:bg-rose-50 hover:text-rose-600"
+                aria-label={`Delete ${c.name}`}
+                title="Delete"
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
 }
 
 function CategoriesTab(): JSX.Element {
@@ -1308,6 +1419,7 @@ function CategoryDialog({
     name: existing?.name ?? '',
     parentId: existing?.parentId ?? defaultParentId ?? '',
     metalType: existing?.metalType ?? ('GOLD' as MetalTypeLiteral),
+    code: existing?.code ?? '',
     makingMode: existing?.makingChargeMode ?? ('PERCENTAGE' as 'PERCENTAGE' | 'PER_GRAM'),
     makingPct: existing ? String(existing.defaultMakingChargeBps / 100) : '12',
     makingPerGramRupees:
@@ -1322,6 +1434,7 @@ function CategoryDialog({
       name: existing?.name ?? '',
       parentId: existing?.parentId ?? defaultParentId ?? '',
       metalType: existing?.metalType ?? 'GOLD',
+      code: existing?.code ?? '',
       makingMode: existing?.makingChargeMode ?? 'PERCENTAGE',
       makingPct: existing ? String(existing.defaultMakingChargeBps / 100) : '12',
       makingPerGramRupees:
@@ -1360,6 +1473,10 @@ function CategoryDialog({
       if (Number.isFinite(rupees) && rupees >= 0) perGramPaise = Math.round(rupees * 100);
     }
     const parentId = form.parentId ? form.parentId : null;
+    const code = form.code.trim().toUpperCase();
+    if (code && !/^[A-Z0-9]{1,8}$/.test(code)) {
+      return void toast.error('Category code must be 1–8 letters/digits (e.g. RNG)');
+    }
     const payload = {
       name: form.name.trim(),
       parentId,
@@ -1367,6 +1484,7 @@ function CategoryDialog({
       defaultMakingChargeBps: bps,
       makingChargeMode: form.makingMode,
       defaultMakingChargePerGramPaise: perGramPaise,
+      code: code || null,
     };
     try {
       if (mode === 'create') {
@@ -1416,6 +1534,19 @@ function CategoryDialog({
                   </option>
                 ))}
               </select>
+            </Field>
+
+            <Field label="Category code (SKU prefix)">
+              <input
+                value={form.code}
+                onChange={(e) => setForm({ ...form, code: e.target.value.toUpperCase() })}
+                placeholder="e.g. RNG, NCK"
+                maxLength={8}
+                className={fieldCls}
+              />
+              <p className="mt-1 text-[11px] text-ink-500">
+                Used to auto-number SKUs like <span className="font-mono">RNG-00012</span>. Optional.
+              </p>
             </Field>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -2031,9 +2162,11 @@ function AddItemDialog({ open, onClose }: { open: boolean; onClose: () => void }
   const { data: shops } = useGetShopsQuery();
   const { data: existingItemsRes } = useGetItemsQuery({});
   const [create, { isLoading }] = useCreateItemMutation();
+  const [triggerSku] = useLazyGetSkuSuggestionQuery();
   const [form, setForm] = useState({
     name: '',
     sku: '',
+    description: '',
     shopId: '',
     categoryId: '',
     weightG: '',
@@ -2048,6 +2181,8 @@ function AddItemDialog({ open, onClose }: { open: boolean; onClose: () => void }
   // text/select state object so the upload UI can update images without
   // re-rendering every other input.
   const [images, setImages] = useState<string[]>([]);
+  const [collectionIds, setCollectionIds] = useState<string[]>([]);
+  const [diamonds, setDiamonds] = useState<DiamondRow[]>([]);
   const [publishToWebsite, setPublishToWebsite] = useState(true);
   const [uploading, setUploading] = useState<{ name: string; progress: number }[]>([]);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -2098,6 +2233,16 @@ function AddItemDialog({ open, onClose }: { open: boolean; onClose: () => void }
   const handleCategoryChange = (catId: string) => {
     const cat = cats?.data.find((c) => c.id === catId);
     setForm((f) => ({ ...f, categoryId: catId, purityCarat: defaultPurityForMetal(cat?.metalType) }));
+    // Prefill the SKU from the category code ([CODE]-[seq]) unless the user has
+    // already typed one. They can still edit it before saving.
+    triggerSku(catId)
+      .unwrap()
+      .then((res) => {
+        setForm((f) => (f.sku.trim() ? f : { ...f, sku: res.data.sku }));
+      })
+      .catch(() => {
+        /* suggestion is best-effort */
+      });
   };
 
   // Pre-fill defaults once data lands.
@@ -2173,6 +2318,7 @@ function AddItemDialog({ open, onClose }: { open: boolean; onClose: () => void }
         name: form.name.trim(),
         sku: form.sku.trim(),
         barcodeData: form.sku.trim(),
+        description: form.description.trim() || null,
         shopId: form.shopId,
         categoryId: form.categoryId,
         images,
@@ -2189,6 +2335,8 @@ function AddItemDialog({ open, onClose }: { open: boolean; onClose: () => void }
         isSerialized,
         quantityOnHand,
         publishToWebsite,
+        collectionIds,
+        diamonds: diamondRowsToInput(diamonds),
       }).unwrap();
       const stockLabel = isSerialized ? '' : ` (${quantityOnHand} in stock)`;
       toast.success(
@@ -2217,11 +2365,14 @@ function AddItemDialog({ open, onClose }: { open: boolean; onClose: () => void }
                 onChange={(e) => {
                   const val = e.target.value;
                   if (!val) return;
-                  const it = existingItems.find((i) => i.id === val);
+                  const it = existingItems.find((i) => i.id === val) as
+                    | (Item & { description?: string | null })
+                    | undefined;
                   if (it) {
                     setForm({
                       name: it.name || '',
                       sku: it.sku,
+                      description: it.description ?? '',
                       shopId: it.shopId,
                       categoryId: it.categoryId,
                       weightG: String(it.weightMg / 1000),
@@ -2518,6 +2669,25 @@ function AddItemDialog({ open, onClose }: { open: boolean; onClose: () => void }
                 />
               </Field>
             </div>
+
+            <Field label="Description">
+              <textarea
+                value={form.description}
+                onChange={(e) => setForm({ ...form, description: e.target.value })}
+                rows={3}
+                placeholder="Shown on the storefront, item slips & receipts. Set once here."
+                className={`${fieldCls} resize-y`}
+              />
+            </Field>
+
+            <Field label="Collections">
+              <CollectionsMultiSelect selected={collectionIds} onChange={setCollectionIds} />
+            </Field>
+
+            <Field label="Diamonds (4 Cs)">
+              <DiamondsEditor rows={diamonds} onChange={setDiamonds} />
+            </Field>
+
             <label className="flex items-start gap-2 pt-2 cursor-pointer select-none">
               <input
                 type="checkbox"
@@ -2571,8 +2741,16 @@ function EditItemDialog({
   const { data: cats } = useGetCategoriesQuery();
   const { data: shops } = useGetShopsQuery();
   const [update, { isLoading }] = useUpdateItemMutation();
+  // The list endpoint attaches collectionIds + diamonds to each item; they
+  // aren't on the base Item type, so read them through a widened view.
+  const itemExt = item as Item & {
+    description?: string | null;
+    collectionIds?: string[];
+    diamonds?: Array<{ shape?: string | null; caratWeightX100?: number; cut?: string | null; clarity?: string | null; color?: string | null; count?: number; costPaise?: number }>;
+  };
   const [form, setForm] = useState({
     name: item.name ?? '',
+    description: itemExt.description ?? '',
     shopId: item.shopId,
     categoryId: item.categoryId,
     weightG: String(item.weightMg / 1000),
@@ -2584,6 +2762,8 @@ function EditItemDialog({
     makingChargePct: item.makingChargeBps ? String(item.makingChargeBps / 100) : '',
   });
   const [images, setImages] = useState<string[]>(item.images ?? []);
+  const [collectionIds, setCollectionIds] = useState<string[]>(itemExt.collectionIds ?? []);
+  const [diamonds, setDiamonds] = useState<DiamondRow[]>(dbDiamondsToRows(itemExt.diamonds));
   const [uploading, setUploading] = useState<{ name: string; progress: number }[]>([]);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const cloudinaryReady = isCloudinaryConfigured();
@@ -2595,6 +2775,7 @@ function EditItemDialog({
     if (!open) return;
     setForm({
       name: item.name ?? '',
+      description: itemExt.description ?? '',
       shopId: item.shopId,
       categoryId: item.categoryId,
       weightG: String(item.weightMg / 1000),
@@ -2606,6 +2787,9 @@ function EditItemDialog({
       makingChargePct: item.makingChargeBps ? String(item.makingChargeBps / 100) : '',
     });
     setImages(item.images ?? []);
+    setCollectionIds(itemExt.collectionIds ?? []);
+    setDiamonds(dbDiamondsToRows(itemExt.diamonds));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, item.id]);
 
   const selectedCat = cats?.data.find((c) => c.id === form.categoryId);
@@ -2671,6 +2855,7 @@ function EditItemDialog({
         id: item.id,
         patch: {
           name: form.name.trim(),
+          description: form.description.trim() || null,
           shopId: form.shopId,
           categoryId: form.categoryId,
           images,
@@ -2681,6 +2866,8 @@ function EditItemDialog({
           hallmarkRef: form.hallmarkRef.trim() || null,
           costPricePaise,
           makingChargeBps,
+          collectionIds,
+          diamonds: diamondRowsToInput(diamonds),
         },
       }).unwrap();
       toast.success(`Updated ${form.name.trim()}`);
@@ -2917,6 +3104,24 @@ function EditItemDialog({
                 />
               </Field>
             </div>
+
+            <Field label="Description">
+              <textarea
+                value={form.description}
+                onChange={(e) => setForm({ ...form, description: e.target.value })}
+                rows={3}
+                placeholder="Shown on the storefront, item slips & receipts. Set once here."
+                className={`${fieldCls} resize-y`}
+              />
+            </Field>
+
+            <Field label="Collections">
+              <CollectionsMultiSelect selected={collectionIds} onChange={setCollectionIds} />
+            </Field>
+
+            <Field label="Diamonds (4 Cs)">
+              <DiamondsEditor rows={diamonds} onChange={setDiamonds} />
+            </Field>
 
             <div className="flex gap-2 pt-2">
               <Button variant="outline" type="button" onClick={onClose} disabled={isLoading}>
@@ -3572,6 +3777,188 @@ function PurityPicker({
           <span className="text-xs text-ink-500 whitespace-nowrap">K (0–24)</span>
         </div>
       )}
+    </div>
+  );
+}
+
+// ----------------------------------------------------------------------------
+// Diamond detail editor — a repeatable sub-form. Each row captures one stone
+// group (shape + 4 Cs + count + cost). Item value = metal + Σ diamond cost, so
+// diamond cost is booked separately from the metal cost. M1 FR#4 / M2 §1.
+
+export interface DiamondRow {
+  shape: string;
+  caratWeight: string; // carats, e.g. "1.05"
+  cut: string;
+  clarity: string;
+  color: string;
+  count: string;
+  costRupees: string;
+}
+
+export const emptyDiamondRow = (): DiamondRow => ({
+  shape: '',
+  caratWeight: '',
+  cut: '',
+  clarity: '',
+  color: '',
+  count: '1',
+  costRupees: '',
+});
+
+// Persisted diamond rows (from the API) → editable form rows.
+export function dbDiamondsToRows(
+  diamonds:
+    | Array<{ shape?: string | null; caratWeightX100?: number; cut?: string | null; clarity?: string | null; color?: string | null; count?: number; costPaise?: number }>
+    | undefined,
+): DiamondRow[] {
+  if (!diamonds || diamonds.length === 0) return [];
+  return diamonds.map((d) => ({
+    shape: d.shape ?? '',
+    caratWeight: d.caratWeightX100 ? String(d.caratWeightX100 / 100) : '',
+    cut: d.cut ?? '',
+    clarity: d.clarity ?? '',
+    color: d.color ?? '',
+    count: String(d.count ?? 1),
+    costRupees: d.costPaise ? String(d.costPaise / 100) : '',
+  }));
+}
+
+// Convert form rows → ItemDiamond input shape for the API. Drops fully-empty rows.
+export function diamondRowsToInput(rows: DiamondRow[]) {
+  return rows
+    .filter((r) => r.caratWeight.trim() || r.costRupees.trim() || r.shape || r.cut || r.clarity || r.color)
+    .map((r) => ({
+      shape: r.shape || null,
+      caratWeightX100: Math.round((parseFloat(r.caratWeight) || 0) * 100),
+      cut: r.cut || null,
+      clarity: r.clarity || null,
+      color: r.color || null,
+      count: Math.max(1, parseInt(r.count, 10) || 1),
+      costPaise: Math.round((parseFloat(r.costRupees) || 0) * 100),
+    }));
+}
+
+function DiamondsEditor({
+  rows,
+  onChange,
+}: {
+  rows: DiamondRow[];
+  onChange: (rows: DiamondRow[]) => void;
+}): JSX.Element {
+  const set = (i: number, patch: Partial<DiamondRow>) =>
+    onChange(rows.map((r, idx) => (idx === i ? { ...r, ...patch } : r)));
+  const totalCost = rows.reduce((s, r) => s + (parseFloat(r.costRupees) || 0) * (parseInt(r.count, 10) || 1), 0);
+  return (
+    <div className="space-y-2">
+      {rows.length === 0 && (
+        <p className="text-[11px] text-ink-400 italic">No diamonds added. Click “Add diamond” for stone pieces.</p>
+      )}
+      {rows.map((r, i) => (
+        <div key={i} className="rounded-md border border-ink-200 p-2.5 space-y-2">
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+            <select value={r.shape} onChange={(e) => set(i, { shape: e.target.value })} className={`${fieldCls} text-xs`}>
+              <option value="">Shape…</option>
+              {DIAMOND_SHAPES.map((s) => (
+                <option key={s} value={s}>{s.charAt(0) + s.slice(1).toLowerCase()}</option>
+              ))}
+            </select>
+            <input
+              type="number" step="0.01" min={0} value={r.caratWeight}
+              onChange={(e) => set(i, { caratWeight: e.target.value })}
+              placeholder="Carat (ct)" className={`${fieldCls} text-xs`}
+            />
+            <input
+              type="number" min={1} value={r.count}
+              onChange={(e) => set(i, { count: e.target.value })}
+              placeholder="Count" className={`${fieldCls} text-xs`}
+            />
+            <select value={r.cut} onChange={(e) => set(i, { cut: e.target.value })} className={`${fieldCls} text-xs`}>
+              <option value="">Cut…</option>
+              {DIAMOND_CUTS.map((c) => <option key={c} value={c}>{c}</option>)}
+            </select>
+            <select value={r.clarity} onChange={(e) => set(i, { clarity: e.target.value })} className={`${fieldCls} text-xs`}>
+              <option value="">Clarity…</option>
+              {DIAMOND_CLARITIES.map((c) => <option key={c} value={c}>{c}</option>)}
+            </select>
+            <select value={r.color} onChange={(e) => set(i, { color: e.target.value })} className={`${fieldCls} text-xs`}>
+              <option value="">Colour…</option>
+              {DIAMOND_COLORS.map((c) => <option key={c} value={c}>{c}</option>)}
+            </select>
+          </div>
+          <div className="flex items-center gap-2">
+            <input
+              type="number" step="0.01" min={0} value={r.costRupees}
+              onChange={(e) => set(i, { costRupees: e.target.value })}
+              placeholder="Diamond cost (₹)" className={`${fieldCls} text-xs flex-1`}
+            />
+            <button
+              type="button"
+              onClick={() => onChange(rows.filter((_, idx) => idx !== i))}
+              className="inline-flex items-center justify-center h-8 w-8 rounded-md text-ink-500 hover:bg-rose-50 hover:text-rose-600"
+              aria-label="Remove diamond"
+              title="Remove"
+            >
+              <X className="h-3.5 w-3.5" />
+            </button>
+          </div>
+        </div>
+      ))}
+      <div className="flex items-center justify-between">
+        <button
+          type="button"
+          onClick={() => onChange([...rows, emptyDiamondRow()])}
+          className="inline-flex items-center gap-1 h-8 px-2.5 rounded-md text-xs font-medium border border-ink-200 text-ink-700 hover:bg-ink-50"
+        >
+          <Plus className="h-3.5 w-3.5" /> Add diamond
+        </button>
+        {rows.length > 0 && (
+          <span className="text-[11px] text-ink-500 font-mono">Diamond cost ₹{totalCost.toFixed(2)}</span>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// Collections multi-select — checkbox list of the tenant's collections (Bridal,
+// Festival, …). An item can belong to several; membership is one join row each,
+// never a stock duplicate. M1 FR#1.
+function CollectionsMultiSelect({
+  selected,
+  onChange,
+}: {
+  selected: string[];
+  onChange: (ids: string[]) => void;
+}): JSX.Element {
+  const { data } = useGetCollectionsQuery();
+  const collections = data?.data ?? [];
+  if (collections.length === 0) {
+    return (
+      <p className="text-[11px] text-ink-400 italic">
+        No collections yet. Create them in the Collections tab to tag items here.
+      </p>
+    );
+  }
+  const toggle = (id: string) =>
+    onChange(selected.includes(id) ? selected.filter((x) => x !== id) : [...selected, id]);
+  return (
+    <div className="flex flex-wrap gap-1.5">
+      {collections.map((c) => {
+        const on = selected.includes(c.id);
+        return (
+          <button
+            key={c.id}
+            type="button"
+            onClick={() => toggle(c.id)}
+            className={cn(
+              'h-8 px-2.5 rounded-md text-xs font-medium border transition-colors',
+              on ? 'bg-brand-500 text-ink-0 border-brand-500' : 'bg-ink-0 text-ink-700 border-ink-200 hover:border-ink-300',
+            )}
+          >
+            {c.name}
+          </button>
+        );
+      })}
     </div>
   );
 }

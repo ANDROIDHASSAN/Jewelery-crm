@@ -183,6 +183,11 @@ const CategoryCreateBody = z.object({
   defaultMakingChargeBps: z.number().int().min(0).max(10_000),
   makingChargeMode: z.enum(['PERCENTAGE', 'PER_GRAM']).optional(),
   defaultMakingChargePerGramPaise: z.number().int().min(0).optional().nullable(),
+  code: z
+    .string()
+    .regex(/^[A-Z0-9]{1,8}$/, 'Code must be 1–8 uppercase letters/digits')
+    .optional()
+    .nullable(),
 });
 
 inventoryRouter.post('/categories', requirePermission('inventory.write'), async (req, res, next) => {
@@ -239,6 +244,63 @@ inventoryRouter.patch('/categories/:id/making-charge', requirePermission('invent
     const body = z.object({ defaultMakingChargeBps: z.number().int().min(0).max(10_000) }).parse(req.body);
     const updated = await svc.updateCategoryMakingCharge(req.params['id']!, body.defaultMakingChargeBps);
     res.json({ data: updated });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Suggest the next SKU for a category ([CODE]-[sequence]); the create form
+// prefills the SKU field with it. User can still override before saving.
+inventoryRouter.get('/sku-suggestion', async (req, res, next) => {
+  try {
+    const categoryId = typeof req.query['categoryId'] === 'string' ? req.query['categoryId'] : '';
+    if (!categoryId) {
+      res.status(400).json({ error: { code: 'BAD_REQUEST', message: 'categoryId required' } });
+      return;
+    }
+    res.json({ data: await svc.suggestSku(categoryId) });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ── Collections (cross-category groupings) ────────────────────────────────
+const CollectionBody = z.object({
+  name: z.string().min(2).max(80),
+  description: z.string().max(2000).optional().nullable(),
+  sortOrder: z.number().int().min(0).max(100_000).optional(),
+});
+
+inventoryRouter.get('/collections', async (_req, res, next) => {
+  try {
+    res.json({ data: await svc.listCollections(), page: { hasMore: false } });
+  } catch (err) {
+    next(err);
+  }
+});
+
+inventoryRouter.post('/collections', requirePermission('inventory.write'), async (req, res, next) => {
+  try {
+    const body = CollectionBody.parse(req.body);
+    res.status(201).json({ data: await svc.createCollection(body) });
+  } catch (err) {
+    next(err);
+  }
+});
+
+inventoryRouter.patch('/collections/:id', requirePermission('inventory.write'), async (req, res, next) => {
+  try {
+    const body = CollectionBody.partial().parse(req.body);
+    res.json({ data: await svc.updateCollection(req.params['id']!, body) });
+  } catch (err) {
+    next(err);
+  }
+});
+
+inventoryRouter.delete('/collections/:id', requirePermission('inventory.delete'), async (req, res, next) => {
+  try {
+    await svc.deleteCollection(req.params['id']!);
+    res.status(204).end();
   } catch (err) {
     next(err);
   }

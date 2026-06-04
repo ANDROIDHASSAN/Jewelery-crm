@@ -389,6 +389,63 @@ export type Purity = (typeof PURITY_VALUES)[number];
 export const MAKING_CHARGE_MODES = ['PERCENTAGE', 'PER_GRAM'] as const;
 export type MakingChargeMode = (typeof MAKING_CHARGE_MODES)[number];
 
+// Diamond 4 Cs — defaults use the GIA industry-standard scales. These drive the
+// item form dropdowns; the client may refine the allowed values from their own
+// grading chart (the DB stores them as free-form strings, so refining the list
+// here is a non-breaking change). M1 FR#4.
+export const DIAMOND_SHAPES = [
+  'ROUND',
+  'PRINCESS',
+  'CUSHION',
+  'OVAL',
+  'EMERALD',
+  'PEAR',
+  'MARQUISE',
+  'RADIANT',
+  'ASSCHER',
+  'HEART',
+  'BAGUETTE',
+  'OTHER',
+] as const;
+export type DiamondShape = (typeof DIAMOND_SHAPES)[number];
+
+// Cut grade (GIA): Excellent → Poor.
+export const DIAMOND_CUTS = ['EX', 'VG', 'GD', 'FR', 'PR'] as const;
+export type DiamondCut = (typeof DIAMOND_CUTS)[number];
+
+// Clarity grade (GIA): Flawless → Included.
+export const DIAMOND_CLARITIES = [
+  'FL',
+  'IF',
+  'VVS1',
+  'VVS2',
+  'VS1',
+  'VS2',
+  'SI1',
+  'SI2',
+  'I1',
+  'I2',
+  'I3',
+] as const;
+export type DiamondClarity = (typeof DIAMOND_CLARITIES)[number];
+
+// Colour grade (GIA): D (colourless) → Z (light yellow).
+export const DIAMOND_COLORS = [
+  'D',
+  'E',
+  'F',
+  'G',
+  'H',
+  'I',
+  'J',
+  'K',
+  'L',
+  'M',
+  'N',
+  'O-Z',
+] as const;
+export type DiamondColor = (typeof DIAMOND_COLORS)[number];
+
 // GST: jewellery is 3% (1.5% CGST + 1.5% SGST intra, 3% IGST inter).
 export const GST_RATE_BPS = 300; // 3%
 export const CGST_RATE_BPS = 150; // 1.5%

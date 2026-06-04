@@ -5,6 +5,7 @@ import type {
   ApiList,
   ApiOne,
   Category,
+  Collection,
   Vendor,
   VendorInput,
   PurchaseOrderCreate,
@@ -155,6 +156,7 @@ export const inventoryApi = baseApi.injectEndpoints({
         defaultMakingChargeBps: number;
         makingChargeMode?: 'PERCENTAGE' | 'PER_GRAM';
         defaultMakingChargePerGramPaise?: number | null;
+        code?: string | null;
       }
     >({
       query: (body) => ({ url: '/inventory/categories', method: 'POST', body }),
@@ -171,6 +173,7 @@ export const inventoryApi = baseApi.injectEndpoints({
           defaultMakingChargeBps?: number;
           makingChargeMode?: 'PERCENTAGE' | 'PER_GRAM';
           defaultMakingChargePerGramPaise?: number | null;
+          code?: string | null;
         };
       }
     >({
@@ -185,6 +188,30 @@ export const inventoryApi = baseApi.injectEndpoints({
     reorderCategories: b.mutation<ApiList<Category>, { orders: Array<{ id: string; sortOrder: number }> }>({
       query: (body) => ({ url: '/inventory/categories/reorder', method: 'PATCH', body }),
       invalidatesTags: [{ type: 'Category', id: 'LIST' }],
+    }),
+    // Collections (cross-category groupings — Bridal, Festival, …).
+    getCollections: b.query<ApiList<Collection>, void>({
+      query: () => '/inventory/collections',
+      providesTags: [{ type: 'Collection', id: 'LIST' }],
+    }),
+    createCollection: b.mutation<ApiOne<Collection>, { name: string; description?: string | null; sortOrder?: number }>({
+      query: (body) => ({ url: '/inventory/collections', method: 'POST', body }),
+      invalidatesTags: [{ type: 'Collection', id: 'LIST' }],
+    }),
+    updateCollection: b.mutation<
+      ApiOne<Collection>,
+      { id: string; patch: { name?: string; description?: string | null; sortOrder?: number } }
+    >({
+      query: ({ id, patch }) => ({ url: `/inventory/collections/${id}`, method: 'PATCH', body: patch }),
+      invalidatesTags: [{ type: 'Collection', id: 'LIST' }],
+    }),
+    deleteCollection: b.mutation<void, string>({
+      query: (id) => ({ url: `/inventory/collections/${id}`, method: 'DELETE' }),
+      invalidatesTags: [{ type: 'Collection', id: 'LIST' }, { type: 'Item', id: 'LIST' }],
+    }),
+    // Suggest the next SKU ([CODE]-[seq]) for a category — prefills the form.
+    getSkuSuggestion: b.query<ApiOne<{ sku: string; code: string | null }>, string>({
+      query: (categoryId) => ({ url: '/inventory/sku-suggestion', params: { categoryId } }),
     }),
     getValuation: b.query<ApiOne<ValuationRow>, { shopId?: string }>({
       query: (params) => ({ url: '/inventory/valuation', params }),
@@ -286,6 +313,11 @@ export const {
   useUpdateCategoryMutation,
   useDeleteCategoryMutation,
   useReorderCategoriesMutation,
+  useGetCollectionsQuery,
+  useCreateCollectionMutation,
+  useUpdateCollectionMutation,
+  useDeleteCollectionMutation,
+  useLazyGetSkuSuggestionQuery,
   useUpdateCategoryMakingChargeMutation,
   useGetValuationQuery,
   useGetLowStockQuery,

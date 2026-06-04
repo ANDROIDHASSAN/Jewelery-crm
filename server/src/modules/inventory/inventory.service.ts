@@ -38,25 +38,65 @@ export async function listItems(opts: { shopId?: string; categoryId?: string; cu
     orderBy: { createdAt: 'desc' },
     take: take + 1,
     ...(opts.cursor ? { cursor: { id: opts.cursor }, skip: 1 } : {}),
+    include: {
+      diamonds: true,
+      collections: { select: { collectionId: true } },
+    },
   });
   const hasMore = items.length > take;
-  const page = items.slice(0, take);
+  const page = items.slice(0, take).map(withCollectionIds);
   return { data: page, page: { nextCursor: hasMore ? page.at(-1)?.id : undefined, hasMore } };
 }
 
+// Flatten the ItemCollection join into a plain `collectionIds: string[]` so the
+// client form can round-trip it directly (it submits collectionIds back).
+function withCollectionIds<T extends { collections: { collectionId: string }[] }>(item: T) {
+  return { ...item, collectionIds: item.collections.map((c) => c.collectionId) };
+}
+
 export async function getItem(id: string) {
-  const item = await prisma.item.findUnique({ where: { id } });
+  const item = await prisma.item.findUnique({
+    where: { id },
+    include: { diamonds: true, collections: { select: { collectionId: true } } },
+  });
   if (!item) throw new NotFoundError();
-  return item;
+  return withCollectionIds(item);
 }
 
 export async function createItem(input: ItemInput, performedByUserId?: string) {
   const tenantId = getTenantId();
   if (!tenantId) throw new Error('tenantId missing');
-  // `publishToWebsite` is a write-time flag, not an Item column — strip it
-  // off before handing the row to Prisma.
-  const { publishToWebsite, ...itemData } = input;
-  const item = await prisma.item.create({ data: { ...itemData, tenantId } });
+  // `publishToWebsite`, `collectionIds` and `diamonds` are write-time fields,
+  // not Item columns — strip them before handing the row to Prisma.
+  const { publishToWebsite, collectionIds, diamonds, ...itemData } = input;
+  const item = await prisma.item.create({
+    data: {
+      ...itemData,
+      tenantId,
+      // Diamond detail lines (M1 FR#4) — booked with their own cost, separate
+      // from the metal cost on Item.costPricePaise (M2 §1).
+      ...(diamonds && diamonds.length > 0
+        ? {
+            diamonds: {
+              create: diamonds.map((d) => ({
+                tenantId,
+                shape: d.shape ?? null,
+                caratWeightX100: d.caratWeightX100 ?? 0,
+                cut: d.cut ?? null,
+                clarity: d.clarity ?? null,
+                color: d.color ?? null,
+                count: d.count ?? 1,
+                costPaise: d.costPaise ?? 0,
+              })),
+            },
+          }
+        : {}),
+      // Collection memberships (M1 FR#1) — many-to-many, single inventory row.
+      ...(collectionIds && collectionIds.length > 0
+        ? { collections: { create: collectionIds.map((cid) => ({ tenantId, collectionId: cid })) } }
+        : {}),
+    },
+  });
   // Audit + PURCHASE movement on first insert.
   await prisma.itemMovement.create({
     data: {
@@ -93,7 +133,9 @@ export async function createItem(input: ItemInput, performedByUserId?: string) {
           name: item.name ?? item.sku,
           slug,
           categoryId: item.categoryId,
-          descriptionMd: '', // admin can enrich later from e-commerce tab
+          // Master description flows to the storefront (M3 FR#5). Admin can
+          // still enrich it later from the e-commerce tab.
+          descriptionMd: item.description ?? '',
           images: item.images,
           weightMg: item.weightMg,
           purityCaratX100: item.purityCaratX100,
@@ -119,17 +161,61 @@ export async function createItem(input: ItemInput, performedByUserId?: string) {
 }
 
 export async function updateItem(id: string, patch: Partial<ItemInput>, performedByUserId?: string) {
+  const tenantId = getTenantId();
   const before = await prisma.item.findUnique({ where: { id } });
   if (!before) throw new NotFoundError();
-  // `publishToWebsite` is write-only; never persist on Item.
-  const { publishToWebsite: _ignored, ...itemPatch } = patch;
+  // `publishToWebsite`, `collectionIds`, `diamonds` are write-only — never
+  // persist them as Item columns.
+  const { publishToWebsite: _ignored, collectionIds, diamonds, ...itemPatch } = patch;
   const item = await prisma.item.update({ where: { id }, data: itemPatch });
+
+  // Replace diamond lines when the patch includes them (full-set semantics:
+  // the form always submits the complete current list).
+  if (diamonds !== undefined && tenantId) {
+    await prisma.$transaction([
+      prisma.itemDiamond.deleteMany({ where: { itemId: id } }),
+      ...(diamonds.length > 0
+        ? [
+            prisma.itemDiamond.createMany({
+              data: diamonds.map((d) => ({
+                tenantId,
+                itemId: id,
+                shape: d.shape ?? null,
+                caratWeightX100: d.caratWeightX100 ?? 0,
+                cut: d.cut ?? null,
+                clarity: d.clarity ?? null,
+                color: d.color ?? null,
+                count: d.count ?? 1,
+                costPaise: d.costPaise ?? 0,
+              })),
+            }),
+          ]
+        : []),
+    ]);
+  }
+
+  // Replace collection memberships when included (same full-set semantics).
+  if (collectionIds !== undefined && tenantId) {
+    await prisma.$transaction([
+      prisma.itemCollection.deleteMany({ where: { itemId: id } }),
+      ...(collectionIds.length > 0
+        ? [
+            prisma.itemCollection.createMany({
+              data: collectionIds.map((cid) => ({ tenantId, itemId: id, collectionId: cid })),
+            }),
+          ]
+        : []),
+    ]);
+  }
 
   // Keep the storefront mirror in sync for visible fields. Only patches that
   // include those fields hit the Product row, so silent edits to private
   // fields (cost price, hallmark ref) don't churn the public catalog.
   const mirrorPatch: Prisma.ProductUpdateInput = {};
   if (itemPatch.name !== undefined && itemPatch.name !== null) mirrorPatch.name = itemPatch.name;
+  if (itemPatch.description !== undefined && itemPatch.description !== null) {
+    mirrorPatch.descriptionMd = itemPatch.description;
+  }
   if (itemPatch.images !== undefined) mirrorPatch.images = { set: itemPatch.images };
   if (itemPatch.weightMg !== undefined) mirrorPatch.weightMg = itemPatch.weightMg;
   if (itemPatch.purityCaratX100 !== undefined) mirrorPatch.purityCaratX100 = itemPatch.purityCaratX100;
@@ -404,6 +490,7 @@ export async function listCategories() {
       makingChargeMode: true,
       defaultMakingChargePerGramPaise: true,
       sortOrder: true,
+      code: true,
     },
   });
 }
@@ -446,6 +533,7 @@ export async function createCategory(input: {
   defaultMakingChargeBps: number;
   makingChargeMode?: MakingMode;
   defaultMakingChargePerGramPaise?: number | null;
+  code?: string | null;
 }) {
   const tenantId = getTenantId();
   if (!tenantId) throw new Error('tenantId missing');
@@ -475,6 +563,7 @@ export async function createCategory(input: {
       defaultMakingChargeBps: input.defaultMakingChargeBps,
       makingChargeMode: input.makingChargeMode ?? 'PERCENTAGE',
       defaultMakingChargePerGramPaise: input.defaultMakingChargePerGramPaise ?? null,
+      code: input.code ? input.code.trim().toUpperCase() : null,
     },
   });
   void writeAudit('Category', created.id, 'CREATE', null, created);
@@ -490,6 +579,7 @@ export async function updateCategory(
     defaultMakingChargeBps?: number;
     makingChargeMode?: MakingMode;
     defaultMakingChargePerGramPaise?: number | null;
+    code?: string | null;
   },
 ) {
   const before = await prisma.category.findUnique({ where: { id } });
@@ -554,6 +644,9 @@ export async function updateCategory(
       ...(patch.defaultMakingChargePerGramPaise !== undefined
         ? { defaultMakingChargePerGramPaise: patch.defaultMakingChargePerGramPaise }
         : {}),
+      ...(patch.code !== undefined
+        ? { code: patch.code ? patch.code.trim().toUpperCase() : null }
+        : {}),
     },
   });
   void writeAudit('Category', id, 'UPDATE', before, updated);
@@ -605,6 +698,98 @@ export async function reorderCategories(orders: Array<{ id: string; sortOrder: n
   return listCategories();
 }
 
+// ── Collections (cross-category groupings) ─────────────────────────────────
+
+function slugifyCollection(raw: string): string {
+  const base = raw
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+  return base || 'collection';
+}
+
+export async function listCollections() {
+  return prisma.collection.findMany({
+    orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }],
+    select: { id: true, name: true, slug: true, description: true, sortOrder: true },
+  });
+}
+
+export async function createCollection(input: {
+  name: string;
+  slug?: string;
+  description?: string | null;
+  sortOrder?: number;
+}) {
+  const tenantId = getTenantId();
+  if (!tenantId) throw new Error('tenantId missing');
+  // Derive a unique slug per tenant; append a short random suffix on collision.
+  const base = slugifyCollection(input.slug || input.name);
+  const existing = await prisma.collection.findUnique({
+    where: { tenantId_slug: { tenantId, slug: base } },
+    select: { id: true },
+  });
+  const slug = existing ? `${base}-${crypto.randomBytes(2).toString('hex')}` : base;
+  const created = await prisma.collection.create({
+    data: {
+      tenantId,
+      name: input.name.trim(),
+      slug,
+      description: input.description ?? null,
+      sortOrder: input.sortOrder ?? 0,
+    },
+  });
+  void writeAudit('Collection', created.id, 'CREATE', null, created);
+  return created;
+}
+
+export async function updateCollection(
+  id: string,
+  patch: { name?: string; description?: string | null; sortOrder?: number },
+) {
+  const before = await prisma.collection.findUnique({ where: { id } });
+  if (!before) throw new NotFoundError();
+  const updated = await prisma.collection.update({
+    where: { id },
+    data: {
+      ...(patch.name !== undefined ? { name: patch.name.trim() } : {}),
+      ...(patch.description !== undefined ? { description: patch.description } : {}),
+      ...(patch.sortOrder !== undefined ? { sortOrder: patch.sortOrder } : {}),
+    },
+  });
+  void writeAudit('Collection', id, 'UPDATE', before, updated);
+  return updated;
+}
+
+export async function deleteCollection(id: string) {
+  const before = await prisma.collection.findUnique({ where: { id } });
+  if (!before) throw new NotFoundError();
+  // ItemCollection rows cascade-delete; the items themselves are untouched.
+  await prisma.collection.delete({ where: { id } });
+  void writeAudit('Collection', id, 'DELETE', before, null);
+}
+
+// Suggest the next SKU for a category: "[CODE]-[zero-padded sequence]". The
+// client prefills the SKU field with this when the category changes; the user
+// can still override it (SKU stays free-form and unique per tenant). M3 FR#6.
+export async function suggestSku(categoryId: string): Promise<{ sku: string; code: string | null }> {
+  const tenantId = getTenantId();
+  if (!tenantId) throw new Error('tenantId missing');
+  const cat = await prisma.category.findUnique({
+    where: { id: categoryId },
+    select: { code: true },
+  });
+  const code = cat?.code?.trim().toUpperCase() || 'SKU';
+  // Count existing items whose SKU already starts with this prefix to derive
+  // the next sequence number. Cheap + good enough; collisions are caught by the
+  // unique (tenantId, sku) constraint and the user can edit before saving.
+  const count = await prisma.item.count({
+    where: { sku: { startsWith: `${code}-` } },
+  });
+  const seq = String(count + 1).padStart(5, '0');
+  return { sku: `${code}-${seq}`, code: cat?.code ?? null };
+}
+
 export async function computeValuation(opts: { shopId?: string }) {
   const items = await prisma.item.findMany({
     where: {
@@ -620,6 +805,7 @@ export async function computeValuation(opts: { shopId?: string }) {
       quantityOnHand: true,
       costPricePaise: true,
       category: { select: { metalType: true } },
+      diamonds: { select: { costPaise: true } },
     },
   });
   // Resolve each distinct purity's rate once, in parallel. Previously this
@@ -640,10 +826,14 @@ export async function computeValuation(opts: { shopId?: string }) {
     // Per-piece value (weight is recorded per piece for both modes). Stainless
     // steel is non-precious — it has no live metal rate, so we value it at its
     // recorded cost price instead of recomputing off the gold rate.
-    const perPiece =
+    const metalPerPiece =
       it.category.metalType === 'STAINLESS_STEEL'
         ? it.costPricePaise
         : computeGoldValuePaise(it.weightMg, it.purityCaratX100, ratePerGramPaise);
+    // Diamond cost is booked separately from the metal (M2 §1) and added on top
+    // of the metal value so a diamond ring is valued at gold + Σ diamond cost.
+    const diamondCost = it.diamonds.reduce((sum, d) => sum + d.costPaise, 0);
+    const perPiece = metalPerPiece + diamondCost;
     // Lot rows hold N interchangeable pieces — value and item count scale.
     const units = it.isSerialized ? 1 : it.quantityOnHand;
     const value = perPiece * units;

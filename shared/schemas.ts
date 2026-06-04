@@ -212,9 +212,51 @@ export const CategorySchema = z.object({
   defaultMakingChargePerGramPaise: PaiseSchema.optional().nullable(),
   // Manual priority order within a parent (lower = higher).
   sortOrder: z.number().int().default(0),
+  // Short SKU prefix code (e.g. RNG). Uppercase alphanumeric, 1–8 chars.
+  code: z
+    .string()
+    .regex(/^[A-Z0-9]{1,8}$/, 'Code must be 1–8 uppercase letters/digits')
+    .optional()
+    .nullable(),
 });
 
 export const CategoryInputSchema = CategorySchema.omit({ id: true, tenantId: true });
+
+// --- Collections (cross-category groupings) ---
+
+export const CollectionSchema = z.object({
+  id: CuidSchema,
+  tenantId: CuidSchema,
+  name: z.string().min(2).max(80),
+  slug: z.string().min(1).max(100),
+  description: z.string().max(2000).optional().nullable(),
+  sortOrder: z.number().int().default(0),
+  createdAt: z.coerce.date(),
+});
+
+export const CollectionInputSchema = CollectionSchema.omit({
+  id: true,
+  tenantId: true,
+  createdAt: true,
+  slug: true,
+}).extend({
+  // Slug is derived server-side from the name when omitted.
+  slug: z.string().min(1).max(100).optional(),
+});
+
+// --- Diamond detail line (one stone group on an item) ---
+
+export const ItemDiamondSchema = z.object({
+  id: CuidSchema.optional(),
+  shape: z.string().max(40).optional().nullable(),
+  // Carat × 100 (1.05ct → 105). Kept permissive (string scale stored as int).
+  caratWeightX100: z.number().int().nonnegative().default(0),
+  cut: z.string().max(20).optional().nullable(),
+  clarity: z.string().max(20).optional().nullable(),
+  color: z.string().max(20).optional().nullable(),
+  count: z.number().int().min(1).max(1000).default(1),
+  costPaise: PaiseSchema.default(0),
+});
 
 export const ItemSchema = z.object({
   id: CuidSchema,
@@ -224,6 +266,9 @@ export const ItemSchema = z.object({
   sku: z.string().min(2).max(60),
   barcodeData: z.string().min(2).max(80),
   name: z.string().min(1).max(160).optional().nullable(),
+  // Master item description (single source of truth) — propagated to the
+  // storefront Product and shown on slips/receipts. M3 FR#5.
+  description: z.string().max(4000).optional().nullable(),
   // First image is the catalog hero. In prod these are Cloudinary URLs
   // (a few hundred chars); in dev / when Cloudinary isn't configured the
   // client falls back to base64 data URLs which can be tens of KB each.
@@ -259,6 +304,11 @@ export const ItemInputSchema = ItemSchema.omit({
   // immediately. Defaults to false so legacy callers + bulk-import (which
   // don't know about this) keep their current behavior.
   publishToWebsite: z.boolean().optional().default(false),
+  // Write-time only: collection memberships + diamond detail lines. The server
+  // syncs the ItemCollection join and ItemDiamond rows; neither is an Item
+  // column. Optional so legacy callers + bulk-import keep working.
+  collectionIds: z.array(CuidSchema).max(50).optional(),
+  diamonds: z.array(ItemDiamondSchema).max(50).optional(),
 });
 
 // AddStock — used by POST /inventory/items/:id/add-stock.
