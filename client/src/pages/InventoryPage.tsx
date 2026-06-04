@@ -500,15 +500,23 @@ function InventoryItemsTable({
 }): JSX.Element {
   // Selects narrow first (fast equality), then free-text search runs over
   // the smaller pool.
+  // Category filter is parent-aware: picking a MAIN category matches items in
+  // that main AND any of its sub-categories. Build the set of acceptable
+  // category ids for the current filter once.
+  const categoryFilterIds = useMemo(() => {
+    if (!categoryFilter) return null;
+    const childIds = categories.filter((c) => c.parentId === categoryFilter).map((c) => c.id);
+    return new Set<string>([categoryFilter, ...childIds]);
+  }, [categoryFilter, categories]);
   const preFiltered = useMemo(() => {
     return rows.filter((r) => {
       if (shopFilter && r.shopId !== shopFilter) return false;
-      if (categoryFilter && r.categoryId !== categoryFilter) return false;
+      if (categoryFilterIds && !categoryFilterIds.has(r.categoryId)) return false;
       if (statusFilter && r.status !== statusFilter) return false;
       if (hallmarkFilter && r.hallmarkStatus !== hallmarkFilter) return false;
       return true;
     });
-  }, [rows, shopFilter, categoryFilter, statusFilter, hallmarkFilter]);
+  }, [rows, shopFilter, categoryFilterIds, statusFilter, hallmarkFilter]);
   const filtered = useTableSearch(
     preFiltered,
     (r) => [r.sku, r.name, r.barcodeData, r.hallmarkRef],
