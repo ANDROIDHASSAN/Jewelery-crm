@@ -86,8 +86,11 @@ export function createApp(): express.Express {
   protectedRouter.use('/users', usersRouter);
   protectedRouter.use('/roles', rolesRouter);
 
-  // Shop list — both read and write live in here; gate by either read.
-  protectedRouter.use('/shops', requireAnyPermission('shops.read', 'shops.write'), shopsRouter);
+  // Shop list — readable by ANY authenticated tenant user (the POS, inventory,
+  // transfers, and the shop switcher all need to resolve shop names; a POS_USER
+  // cashier must see at least their assigned shop or the panel shows "No shop
+  // assigned"). Writes are still gated per-route by requirePermission('shops.write').
+  protectedRouter.use('/shops', shopsRouter);
 
   // Inventory: anyone with at least read access can hit the mount; the
   // routes handle further write/delete checks.
