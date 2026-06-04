@@ -769,23 +769,62 @@ export async function deleteCollection(id: string) {
   void writeAudit('Collection', id, 'DELETE', before, null);
 }
 
+// Derive a short SKU code from a category name when no explicit code is set, so
+// SKUs are never the bare "SKU-001" fallback. Heuristic:
+//   - a leading number-bearing token is kept whole (18K, 9, 925);
+//   - each remaining word contributes its first letter;
+//   - a single word with no digits uses its first 3 letters (collision-safe:
+//     "Earings"→EAR and "Rings"→RIN stay distinct).
+// Examples: "18K Gold Tone"→18KGT, "9 K Fine Gold"→9KFG,
+//           "925 Sterling Silver"→925SS, "Necklaces & Chains"→NC,
+//           "Rings"→RIN, "Earings"→EAR, "Bracelets"→BRA. The merchant can
+//           override any of these via the category's Code field for an exact
+//           abbreviation (e.g. RG, NK).
+function deriveCategoryCode(name: string): string {
+  const words = name
+    .replace(/&/g, ' ')
+    .replace(/[^a-zA-Z0-9\s]/g, ' ')
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean);
+  if (words.length === 0) return 'GEN';
+  if (words.length === 1) {
+    const w = (words[0] ?? '').toUpperCase();
+    return w.slice(0, /\d/.test(w) ? 6 : 3);
+  }
+  let code = '';
+  words.forEach((w, i) => {
+    const up = w.toUpperCase();
+    code += i === 0 && /\d/.test(up) ? up : up[0];
+  });
+  return code.slice(0, 8);
+}
+
 // Suggest the next SKU for a category. The prefix combines the MAIN category
 // code and the SUB category code, then a per-prefix 3-digit sequence:
 //   main "18K Gold Tone" (18KGT) + sub "Ring" (RG) → 18KGT-RG-001, -002, …
 //   main "9K Fine Gold"  (9KFG)  + sub "Necklace" (NK) → 9KFG-NK-001, …
-// If a code is missing we drop that segment; with neither we fall back to SKU.
-// The client prefills the SKU field with this when the category changes; the
-// user can still override it (SKU stays free-form, unique per tenant). M3 FR#6.
+// Codes default to an auto-derived abbreviation of the category name; set an
+// explicit Code on the category to override. The client prefills the SKU field
+// with this when the category changes; the user can still edit it before
+// saving (SKU stays free-form, unique per tenant). M3 FR#6.
 export async function suggestSku(categoryId: string): Promise<{ sku: string; code: string | null }> {
   const tenantId = getTenantId();
   if (!tenantId) throw new Error('tenantId missing');
   const cat = await prisma.category.findUnique({
     where: { id: categoryId },
-    select: { code: true, parentId: true, parent: { select: { code: true } } },
+    select: {
+      code: true,
+      name: true,
+      parentId: true,
+      parent: { select: { code: true, name: true } },
+    },
   });
-  const clean = (c?: string | null) => (c ? c.trim().toUpperCase() : '');
-  const subCode = clean(cat?.code);
-  const mainCode = clean(cat?.parent?.code);
+  // Explicit code wins; otherwise derive one from the category name.
+  const codeFor = (code?: string | null, name?: string | null) =>
+    (code ? code.trim().toUpperCase() : name ? deriveCategoryCode(name) : '');
+  const subCode = codeFor(cat?.code, cat?.name);
+  const mainCode = codeFor(cat?.parent?.code, cat?.parent?.name);
   // Build the prefix: [main]-[sub] for a sub-category; just [code] for a main.
   const parts = cat?.parentId ? [mainCode, subCode] : [subCode];
   const prefix = parts.filter(Boolean).join('-') || 'SKU';
