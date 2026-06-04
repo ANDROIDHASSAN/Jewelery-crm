@@ -124,6 +124,13 @@ export async function login(input: {
   const emailNormalized = input.email.toLowerCase().trim();
   const user = await rawPrisma.user.findFirst({
     where: { email: emailNormalized, isActive: true },
+    // The same email can exist in more than one tenant (e.g. demo/seed
+    // accounts). Without an explicit order, findFirst is non-deterministic and
+    // could log the user into the wrong business — which is what made a POS
+    // cashier land in a stale tenant's shops. Resolve the MOST RECENTLY CREATED
+    // account so login is deterministic and lands in the tenant the user is
+    // actually working in.
+    orderBy: { createdAt: 'desc' },
     select: {
       id: true,
       tenantId: true,
