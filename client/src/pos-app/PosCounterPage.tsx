@@ -243,11 +243,31 @@ function PosBillingScreen(): JSX.Element {
     return map;
   }, [inStock]);
 
+  // Category tree (main → subs) for the cascading rail (M3 FR#9), and the set
+  // of acceptable category ids for the current selection. Selecting a MAIN
+  // category includes items in it AND all its sub-categories (parent-aware);
+  // selecting a SUB matches that sub exactly.
+  const childIdsByParent = useMemo(() => {
+    const map = new Map<string, string[]>();
+    for (const c of categories) {
+      if (c.parentId) {
+        const list = map.get(c.parentId) ?? [];
+        list.push(c.id);
+        map.set(c.parentId, list);
+      }
+    }
+    return map;
+  }, [categories]);
+  const categoryFilterIds = useMemo(() => {
+    if (selectedCategoryId === 'ALL') return null;
+    return new Set<string>([selectedCategoryId, ...(childIdsByParent.get(selectedCategoryId) ?? [])]);
+  }, [selectedCategoryId, childIdsByParent]);
+
   // ── Filtered catalog ──────────────────────────────────────────────────
   const filteredItems = useMemo(() => {
     let pool = inStock;
-    if (selectedCategoryId !== 'ALL') {
-      pool = pool.filter((i) => i.categoryId === selectedCategoryId);
+    if (categoryFilterIds) {
+      pool = pool.filter((i) => categoryFilterIds.has(i.categoryId));
     }
     if (purityFilter !== 'ALL') {
       pool = pool.filter((i) => i.purityCaratX100 === purityFilter);
@@ -261,7 +281,7 @@ function PosBillingScreen(): JSX.Element {
       );
     }
     return pool;
-  }, [inStock, selectedCategoryId, purityFilter, search]);
+  }, [inStock, categoryFilterIds, purityFilter, search]);
 
   // ── Totals ────────────────────────────────────────────────────────────
   // All taxable math goes through the shared `computeBillTotals` helper so
@@ -831,12 +851,35 @@ function CategoryRail({
   selected,
   onSelect,
 }: {
-  categories: { id: string; name: string }[];
+  categories: { id: string; name: string; parentId?: string | null }[];
   itemsByCategory: Map<string, number>;
   totalCount: number;
   selected: string | 'ALL';
   onSelect: (id: string | 'ALL') => void;
 }): JSX.Element {
+  // Build the two-level tree. Cascading flow: main category → its sub-categories
+  // → items (M3 FR#9). A main's count = its own items + all its subs' items.
+  const mains = categories.filter((c) => !c.parentId);
+  const subsByParent = new Map<string, { id: string; name: string }[]>();
+  for (const c of categories) {
+    if (c.parentId) {
+      const list = subsByParent.get(c.parentId) ?? [];
+      list.push(c);
+      subsByParent.set(c.parentId, list);
+    }
+  }
+  const countFor = (mainId: string): number => {
+    let n = itemsByCategory.get(mainId) ?? 0;
+    for (const s of subsByParent.get(mainId) ?? []) n += itemsByCategory.get(s.id) ?? 0;
+    return n;
+  };
+  // The main whose subs are shown: the selected main, or the parent of the
+  // selected sub.
+  const selectedCat = categories.find((c) => c.id === selected);
+  const expandedMainId = selectedCat
+    ? selectedCat.parentId ?? selectedCat.id
+    : null;
+
   return (
     <aside className="hidden md:flex flex-col w-[200px] xl:w-[220px] shrink-0 bg-ink-0 border-r border-ink-100">
       <div className="px-4 py-3 border-b border-ink-100">
@@ -856,24 +899,48 @@ function CategoryRail({
           <span>All items</span>
           <span className="text-[11px] text-ink-500 tabular-nums">{totalCount}</span>
         </button>
-        {categories.map((c) => {
-          const count = itemsByCategory.get(c.id) ?? 0;
-          const active = selected === c.id;
+        {mains.map((m) => {
+          const subs = subsByParent.get(m.id) ?? [];
+          const expanded = expandedMainId === m.id;
+          const active = selected === m.id;
           return (
-            <button
-              key={c.id}
-              type="button"
-              onClick={() => onSelect(c.id)}
-              className={cn(
-                'w-full flex items-center justify-between gap-2 px-3 py-2 text-sm transition-colors text-left',
-                active
-                  ? 'bg-brand-50 text-ink-900 border-l-2 border-brand-500 -ml-[2px] pl-[10px] font-medium'
-                  : 'text-ink-700 hover:bg-ink-50',
-              )}
-            >
-              <span className="truncate">{c.name}</span>
-              <span className="text-[11px] text-ink-500 tabular-nums shrink-0">{count}</span>
-            </button>
+            <div key={m.id}>
+              <button
+                type="button"
+                onClick={() => onSelect(m.id)}
+                className={cn(
+                  'w-full flex items-center justify-between gap-2 px-3 py-2 text-sm transition-colors text-left',
+                  active
+                    ? 'bg-brand-50 text-ink-900 border-l-2 border-brand-500 -ml-[2px] pl-[10px] font-medium'
+                    : 'text-ink-700 hover:bg-ink-50',
+                )}
+              >
+                <span className="truncate font-medium">{m.name}</span>
+                <span className="text-[11px] text-ink-500 tabular-nums shrink-0">{countFor(m.id)}</span>
+              </button>
+              {expanded &&
+                subs.map((s) => {
+                  const sActive = selected === s.id;
+                  return (
+                    <button
+                      key={s.id}
+                      type="button"
+                      onClick={() => onSelect(s.id)}
+                      className={cn(
+                        'w-full flex items-center justify-between gap-2 pl-6 pr-3 py-1.5 text-[13px] transition-colors text-left',
+                        sActive
+                          ? 'bg-brand-50/70 text-ink-900 border-l-2 border-brand-400 -ml-[2px] pl-[22px] font-medium'
+                          : 'text-ink-600 hover:bg-ink-50',
+                      )}
+                    >
+                      <span className="truncate">{s.name}</span>
+                      <span className="text-[11px] text-ink-400 tabular-nums shrink-0">
+                        {itemsByCategory.get(s.id) ?? 0}
+                      </span>
+                    </button>
+                  );
+                })}
+            </div>
           );
         })}
       </nav>
