@@ -490,7 +490,7 @@ function InventoryItemsTable({
   hallmarkFilter: string;
   onHallmarkFilter: (next: string) => void;
   shops: Array<{ id: string; name: string }>;
-  categories: Array<{ id: string; name: string }>;
+  categories: Array<{ id: string; name: string; parentId?: string | null }>;
   /** True when the server reports a next cursor for the most recent page. */
   hasMore: boolean;
   /** True while a Load-more fetch is in flight (rows are already showing). */
@@ -550,7 +550,7 @@ function InventoryItemsTable({
             onChange: onCategoryFilter,
             options: [
               { value: '', label: 'All categories' },
-              ...categories.map((c) => ({ value: c.id, label: c.name })),
+              ...buildCategoryFilterOptions(categories),
             ],
           },
           {
@@ -1145,6 +1145,40 @@ function MakingChargeOverride({
       )}
     </div>
   );
+}
+
+// Build the category-filter dropdown options: each main category, followed by
+// its sub-categories labelled with the parent in brackets so duplicate sub
+// names (three "BRACELETS", etc.) are distinguishable —
+//   NECKLACES & CHAINS (925 STERLING SILVER). Selecting a main filters that
+// main + all its subs (server-side); selecting a sub filters that sub exactly.
+function buildCategoryFilterOptions(
+  categories: { id: string; name: string; parentId?: string | null }[],
+): { value: string; label: string }[] {
+  const byId = new Map(categories.map((c) => [c.id, c]));
+  const mains = categories
+    .filter((c) => !c.parentId)
+    .sort((a, b) => a.name.localeCompare(b.name));
+  const subsByParent = new Map<string, { id: string; name: string; parentId?: string | null }[]>();
+  for (const c of categories) {
+    if (c.parentId) {
+      const list = subsByParent.get(c.parentId) ?? [];
+      list.push(c);
+      subsByParent.set(c.parentId, list);
+    }
+  }
+  const opts: { value: string; label: string }[] = [];
+  for (const m of mains) {
+    opts.push({ value: m.id, label: m.name });
+    for (const s of subsByParent.get(m.id) ?? []) {
+      opts.push({ value: s.id, label: `${s.name} (${m.name})` });
+    }
+  }
+  // Orphan subs whose parent isn't in the list — show them plainly.
+  for (const c of categories) {
+    if (c.parentId && !byId.has(c.parentId)) opts.push({ value: c.id, label: c.name });
+  }
+  return opts;
 }
 
 // Default purity carat (as a string for the form) for a given metal type.
@@ -4204,7 +4238,10 @@ function DistributeStockDialog({
   const filteredItems = useMemo(() => {
     let pool = sourceItems;
     if (selectedCatId !== 'ALL') {
-      pool = pool.filter((i) => i.categoryId === selectedCatId);
+      // Parent-aware: a main category also matches items in its sub-categories.
+      const childIds = categories.filter((c) => c.parentId === selectedCatId).map((c) => c.id);
+      const ids = new Set([selectedCatId, ...childIds]);
+      pool = pool.filter((i) => ids.has(i.categoryId));
     }
     const q = search.trim().toLowerCase();
     if (q) {
@@ -4215,7 +4252,7 @@ function DistributeStockDialog({
       );
     }
     return pool;
-  }, [sourceItems, selectedCatId, search]);
+  }, [sourceItems, selectedCatId, search, categories]);
 
   // Clear selections when source shop changes
   useEffect(() => {
@@ -4375,9 +4412,9 @@ function DistributeStockDialog({
                   className={`${fieldCls} w-48`}
                 >
                   <option value="ALL">All categories</option>
-                  {categories.map((c) => (
-                    <option key={c.id} value={c.id}>
-                      {c.name}
+                  {buildCategoryFilterOptions(categories).map((o) => (
+                    <option key={o.value} value={o.value}>
+                      {o.label}
                     </option>
                   ))}
                 </select>

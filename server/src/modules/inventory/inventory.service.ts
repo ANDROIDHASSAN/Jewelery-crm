@@ -33,7 +33,12 @@ export async function listItems(opts: { shopId?: string; categoryId?: string; cu
   const items = await prisma.item.findMany({
     where: {
       ...(opts.shopId ? { shopId: opts.shopId } : {}),
-      ...(opts.categoryId ? { categoryId: opts.categoryId } : {}),
+      // Category filter is parent-aware: picking a MAIN category matches items
+      // in that main AND in any of its sub-categories; picking a SUB matches
+      // that sub exactly (subs have no children in the two-level tree).
+      ...(opts.categoryId
+        ? { OR: [{ categoryId: opts.categoryId }, { category: { parentId: opts.categoryId } }] }
+        : {}),
     },
     orderBy: { createdAt: 'desc' },
     take: take + 1,
