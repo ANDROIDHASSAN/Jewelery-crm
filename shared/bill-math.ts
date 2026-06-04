@@ -61,6 +61,27 @@ export function computeMetalValuePaise(
   return bankersRound((weightMg * ratePerGramPaise * purityCaratX100) / (1000 * 2400));
 }
 
+/**
+ * Resolve a making charge to paise, honouring the two supported modes:
+ *   PERCENTAGE → bps × metal value (the historical behaviour).
+ *   PER_GRAM   → flat rupee-per-gram rate × weight. weightMg/1000 → grams.
+ * Integer paise throughout (banker's rounding) — never float-multiply a price.
+ * This is the ONE place making-charge mode is interpreted so POS, storefront
+ * pricing, and valuation never diverge.
+ */
+export function resolveMakingChargePaise(opts: {
+  metalValuePaise: number;
+  weightMg: number;
+  mode: 'PERCENTAGE' | 'PER_GRAM' | null | undefined;
+  bps: number;
+  perGramPaise: number | null | undefined;
+}): number {
+  if (opts.mode === 'PER_GRAM') {
+    return bankersRound((opts.weightMg * (opts.perGramPaise ?? 0)) / 1000);
+  }
+  return applyBpsShared(opts.metalValuePaise, opts.bps);
+}
+
 // ── Bill math --------------------------------------------------------
 
 /** Wastage applied to an exchanged old-gold piece. 2% is the trade standard. */

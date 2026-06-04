@@ -315,7 +315,13 @@ enum MetalType {
   SILVER
   DIAMOND
   PLATINUM
+  STAINLESS_STEEL
   OTHER
+}
+
+enum MakingChargeMode {
+  PERCENTAGE
+  PER_GRAM
 }
 
 enum HallmarkStatus {
@@ -356,6 +362,14 @@ model Category {
   parentId               String?
   metalType              MetalType
   defaultMakingChargeBps Int
+  // Making-charge mode. PERCENTAGE (default) uses defaultMakingChargeBps;
+  // PER_GRAM uses defaultMakingChargePerGramPaise (flat paise per gram).
+  makingChargeMode             MakingChargeMode @default(PERCENTAGE)
+  defaultMakingChargePerGramPaise Int?
+  // Manual priority order within a parent (lower = higher in the list). Lets
+  // merchants pin high-traffic sub-categories (Necklaces, Chains) to the top
+  // regardless of alphabetical name.
+  sortOrder              Int       @default(0)
 
   tenant   Tenant     @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   parent   Category?  @relation("CategoryTree", fields: [parentId], references: [id])
@@ -364,6 +378,10 @@ model Category {
   products Product[]
 
   @@index([tenantId])
+  // Sub-category (and main-category) names must be unique within their parent.
+  // NB: Postgres treats NULL parentId rows as distinct, so main-category
+  // uniqueness is additionally enforced in the service layer.
+  @@unique([tenantId, parentId, name])
 }
 
 model Item {
@@ -386,6 +404,10 @@ model Item {
   hallmarkRef     String?
   costPricePaise  Int
   makingChargeBps Int?
+  // Item-level making-charge override. makingChargeMode null = inherit the
+  // category's mode + rate. PER_GRAM uses makingChargePerGramPaise.
+  makingChargeMode        MakingChargeMode?
+  makingChargePerGramPaise Int?
   status          ItemStatus     @default(IN_STOCK)
   // Hybrid stock model:
   //   isSerialized=true (default): row represents one unique physical piece

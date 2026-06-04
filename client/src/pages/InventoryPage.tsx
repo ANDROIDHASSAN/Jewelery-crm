@@ -22,6 +22,8 @@ import {
   Pencil,
   X,
   Globe,
+  ChevronUp,
+  ChevronDown,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { uploadImageToCloudinary, isCloudinaryConfigured, cloudinaryThumb } from '@/lib/cloudinary';
@@ -32,6 +34,7 @@ import {
   useCreateCategoryMutation,
   useUpdateCategoryMutation,
   useDeleteCategoryMutation,
+  useReorderCategoriesMutation,
   useCreateItemMutation,
   useUpdateItemMutation,
   useRecordWastageMutation,
@@ -1035,16 +1038,39 @@ function LowStockTab(): JSX.Element {
 // UI treats anything below depth 2 as still a "sub" for simplicity — most
 // jewellery merchants don't need a third tier.
 
+type MetalTypeLiteral = 'GOLD' | 'SILVER' | 'DIAMOND' | 'PLATINUM' | 'STAINLESS_STEEL' | 'OTHER';
+
 interface CategoryRow {
   id: string;
   name: string;
   parentId: string | null;
-  metalType: 'GOLD' | 'SILVER' | 'DIAMOND' | 'PLATINUM' | 'OTHER';
+  metalType: MetalTypeLiteral;
   defaultMakingChargeBps: number;
+  makingChargeMode?: 'PERCENTAGE' | 'PER_GRAM';
+  defaultMakingChargePerGramPaise?: number | null;
+  sortOrder?: number;
+}
+
+// Default purity carat (as a string for the form) for a given metal type.
+// Gold defaults to 9K per the client's "9K Fine Gold" line; non-precious
+// metals (stainless steel / other) and silver have a single fixed value.
+function defaultPurityForMetal(metalType: MetalTypeLiteral | undefined): string {
+  switch (metalType) {
+    case 'SILVER':
+      return '0';
+    case 'PLATINUM':
+      return '95';
+    case 'STAINLESS_STEEL':
+    case 'OTHER':
+      return '0';
+    default:
+      return '9'; // GOLD / DIAMOND → 9 carat default
+  }
 }
 
 function CategoriesTab(): JSX.Element {
   const { data, isLoading } = useGetCategoriesQuery();
+  const [reorder, { isLoading: reordering }] = useReorderCategoriesMutation();
   const [createOpen, setCreateOpen] = useState(false);
   const [createUnderParentId, setCreateUnderParentId] = useState<string | null>(null);
   const [editTarget, setEditTarget] = useState<CategoryRow | null>(null);
@@ -1059,6 +1085,22 @@ function CategoriesTab(): JSX.Element {
       subsByParent.set(c.parentId, list);
     }
   }
+
+  // Move a sub-category up/down within its parent and persist the new order.
+  // We renumber the whole sibling list (0..n) so a first reorder off the
+  // default sortOrder=0 produces a stable, gap-free ordering.
+  const moveSub = async (parentId: string, index: number, dir: -1 | 1): Promise<void> => {
+    const subs = [...(subsByParent.get(parentId) ?? [])];
+    const target = index + dir;
+    if (target < 0 || target >= subs.length) return;
+    [subs[index], subs[target]] = [subs[target]!, subs[index]!];
+    const orders = subs.map((s, i) => ({ id: s.id, sortOrder: i }));
+    try {
+      await reorder({ orders }).unwrap();
+    } catch {
+      toast.error('Could not reorder categories.');
+    }
+  };
 
   return (
     <div className="space-y-4">
@@ -1108,9 +1150,11 @@ function CategoriesTab(): JSX.Element {
                 <p className="text-eyebrow uppercase text-ink-500">Main category</p>
                 <div className="flex items-center gap-2">
                   <h3 className="text-md font-medium text-ink-900 truncate">{main.name}</h3>
-                  <Badge tone="neutral">{main.metalType.toLowerCase()}</Badge>
+                  <Badge tone="neutral">{main.metalType.toLowerCase().replace('_', ' ')}</Badge>
                   <span className="text-xs text-ink-500 font-mono">
-                    {(main.defaultMakingChargeBps / 100).toFixed(1)}% making
+                    {main.makingChargeMode === 'PER_GRAM' && main.defaultMakingChargePerGramPaise != null
+                      ? `₹${(main.defaultMakingChargePerGramPaise / 100).toFixed(2)}/g making`
+                      : `${(main.defaultMakingChargeBps / 100).toFixed(1)}% making`}
                   </span>
                 </div>
               </div>
@@ -1144,15 +1188,37 @@ function CategoriesTab(): JSX.Element {
               </p>
             ) : (
               <ul className="divide-y divide-ink-100">
-                {subs.map((sub) => (
+                {subs.map((sub, subIdx) => (
                   <li key={sub.id} className="flex items-center justify-between gap-3 px-5 py-3">
                     <div className="min-w-0">
                       <p className="text-sm text-ink-900 truncate">{sub.name}</p>
                       <p className="text-[11px] text-ink-500 font-mono">
-                        {(sub.defaultMakingChargeBps / 100).toFixed(1)}% making
+                        {sub.makingChargeMode === 'PER_GRAM' && sub.defaultMakingChargePerGramPaise != null
+                          ? `₹${(sub.defaultMakingChargePerGramPaise / 100).toFixed(2)}/g making`
+                          : `${(sub.defaultMakingChargeBps / 100).toFixed(1)}% making`}
                       </p>
                     </div>
                     <div className="inline-flex gap-1">
+                      <button
+                        type="button"
+                        onClick={() => void moveSub(main.id, subIdx, -1)}
+                        disabled={subIdx === 0 || reordering}
+                        className="inline-flex items-center justify-center h-7 w-7 rounded-md text-ink-500 hover:bg-ink-50 hover:text-ink-900 disabled:opacity-30 disabled:cursor-not-allowed"
+                        aria-label={`Move ${sub.name} up`}
+                        title="Move up"
+                      >
+                        <ChevronUp className="h-3.5 w-3.5" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => void moveSub(main.id, subIdx, 1)}
+                        disabled={subIdx === subs.length - 1 || reordering}
+                        className="inline-flex items-center justify-center h-7 w-7 rounded-md text-ink-500 hover:bg-ink-50 hover:text-ink-900 disabled:opacity-30 disabled:cursor-not-allowed"
+                        aria-label={`Move ${sub.name} down`}
+                        title="Move down"
+                      >
+                        <ChevronDown className="h-3.5 w-3.5" />
+                      </button>
                       <button
                         type="button"
                         onClick={() => setEditTarget(sub)}
@@ -1241,8 +1307,13 @@ function CategoryDialog({
   const [form, setForm] = useState({
     name: existing?.name ?? '',
     parentId: existing?.parentId ?? defaultParentId ?? '',
-    metalType: existing?.metalType ?? ('GOLD' as 'GOLD' | 'SILVER' | 'DIAMOND' | 'PLATINUM' | 'OTHER'),
+    metalType: existing?.metalType ?? ('GOLD' as MetalTypeLiteral),
+    makingMode: existing?.makingChargeMode ?? ('PERCENTAGE' as 'PERCENTAGE' | 'PER_GRAM'),
     makingPct: existing ? String(existing.defaultMakingChargeBps / 100) : '12',
+    makingPerGramRupees:
+      existing?.defaultMakingChargePerGramPaise != null
+        ? String(existing.defaultMakingChargePerGramPaise / 100)
+        : '',
   });
 
   useEffect(() => {
@@ -1251,9 +1322,21 @@ function CategoryDialog({
       name: existing?.name ?? '',
       parentId: existing?.parentId ?? defaultParentId ?? '',
       metalType: existing?.metalType ?? 'GOLD',
+      makingMode: existing?.makingChargeMode ?? 'PERCENTAGE',
       makingPct: existing ? String(existing.defaultMakingChargeBps / 100) : '12',
+      makingPerGramRupees:
+        existing?.defaultMakingChargePerGramPaise != null
+          ? String(existing.defaultMakingChargePerGramPaise / 100)
+          : '',
     });
   }, [open, existing?.id]);
+
+  // A sub-category inherits its parent's metal type (mirrors the server rule),
+  // so the purity picker on items always matches the gold/silver/etc. parent.
+  const parentMetalType = form.parentId
+    ? mains.find((m) => m.id === form.parentId)?.metalType
+    : undefined;
+  const effectiveMetalType: MetalTypeLiteral = parentMetalType ?? form.metalType;
 
   const submit = async (e: React.FormEvent): Promise<void> => {
     e.preventDefault();
@@ -1262,26 +1345,35 @@ function CategoryDialog({
     if (!Number.isFinite(bps) || bps < 0 || bps > 10_000) {
       return void toast.error('Making charge must be between 0 and 100%');
     }
+    // Per-gram rate is optional unless PER_GRAM is the active mode.
+    let perGramPaise: number | null = null;
+    if (form.makingMode === 'PER_GRAM') {
+      const rupees = parseFloat(form.makingPerGramRupees);
+      if (!Number.isFinite(rupees) || rupees < 0) {
+        return void toast.error('Enter a valid making charge per gram (₹/g)');
+      }
+      perGramPaise = Math.round(rupees * 100);
+    } else if (form.makingPerGramRupees.trim()) {
+      // Keep any entered per-gram value even when % is active so toggling back
+      // doesn't lose it.
+      const rupees = parseFloat(form.makingPerGramRupees);
+      if (Number.isFinite(rupees) && rupees >= 0) perGramPaise = Math.round(rupees * 100);
+    }
     const parentId = form.parentId ? form.parentId : null;
+    const payload = {
+      name: form.name.trim(),
+      parentId,
+      metalType: effectiveMetalType,
+      defaultMakingChargeBps: bps,
+      makingChargeMode: form.makingMode,
+      defaultMakingChargePerGramPaise: perGramPaise,
+    };
     try {
       if (mode === 'create') {
-        await create({
-          name: form.name.trim(),
-          parentId,
-          metalType: form.metalType,
-          defaultMakingChargeBps: bps,
-        }).unwrap();
+        await create(payload).unwrap();
         toast.success(`Added ${form.name.trim()}`);
       } else if (existing) {
-        await update({
-          id: existing.id,
-          patch: {
-            name: form.name.trim(),
-            parentId,
-            metalType: form.metalType,
-            defaultMakingChargeBps: bps,
-          },
-        }).unwrap();
+        await update({ id: existing.id, patch: payload }).unwrap();
         toast.success(`Updated ${form.name.trim()}`);
       }
       onClose();
@@ -1329,11 +1421,12 @@ function CategoryDialog({
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <Field label="Metal type">
                 <select
-                  value={form.metalType}
+                  value={effectiveMetalType}
+                  disabled={!!form.parentId}
                   onChange={(e) =>
                     setForm({
                       ...form,
-                      metalType: e.target.value as 'GOLD' | 'SILVER' | 'DIAMOND' | 'PLATINUM' | 'OTHER',
+                      metalType: e.target.value as MetalTypeLiteral,
                     })
                   }
                   className={fieldCls}
@@ -1342,21 +1435,73 @@ function CategoryDialog({
                   <option value="SILVER">Silver</option>
                   <option value="DIAMOND">Diamond</option>
                   <option value="PLATINUM">Platinum</option>
+                  <option value="STAINLESS_STEEL">Stainless Steel (non-precious)</option>
                   <option value="OTHER">Other</option>
                 </select>
+                {form.parentId && (
+                  <p className="mt-1 text-[11px] text-ink-500">
+                    Inherited from parent category.
+                  </p>
+                )}
               </Field>
-              <Field label="Default making charge (%)">
-                <input
-                  type="number"
-                  step="0.1"
-                  min={0}
-                  max={100}
-                  value={form.makingPct}
-                  onChange={(e) => setForm({ ...form, makingPct: e.target.value })}
-                  className={fieldCls}
-                  required
-                />
+              <Field label="Making charge type">
+                <div className="flex rounded-md border border-ink-200 p-0.5 text-xs">
+                  <button
+                    type="button"
+                    onClick={() => setForm({ ...form, makingMode: 'PERCENTAGE' })}
+                    className={cn(
+                      'flex-1 h-8 rounded font-medium transition-colors',
+                      form.makingMode === 'PERCENTAGE'
+                        ? 'bg-brand-500 text-ink-0'
+                        : 'text-ink-600 hover:bg-ink-50',
+                    )}
+                  >
+                    Percentage %
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setForm({ ...form, makingMode: 'PER_GRAM' })}
+                    className={cn(
+                      'flex-1 h-8 rounded font-medium transition-colors',
+                      form.makingMode === 'PER_GRAM'
+                        ? 'bg-brand-500 text-ink-0'
+                        : 'text-ink-600 hover:bg-ink-50',
+                    )}
+                  >
+                    Flat ₹/g
+                  </button>
+                </div>
               </Field>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              {form.makingMode === 'PERCENTAGE' ? (
+                <Field label="Default making charge (%)">
+                  <input
+                    type="number"
+                    step="0.1"
+                    min={0}
+                    max={100}
+                    value={form.makingPct}
+                    onChange={(e) => setForm({ ...form, makingPct: e.target.value })}
+                    className={fieldCls}
+                    required
+                  />
+                </Field>
+              ) : (
+                <Field label="Making charge per gram (₹/g)">
+                  <input
+                    type="number"
+                    step="0.5"
+                    min={0}
+                    value={form.makingPerGramRupees}
+                    onChange={(e) => setForm({ ...form, makingPerGramRupees: e.target.value })}
+                    placeholder="e.g. 2"
+                    className={fieldCls}
+                    required
+                  />
+                </Field>
+              )}
             </div>
 
             <div className="flex gap-2 pt-2">
@@ -1892,7 +2037,7 @@ function AddItemDialog({ open, onClose }: { open: boolean; onClose: () => void }
     shopId: '',
     categoryId: '',
     weightG: '',
-    purityCarat: '22',
+    purityCarat: '9',
     stoneWeightG: '',
     hallmarkStatus: 'PENDING' as 'PENDING' | 'SUBMITTED' | 'CERTIFIED' | 'EXEMPT',
     hallmarkRef: '',
@@ -1952,24 +2097,14 @@ function AddItemDialog({ open, onClose }: { open: boolean; onClose: () => void }
 
   const handleCategoryChange = (catId: string) => {
     const cat = cats?.data.find((c) => c.id === catId);
-    let defaultPurity = '22';
-    if (cat) {
-      if (cat.metalType === 'SILVER') defaultPurity = '0';
-      else if (cat.metalType === 'PLATINUM') defaultPurity = '95';
-      else if (cat.metalType === 'OTHER') defaultPurity = '0';
-    }
-    setForm((f) => ({ ...f, categoryId: catId, purityCarat: defaultPurity }));
+    setForm((f) => ({ ...f, categoryId: catId, purityCarat: defaultPurityForMetal(cat?.metalType) }));
   };
 
   // Pre-fill defaults once data lands.
   if (!form.shopId && shops?.data[0]) setForm((f) => ({ ...f, shopId: shops.data[0]!.id }));
   if (!form.categoryId && cats?.data[0]) {
     const firstCat = cats.data[0]!;
-    let defaultPurity = '22';
-    if (firstCat.metalType === 'SILVER') defaultPurity = '0';
-    else if (firstCat.metalType === 'PLATINUM') defaultPurity = '95';
-    else if (firstCat.metalType === 'OTHER') defaultPurity = '0';
-    setForm((f) => ({ ...f, categoryId: firstCat.id, purityCarat: defaultPurity }));
+    setForm((f) => ({ ...f, categoryId: firstCat.id, purityCarat: defaultPurityForMetal(firstCat.metalType) }));
   }
 
   const submit = async (e: React.FormEvent): Promise<void> => {
@@ -2011,8 +2146,9 @@ function AddItemDialog({ open, onClose }: { open: boolean; onClose: () => void }
       if (purityCaratX100 !== 0) return void toast.error('Purity must be Silver (0) for Silver category');
     } else if (metalType === 'PLATINUM') {
       if (purityCaratX100 !== 9500) return void toast.error('Purity must be Platinum (95K) for Platinum category');
-    } else if (metalType === 'OTHER') {
-      if (purityCaratX100 !== 0) return void toast.error('Purity must be 0 for Other category');
+    } else if (metalType === 'OTHER' || metalType === 'STAINLESS_STEEL') {
+      // Non-precious — no metal purity. Stored as 0.
+      if (purityCaratX100 !== 0) return void toast.error('Non-precious items have no purity (0)');
     }
 
     if (!Number.isFinite(costPricePaise) || costPricePaise <= 0) return void toast.error('Cost price must be > 0');
@@ -3363,12 +3499,13 @@ function PurityPicker({
   onChange,
 }: {
   value: string;
-  metalType: 'GOLD' | 'SILVER' | 'DIAMOND' | 'PLATINUM' | 'OTHER';
+  metalType: MetalTypeLiteral;
   onChange: (v: string) => void;
 }): JSX.Element {
   // Non-gold metals have exactly one valid purity — render a disabled chip
-  // so the field reads as deliberately locked, not broken.
-  if (metalType === 'SILVER' || metalType === 'OTHER') {
+  // so the field reads as deliberately locked, not broken. Stainless steel
+  // and "other" are non-precious; silver shows its own label.
+  if (metalType === 'SILVER' || metalType === 'OTHER' || metalType === 'STAINLESS_STEEL') {
     return (
       <div className={`${fieldCls} flex items-center text-ink-500 italic`}>
         {metalType === 'SILVER' ? 'Silver (fixed)' : 'Non-precious (fixed)'}
@@ -3385,7 +3522,7 @@ function PurityPicker({
   // Gold + Diamond paths: chip presets plus custom carat input. Diamond
   // pieces are often set in 14K / 18K white gold so we offer the same gold
   // presets there too.
-  const presets = ['24', '22', '18', '14'];
+  const presets = ['24', '22', '18', '14', '9'];
   const isPreset = presets.includes(value);
   return (
     <div className="space-y-2">

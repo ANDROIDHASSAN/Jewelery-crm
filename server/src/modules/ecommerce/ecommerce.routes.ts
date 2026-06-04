@@ -23,8 +23,9 @@ export const ecommerceRouter: Router = Router();
  *   SILVER   → silver spot × weight (purityCaratX100 is the millesimal fineness,
  *              e.g. 925 sterling; the silver rate is per gram of 99.9% silver
  *              so we apply the fineness as a fraction of 1000)
- *   DIAMOND/PLATINUM/OTHER → no live metal recompute, fall back to basePricePaise
- *                            so we don't quote nonsense for non-rate-tracked metals.
+ *   DIAMOND/PLATINUM/STAINLESS_STEEL/OTHER → no live metal recompute, fall back to
+ *                            basePricePaise so we don't quote nonsense for
+ *                            non-rate-tracked / non-precious metals.
  */
 function computeLivePricePaise(
   product: {

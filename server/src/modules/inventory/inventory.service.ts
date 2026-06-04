@@ -392,22 +392,60 @@ export async function listCategories() {
   // two-level picker (Main → Sub). Keeping the wire format flat means
   // existing consumers that ignore parentId stay happy.
   return prisma.category.findMany({
-    orderBy: [{ name: 'asc' }],
+    // Manual priority first (lower sortOrder = higher), then name as a stable
+    // tiebreak so categories with the default sortOrder=0 stay alphabetical.
+    orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }],
     select: {
       id: true,
       name: true,
       parentId: true,
       metalType: true,
       defaultMakingChargeBps: true,
+      makingChargeMode: true,
+      defaultMakingChargePerGramPaise: true,
+      sortOrder: true,
     },
   });
 }
 
+// Throws CATEGORY_DUPLICATE_NAME if a sibling category (same tenant + parent)
+// already has this name, case-insensitively. `excludeId` skips the row being
+// edited. This complements the DB unique index (which can't see NULL parentId
+// rows as equal) so main categories are de-duplicated too.
+async function assertUniqueCategoryName(
+  tenantId: string,
+  parentId: string | null,
+  name: string,
+  excludeId?: string,
+) {
+  const trimmed = name.trim();
+  const sibling = await prisma.category.findFirst({
+    where: {
+      tenantId,
+      parentId,
+      name: { equals: trimmed, mode: 'insensitive' },
+      ...(excludeId ? { id: { not: excludeId } } : {}),
+    },
+    select: { id: true },
+  });
+  if (sibling) {
+    throw new BusinessRuleError(
+      'CATEGORY_DUPLICATE_NAME',
+      `A ${parentId ? 'sub-category' : 'category'} named "${trimmed}" already exists here.`,
+    );
+  }
+}
+
+type CategoryMetalType = 'GOLD' | 'SILVER' | 'DIAMOND' | 'PLATINUM' | 'STAINLESS_STEEL' | 'OTHER';
+type MakingMode = 'PERCENTAGE' | 'PER_GRAM';
+
 export async function createCategory(input: {
   name: string;
   parentId: string | null;
-  metalType: 'GOLD' | 'SILVER' | 'DIAMOND' | 'PLATINUM' | 'OTHER';
+  metalType: CategoryMetalType;
   defaultMakingChargeBps: number;
+  makingChargeMode?: MakingMode;
+  defaultMakingChargePerGramPaise?: number | null;
 }) {
   const tenantId = getTenantId();
   if (!tenantId) throw new Error('tenantId missing');
@@ -416,10 +454,18 @@ export async function createCategory(input: {
   if (input.parentId) {
     const parent = await prisma.category.findUnique({
       where: { id: input.parentId },
-      select: { id: true },
+      select: { id: true, metalType: true },
     });
     if (!parent) throw new NotFoundError('Parent category not found');
+    // Sub-categories inherit their parent's metal type. This prevents the
+    // "Non-precious shows on a gold sub-category" bug (M1 Bug1 / M3 Bug1):
+    // the purity picker keys off the category's metalType, so a gold sub
+    // saved with a stray OTHER would mis-render. A sub is always its main's
+    // metal.
+    input = { ...input, metalType: parent.metalType as CategoryMetalType };
   }
+  // Reject a duplicate name within the same parent (M1 Bug2).
+  await assertUniqueCategoryName(tenantId, input.parentId, input.name);
   const created = await prisma.category.create({
     data: {
       tenantId,
@@ -427,6 +473,8 @@ export async function createCategory(input: {
       parentId: input.parentId,
       metalType: input.metalType,
       defaultMakingChargeBps: input.defaultMakingChargeBps,
+      makingChargeMode: input.makingChargeMode ?? 'PERCENTAGE',
+      defaultMakingChargePerGramPaise: input.defaultMakingChargePerGramPaise ?? null,
     },
   });
   void writeAudit('Category', created.id, 'CREATE', null, created);
@@ -438,8 +486,10 @@ export async function updateCategory(
   patch: {
     name?: string;
     parentId?: string | null;
-    metalType?: 'GOLD' | 'SILVER' | 'DIAMOND' | 'PLATINUM' | 'OTHER';
+    metalType?: CategoryMetalType;
     defaultMakingChargeBps?: number;
+    makingChargeMode?: MakingMode;
+    defaultMakingChargePerGramPaise?: number | null;
   },
 ) {
   const before = await prisma.category.findUnique({ where: { id } });
@@ -468,14 +518,41 @@ export async function updateCategory(
       cursor = next?.parentId ?? null;
     }
   }
+  // A sub-category always inherits its parent's metal type (see createCategory).
+  // Resolve the effective metalType: if this row has/gets a parent, use the
+  // parent's; otherwise honour an explicit patch.
+  let effectiveMetalType = patch.metalType;
+  const resolvedParentId = patch.parentId !== undefined ? patch.parentId : before.parentId;
+  if (resolvedParentId) {
+    const parent = await prisma.category.findUnique({
+      where: { id: resolvedParentId },
+      select: { metalType: true },
+    });
+    if (parent) effectiveMetalType = parent.metalType as CategoryMetalType;
+  }
+  // Reject a rename/move that collides with a sibling name (M1 Bug2).
+  if (patch.name !== undefined || patch.parentId !== undefined) {
+    await assertUniqueCategoryName(
+      before.tenantId,
+      resolvedParentId ?? null,
+      patch.name ?? before.name,
+      id,
+    );
+  }
   const updated = await prisma.category.update({
     where: { id },
     data: {
       ...(patch.name !== undefined ? { name: patch.name.trim() } : {}),
       ...(patch.parentId !== undefined ? { parentId: patch.parentId } : {}),
-      ...(patch.metalType !== undefined ? { metalType: patch.metalType } : {}),
+      ...(effectiveMetalType !== undefined ? { metalType: effectiveMetalType } : {}),
       ...(patch.defaultMakingChargeBps !== undefined
         ? { defaultMakingChargeBps: patch.defaultMakingChargeBps }
+        : {}),
+      ...(patch.makingChargeMode !== undefined
+        ? { makingChargeMode: patch.makingChargeMode }
+        : {}),
+      ...(patch.defaultMakingChargePerGramPaise !== undefined
+        ? { defaultMakingChargePerGramPaise: patch.defaultMakingChargePerGramPaise }
         : {}),
     },
   });
@@ -511,6 +588,23 @@ export async function updateCategoryMakingCharge(id: string, bps: number) {
   return prisma.category.update({ where: { id }, data: { defaultMakingChargeBps: bps } });
 }
 
+// Persist a manual ordering for a set of categories (M1 FR#6). Each entry maps
+// a category id to its new sortOrder. Tenant-scoped through the Prisma client
+// extension; we only touch rows that belong to the caller's tenant.
+export async function reorderCategories(orders: Array<{ id: string; sortOrder: number }>) {
+  const tenantId = getTenantId();
+  if (!tenantId) throw new Error('tenantId missing');
+  await prisma.$transaction(
+    orders.map((o) =>
+      prisma.category.updateMany({
+        where: { id: o.id, tenantId },
+        data: { sortOrder: o.sortOrder },
+      }),
+    ),
+  );
+  return listCategories();
+}
+
 export async function computeValuation(opts: { shopId?: string }) {
   const items = await prisma.item.findMany({
     where: {
@@ -524,6 +618,8 @@ export async function computeValuation(opts: { shopId?: string }) {
       categoryId: true,
       isSerialized: true,
       quantityOnHand: true,
+      costPricePaise: true,
+      category: { select: { metalType: true } },
     },
   });
   // Resolve each distinct purity's rate once, in parallel. Previously this
@@ -541,8 +637,13 @@ export async function computeValuation(opts: { shopId?: string }) {
   const byCategory = new Map<string, { totalPaise: number; itemCount: number }>();
   for (const it of items) {
     const ratePerGramPaise = rateByPurity.get(it.purityCaratX100) ?? 642_000;
-    // Per-piece value (weight is recorded per piece for both modes).
-    const perPiece = computeGoldValuePaise(it.weightMg, it.purityCaratX100, ratePerGramPaise);
+    // Per-piece value (weight is recorded per piece for both modes). Stainless
+    // steel is non-precious — it has no live metal rate, so we value it at its
+    // recorded cost price instead of recomputing off the gold rate.
+    const perPiece =
+      it.category.metalType === 'STAINLESS_STEEL'
+        ? it.costPricePaise
+        : computeGoldValuePaise(it.weightMg, it.purityCaratX100, ratePerGramPaise);
     // Lot rows hold N interchangeable pieces — value and item count scale.
     const units = it.isSerialized ? 1 : it.quantityOnHand;
     const value = perPiece * units;

@@ -5,7 +5,47 @@
 // down so a careless refactor surfaces as a CI failure.
 
 import { describe, expect, it } from 'vitest';
-import { computeBillTotals, computeMetalValuePaise } from '@goldos/shared/bill-math';
+import {
+  computeBillTotals,
+  computeMetalValuePaise,
+  resolveMakingChargePaise,
+} from '@goldos/shared/bill-math';
+
+describe('resolveMakingChargePaise — percentage vs flat per-gram', () => {
+  it('PER_GRAM: ₹2/g on a 10g piece → ₹20 (2000 paise), independent of metal value', () => {
+    const making = resolveMakingChargePaise({
+      metalValuePaise: 59_58_333, // ignored for PER_GRAM
+      weightMg: 10_000, // 10 g
+      mode: 'PER_GRAM',
+      bps: 1200,
+      perGramPaise: 200, // ₹2 / g
+    });
+    expect(making).toBe(2_000); // ₹20
+  });
+
+  it('PERCENTAGE: 12% of metal value (matches the legacy bps path)', () => {
+    const gold = computeMetalValuePaise(10_000, 2200, 6_50_000);
+    const making = resolveMakingChargePaise({
+      metalValuePaise: gold,
+      weightMg: 10_000,
+      mode: 'PERCENTAGE',
+      bps: 1200,
+      perGramPaise: null,
+    });
+    expect(making).toBe(Math.round((gold * 1200) / 10_000));
+  });
+
+  it('null mode falls back to the percentage path', () => {
+    const making = resolveMakingChargePaise({
+      metalValuePaise: 100_000,
+      weightMg: 5_000,
+      mode: null,
+      bps: 1000,
+      perGramPaise: 500,
+    });
+    expect(making).toBe(10_000); // 10% of 100000, not the per-gram rate
+  });
+});
 
 describe('computeBillTotals — single line, intra-state', () => {
   it('22K 10g at ₹6,500/g, 12% making → gold + making + 3% GST split as CGST+SGST', () => {

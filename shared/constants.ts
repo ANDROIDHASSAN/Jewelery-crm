@@ -365,9 +365,29 @@ export type OrderStatus = (typeof ORDER_STATUSES)[number];
 export const PAYMENT_STATUSES = ['PENDING', 'PAID', 'PARTIAL', 'REFUNDED'] as const;
 export type PaymentStatus = (typeof PAYMENT_STATUSES)[number];
 
+// Metal types. STAINLESS_STEEL is a non-precious metal (e.g. "18K Gold Tone"
+// fashion jewellery): it is never priced off the gold/silver rate — it uses the
+// stored base/cost price like DIAMOND/PLATINUM/OTHER do.
+export const METAL_TYPES = [
+  'GOLD',
+  'SILVER',
+  'DIAMOND',
+  'PLATINUM',
+  'STAINLESS_STEEL',
+  'OTHER',
+] as const;
+export type MetalType = (typeof METAL_TYPES)[number];
+
 // Allowed purity values (carat × 100). Silver = 0. Platinum coded as 9500.
-export const PURITY_VALUES = [2400, 2200, 1800, 1400, 0, 9500] as const;
+// 900 = 9K (client default for "9K Fine Gold"); 1400 = 14K; 1800 = 18K.
+export const PURITY_VALUES = [2400, 2200, 1800, 1400, 900, 0, 9500] as const;
 export type Purity = (typeof PURITY_VALUES)[number];
+
+// Making charge can be a percentage of metal value (basis points) or a flat
+// rupee amount per gram of weight. PERCENTAGE is the default so existing rows
+// (which only have a bps value) keep their current behaviour.
+export const MAKING_CHARGE_MODES = ['PERCENTAGE', 'PER_GRAM'] as const;
+export type MakingChargeMode = (typeof MAKING_CHARGE_MODES)[number];
 
 // GST: jewellery is 3% (1.5% CGST + 1.5% SGST intra, 3% IGST inter).
 export const GST_RATE_BPS = 300; // 3%

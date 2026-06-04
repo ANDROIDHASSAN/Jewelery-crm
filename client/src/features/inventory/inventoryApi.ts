@@ -151,8 +151,10 @@ export const inventoryApi = baseApi.injectEndpoints({
       {
         name: string;
         parentId: string | null;
-        metalType: 'GOLD' | 'SILVER' | 'DIAMOND' | 'PLATINUM' | 'OTHER';
+        metalType: 'GOLD' | 'SILVER' | 'DIAMOND' | 'PLATINUM' | 'STAINLESS_STEEL' | 'OTHER';
         defaultMakingChargeBps: number;
+        makingChargeMode?: 'PERCENTAGE' | 'PER_GRAM';
+        defaultMakingChargePerGramPaise?: number | null;
       }
     >({
       query: (body) => ({ url: '/inventory/categories', method: 'POST', body }),
@@ -165,8 +167,10 @@ export const inventoryApi = baseApi.injectEndpoints({
         patch: {
           name?: string;
           parentId?: string | null;
-          metalType?: 'GOLD' | 'SILVER' | 'DIAMOND' | 'PLATINUM' | 'OTHER';
+          metalType?: 'GOLD' | 'SILVER' | 'DIAMOND' | 'PLATINUM' | 'STAINLESS_STEEL' | 'OTHER';
           defaultMakingChargeBps?: number;
+          makingChargeMode?: 'PERCENTAGE' | 'PER_GRAM';
+          defaultMakingChargePerGramPaise?: number | null;
         };
       }
     >({
@@ -176,6 +180,11 @@ export const inventoryApi = baseApi.injectEndpoints({
     deleteCategory: b.mutation<void, string>({
       query: (id) => ({ url: `/inventory/categories/${id}`, method: 'DELETE' }),
       invalidatesTags: [{ type: 'Category', id: 'LIST' }, { type: 'Item', id: 'LIST' }],
+    }),
+    // Persist manual sub-category ordering (drag / up-down reorder).
+    reorderCategories: b.mutation<ApiList<Category>, { orders: Array<{ id: string; sortOrder: number }> }>({
+      query: (body) => ({ url: '/inventory/categories/reorder', method: 'PATCH', body }),
+      invalidatesTags: [{ type: 'Category', id: 'LIST' }],
     }),
     getValuation: b.query<ApiOne<ValuationRow>, { shopId?: string }>({
       query: (params) => ({ url: '/inventory/valuation', params }),
@@ -276,6 +285,7 @@ export const {
   useCreateCategoryMutation,
   useUpdateCategoryMutation,
   useDeleteCategoryMutation,
+  useReorderCategoriesMutation,
   useUpdateCategoryMakingChargeMutation,
   useGetValuationQuery,
   useGetLowStockQuery,

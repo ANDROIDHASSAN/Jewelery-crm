@@ -179,8 +179,10 @@ inventoryRouter.get('/categories', async (_req, res, next) => {
 const CategoryCreateBody = z.object({
   name: z.string().min(2).max(80),
   parentId: z.string().min(1).nullable(),
-  metalType: z.enum(['GOLD', 'SILVER', 'DIAMOND', 'PLATINUM', 'OTHER']),
+  metalType: z.enum(['GOLD', 'SILVER', 'DIAMOND', 'PLATINUM', 'STAINLESS_STEEL', 'OTHER']),
   defaultMakingChargeBps: z.number().int().min(0).max(10_000),
+  makingChargeMode: z.enum(['PERCENTAGE', 'PER_GRAM']).optional(),
+  defaultMakingChargePerGramPaise: z.number().int().min(0).optional().nullable(),
 });
 
 inventoryRouter.post('/categories', requirePermission('inventory.write'), async (req, res, next) => {
@@ -188,6 +190,26 @@ inventoryRouter.post('/categories', requirePermission('inventory.write'), async 
     const body = CategoryCreateBody.parse(req.body);
     const cat = await svc.createCategory(body);
     res.status(201).json({ data: cat });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Persist manual sub-category ordering (drag-to-reorder). Registered BEFORE the
+// `/categories/:id` PATCH so "reorder" isn't captured as an :id. Body is the
+// full ordered list: [{ id, sortOrder }, ...].
+const CategoryReorderBody = z.object({
+  orders: z
+    .array(z.object({ id: z.string().min(1), sortOrder: z.number().int().min(0).max(100_000) }))
+    .min(1)
+    .max(500),
+});
+
+inventoryRouter.patch('/categories/reorder', requirePermission('inventory.write'), async (req, res, next) => {
+  try {
+    const body = CategoryReorderBody.parse(req.body);
+    const cats = await svc.reorderCategories(body.orders);
+    res.json({ data: cats, page: { hasMore: false } });
   } catch (err) {
     next(err);
   }

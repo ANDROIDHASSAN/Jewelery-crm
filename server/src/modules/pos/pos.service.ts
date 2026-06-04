@@ -7,12 +7,12 @@
 // which meant the customer saw a different total than the receipt.
 
 import { prisma, rawPrisma } from '../../lib/prisma.js';
-import { computeGoldValuePaise, applyBps } from '../../lib/money.js';
+import { computeGoldValuePaise } from '../../lib/money.js';
 import { readGoldRatePaise } from '../../lib/redis.js';
 import { BusinessRuleError, ConflictError, NotFoundError } from '../../lib/errors.js';
 import { getTenantId } from '../../lib/async-context.js';
 import type { BillCreate } from '@goldos/shared/types';
-import { computeBillTotals } from '@goldos/shared/bill-math';
+import { computeBillTotals, resolveMakingChargePaise } from '@goldos/shared/bill-math';
 
 const DEFAULT_GOLD_RATE = 642_000; // ₹6,420/g — dev fallback.
 
@@ -50,9 +50,20 @@ export async function createBill(input: BillCreate, createdByUserId?: string) {
     select: { id: true },
   });
 
-  // Build line data + check stock.
+  // Build line data + check stock. Pull the item's category making-charge
+  // config too so a line whose item has no override inherits the category's
+  // mode + rate (percentage or flat per-gram).
   const items = await prisma.item.findMany({
     where: { id: { in: input.lines.map((l) => l.itemId) } },
+    include: {
+      category: {
+        select: {
+          makingChargeMode: true,
+          defaultMakingChargeBps: true,
+          defaultMakingChargePerGramPaise: true,
+        },
+      },
+    },
   });
   const itemById = new Map(items.map((i) => [i.id, i]));
   for (const l of input.lines) {
@@ -69,8 +80,43 @@ export async function createBill(input: BillCreate, createdByUserId?: string) {
       const ratePerGramPaise = cached?.paise ?? DEFAULT_GOLD_RATE;
       const goldValuePaise = computeGoldValuePaise(l.weightMg, l.purityCaratX100, ratePerGramPaise);
       const item = itemById.get(l.itemId)!;
-      const makingBps = l.makingChargeBps ?? item.makingChargeBps ?? 1200;
-      const makingPaise = applyBps(goldValuePaise, makingBps);
+      const cat = item.category;
+      // Resolve making charge. Precedence: explicit per-line bps override (the
+      // cashier typed one) → item-level mode/rate → category mode/rate →
+      // legacy 12% default. PER_GRAM uses a flat paise-per-gram rate.
+      let mode: 'PERCENTAGE' | 'PER_GRAM' = 'PERCENTAGE';
+      let bps = 1200;
+      let perGram: number | null = null;
+      if (l.makingChargeBps != null) {
+        // Explicit per-line override typed by the cashier.
+        mode = 'PERCENTAGE';
+        bps = l.makingChargeBps;
+      } else if (item.makingChargeMode) {
+        // Item carries an explicit mode override.
+        mode = item.makingChargeMode;
+        bps = item.makingChargeBps ?? cat?.defaultMakingChargeBps ?? 1200;
+        perGram = item.makingChargePerGramPaise ?? cat?.defaultMakingChargePerGramPaise ?? null;
+      } else if (item.makingChargeBps != null) {
+        // Item has a percentage override (bps set, no explicit mode) — it wins
+        // even inside a per-gram category.
+        mode = 'PERCENTAGE';
+        bps = item.makingChargeBps;
+      } else if (cat) {
+        // Inherit the category's mode + rate.
+        mode = cat.makingChargeMode;
+        bps = cat.defaultMakingChargeBps;
+        perGram = cat.defaultMakingChargePerGramPaise ?? null;
+      }
+      const makingPaise = resolveMakingChargePaise({
+        metalValuePaise: goldValuePaise,
+        weightMg: l.weightMg,
+        mode,
+        bps,
+        perGramPaise: perGram,
+      });
+      // Persisted on the bill line for the receipt. PER_GRAM lines carry 0 bps;
+      // the rupee making amount is still captured inside linePaise.
+      const makingBps = mode === 'PERCENTAGE' ? bps : 0;
       const linePaise = goldValuePaise + makingPaise + l.stoneChargePaise;
       return { l, item, ratePerGramPaise, goldValuePaise, makingPaise, makingBps, linePaise };
     }),

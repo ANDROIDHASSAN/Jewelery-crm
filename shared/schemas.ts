@@ -12,6 +12,8 @@ import {
   PURCHASE_ORDER_STATUSES,
   GOLD_LOAN_STATUSES,
   TRANSFER_STATUSES,
+  METAL_TYPES,
+  MAKING_CHARGE_MODES,
 } from './constants.js';
 
 // --- Primitives ---
@@ -202,8 +204,14 @@ export const CategorySchema = z.object({
   tenantId: CuidSchema,
   name: z.string().min(2).max(80),
   parentId: CuidSchema.optional().nullable(),
-  metalType: z.enum(['GOLD', 'SILVER', 'DIAMOND', 'PLATINUM', 'OTHER']),
+  metalType: z.enum(METAL_TYPES),
   defaultMakingChargeBps: BpsSchema,
+  // Making-charge mode + flat per-gram rate (paise/gram). PERCENTAGE uses
+  // defaultMakingChargeBps; PER_GRAM uses defaultMakingChargePerGramPaise.
+  makingChargeMode: z.enum(MAKING_CHARGE_MODES).default('PERCENTAGE'),
+  defaultMakingChargePerGramPaise: PaiseSchema.optional().nullable(),
+  // Manual priority order within a parent (lower = higher).
+  sortOrder: z.number().int().default(0),
 });
 
 export const CategoryInputSchema = CategorySchema.omit({ id: true, tenantId: true });
@@ -229,6 +237,10 @@ export const ItemSchema = z.object({
   hallmarkRef: HuidSchema.optional().nullable(),
   costPricePaise: PaiseSchema,
   makingChargeBps: BpsSchema.optional().nullable(),
+  // Item-level making-charge override. When makingChargeMode is null the item
+  // inherits its category's mode + rate. PER_GRAM uses makingChargePerGramPaise.
+  makingChargeMode: z.enum(MAKING_CHARGE_MODES).optional().nullable(),
+  makingChargePerGramPaise: PaiseSchema.optional().nullable(),
   status: z.enum(['IN_STOCK', 'IN_TRANSIT', 'SOLD', 'MELTED']).default('IN_STOCK'),
   // Hybrid stock model — see schema.prisma comment on Item for the long form.
   isSerialized: z.boolean().default(true),
