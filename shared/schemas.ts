@@ -432,6 +432,8 @@ export const PurchaseOrderSchema = z.object({
 
 export const PurchaseOrderItemInputSchema = z.object({
   itemSku: z.string().min(2).max(60),
+  // Category this line will be filed under on receive (main or sub category id).
+  categoryId: CuidSchema.optional().nullable(),
   weightMg: MgSchema,
   purity: PuritySchema,
   costPaise: PaiseSchema,

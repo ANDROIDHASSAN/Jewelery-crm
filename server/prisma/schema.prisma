@@ -657,9 +657,13 @@ model PurchaseOrder {
 }
 
 model PurchaseOrderItem {
-  id        String @id @default(cuid())
+  id        String  @id @default(cuid())
   poId      String
   itemSku   String
+  // Category each line belongs to, chosen when building the PO. On receive the
+  // created Item lands in this category (falls back to the receive-time default
+  // for legacy lines that pre-date this column). Nullable for back-compat.
+  categoryId String?
   weightMg  Int
   purity    Int
   costPaise Int

@@ -1115,7 +1115,15 @@ export async function createPurchaseOrder(input: PurchaseOrderCreate) {
       tenantId,
       vendorId: input.vendorId,
       totalPaise,
-      items: { create: input.items },
+      items: {
+        create: input.items.map((i) => ({
+          itemSku: i.itemSku,
+          categoryId: i.categoryId ?? null,
+          weightMg: i.weightMg,
+          purity: i.purity,
+          costPaise: i.costPaise,
+        })),
+      },
     },
     include: { items: true, vendor: { select: { id: true, name: true } } },
   });
@@ -1143,8 +1151,11 @@ export async function receivePurchaseOrder(
 
   const shop = await prisma.shop.findUnique({ where: { id: shopId } });
   if (!shop) throw new NotFoundError('Shop not found');
-  const category = await prisma.category.findUnique({ where: { id: categoryId } });
-  if (!category) throw new NotFoundError('Category not found');
+  // The categoryId param is the FALLBACK used for any line that has no category
+  // of its own (legacy POs). Each line now carries its own category, chosen when
+  // the PO was built, so a single PO can stock items across many categories.
+  const fallbackCategory = await prisma.category.findUnique({ where: { id: categoryId } });
+  if (!fallbackCategory) throw new NotFoundError('Category not found');
 
   const updated = await prisma.$transaction(async (tx) => {
     for (const line of po.items) {
@@ -1154,7 +1165,7 @@ export async function receivePurchaseOrder(
         data: {
           tenantId,
           shopId,
-          categoryId,
+          categoryId: line.categoryId ?? categoryId,
           sku,
           barcodeData: sku,
           weightMg: line.weightMg,

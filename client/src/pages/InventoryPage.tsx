@@ -2940,6 +2940,9 @@ function EditItemDialog({
   const [images, setImages] = useState<string[]>(item.images ?? []);
   const [collectionIds, setCollectionIds] = useState<string[]>(itemExt.collectionIds ?? []);
   const [diamonds, setDiamonds] = useState<DiamondRow[]>(dbDiamondsToRows(itemExt.diamonds));
+  const [publishToWebsite, setPublishToWebsite] = useState<boolean>(
+    (item as Item & { isPublished?: boolean }).isPublished ?? false,
+  );
   const [uploading, setUploading] = useState<{ name: string; progress: number }[]>([]);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const cloudinaryReady = isCloudinaryConfigured();
@@ -2968,6 +2971,7 @@ function EditItemDialog({
     setImages(item.images ?? []);
     setCollectionIds(itemExt.collectionIds ?? []);
     setDiamonds(dbDiamondsToRows(itemExt.diamonds));
+    setPublishToWebsite((item as Item & { isPublished?: boolean }).isPublished ?? false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, item.id]);
 
@@ -3045,6 +3049,7 @@ function EditItemDialog({
           makingChargePerGramPaise: making.makingChargePerGramPaise,
           collectionIds,
           diamonds: diamondRowsToInput(diamonds),
+          publishToWebsite,
         },
       }).unwrap();
       toast.success(`Updated ${form.name.trim()}`);
@@ -3298,6 +3303,23 @@ function EditItemDialog({
             <Field label="Diamonds (4 Cs)">
               <DiamondsEditor rows={diamonds} onChange={setDiamonds} />
             </Field>
+
+            <label className="flex items-start gap-2 pt-2 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={publishToWebsite}
+                onChange={(e) => setPublishToWebsite(e.target.checked)}
+                className="mt-0.5 h-4 w-4 rounded border-ink-300 text-brand-500 focus:ring-brand-400"
+              />
+              <span className="flex-1">
+                <span className="flex items-center gap-1.5 text-ink-900 font-medium">
+                  <Globe className="h-3.5 w-3.5" /> Publish on storefront
+                </span>
+                <span className="block text-xs text-ink-500">
+                  Customers see this piece on the public website. Goes &quot;Sold out&quot; automatically when stock hits 0.
+                </span>
+              </span>
+            </label>
 
             <div className="flex items-center gap-2 pt-2">
               <button
@@ -3707,6 +3729,7 @@ function AddVendorDialog({ open, onClose }: { open: boolean; onClose: () => void
 // Create PO dialog.
 
 interface POLine {
+  categoryId: string;
   itemSku: string;
   weightG: string;
   purityCarat: string;
@@ -3715,31 +3738,55 @@ interface POLine {
 
 function CreatePODialog({ open, onClose }: { open: boolean; onClose: () => void }): JSX.Element {
   const { data: vendors } = useGetVendorsQuery();
+  const { data: catsRes } = useGetCategoriesQuery();
   const [create, { isLoading }] = useCreatePurchaseOrderMutation();
   const [vendorId, setVendorId] = useState('');
-  const [lines, setLines] = useState<POLine[]>([{ itemSku: '', weightG: '', purityCarat: '22', costRupees: '' }]);
+  const categories = (catsRes?.data ?? []) as CategoryRow[];
+  // Default a new line to the first sub-category (falls back to first category)
+  // so items land somewhere sensible, and an empty line for the initial state.
+  const defaultCatId = categories.find((c) => c.parentId)?.id ?? categories[0]?.id ?? '';
+  const [lines, setLines] = useState<POLine[]>([
+    { categoryId: '', itemSku: '', weightG: '', purityCarat: '22', costRupees: '' },
+  ]);
 
   if (!vendorId && vendors?.data[0]) setVendorId(vendors.data[0].id);
+  // Seed the first line's category once categories load.
+  if (defaultCatId && lines.length === 1 && !lines[0]!.categoryId) {
+    setLines((ls) => ls.map((l, i) => (i === 0 && !l.categoryId ? { ...l, categoryId: defaultCatId } : l)));
+  }
 
   const total = lines.reduce((s, l) => s + (parseFloat(l.costRupees) || 0), 0);
+
+  const patchLine = (i: number, patch: Partial<POLine>): void =>
+    setLines((ls) => ls.map((l, j) => (j === i ? { ...l, ...patch } : l)));
+
+  // When the category changes, default the purity to that metal's default
+  // (9K for gold, "0" / non-precious for stainless/silver) — same rule as the
+  // item form, so per-gram & non-precious items are captured correctly.
+  const onCategoryChange = (i: number, catId: string): void => {
+    const cat = categories.find((c) => c.id === catId);
+    patchLine(i, { categoryId: catId, purityCarat: defaultPurityForMetal(cat?.metalType) });
+  };
 
   const submit = async (e: React.FormEvent): Promise<void> => {
     e.preventDefault();
     if (!vendorId) return void toast.error('Pick a vendor');
+    if (lines.some((l) => !l.categoryId)) return void toast.error('Pick a category for each line');
     const items = lines.map((l) => ({
       itemSku: l.itemSku.trim(),
+      categoryId: l.categoryId,
       weightMg: Math.round(parseFloat(l.weightG) * 1000),
       purity: Math.round(parseFloat(l.purityCarat) * 100),
       costPaise: Math.round(parseFloat(l.costRupees) * 100),
     }));
     if (items.some((i) => !i.itemSku || !Number.isFinite(i.weightMg) || i.weightMg <= 0 || !Number.isFinite(i.costPaise) || i.costPaise <= 0)) {
-      return void toast.error('Each line needs SKU, weight, and cost');
+      return void toast.error('Each line needs a category, SKU, weight, and cost');
     }
     try {
       await create({ vendorId, items }).unwrap();
       toast.success('Purchase order created');
       onClose();
-      setLines([{ itemSku: '', weightG: '', purityCarat: '22', costRupees: '' }]);
+      setLines([{ categoryId: defaultCatId, itemSku: '', weightG: '', purityCarat: '22', costRupees: '' }]);
     } catch (err) {
       const message =
         (err as { data?: { error?: { message?: string } } }).data?.error?.message ?? 'Could not create PO.';
@@ -3766,78 +3813,91 @@ function CreatePODialog({ open, onClose }: { open: boolean; onClose: () => void 
               </select>
             </Field>
 
-            <div>
-              <div className="grid grid-cols-[1fr_90px_70px_120px_30px] gap-2 text-eyebrow uppercase text-ink-500 mb-2">
-                <span>SKU</span>
-                <span className="text-right">Weight (g)</span>
-                <span className="text-right">Purity</span>
-                <span className="text-right">Cost (₹)</span>
-                <span />
-              </div>
-              {lines.map((l, i) => (
-                <div key={i} className="grid grid-cols-[1fr_90px_70px_120px_30px] gap-2 mb-2">
-                  <input
-                    value={l.itemSku}
-                    onChange={(e) => {
-                      const next = [...lines];
-                      next[i] = { ...next[i]!, itemSku: e.target.value };
-                      setLines(next);
-                    }}
-                    className={fieldCls}
-                    placeholder="DW-0050"
-                  />
-                  <input
-                    type="number"
-                    step="0.001"
-                    value={l.weightG}
-                    onChange={(e) => {
-                      const next = [...lines];
-                      next[i] = { ...next[i]!, weightG: e.target.value };
-                      setLines(next);
-                    }}
-                    className={`${fieldCls} text-right`}
-                  />
-                  <select
-                    value={l.purityCarat}
-                    onChange={(e) => {
-                      const next = [...lines];
-                      next[i] = { ...next[i]!, purityCarat: e.target.value };
-                      setLines(next);
-                    }}
-                    className={fieldCls}
-                  >
-                    <option value="24">24K</option>
-                    <option value="22">22K</option>
-                    <option value="18">18K</option>
-                    <option value="14">14K</option>
-                  </select>
-                  <input
-                    type="number"
-                    step="0.01"
-                    value={l.costRupees}
-                    onChange={(e) => {
-                      const next = [...lines];
-                      next[i] = { ...next[i]!, costRupees: e.target.value };
-                      setLines(next);
-                    }}
-                    className={`${fieldCls} text-right`}
-                  />
-                  <button
-                    type="button"
-                    onClick={() => setLines(lines.filter((_, j) => j !== i))}
-                    disabled={lines.length === 1}
-                    className="text-ink-400 hover:text-rose-600 disabled:opacity-30"
-                    aria-label="Remove line"
-                  >
-                    ×
-                  </button>
-                </div>
-              ))}
+            <div className="space-y-3">
+              <p className="text-eyebrow uppercase text-ink-500">Items by category</p>
+              {lines.map((l, i) => {
+                const lineCat = categories.find((c) => c.id === l.categoryId);
+                const lineMetal: MetalTypeLiteral = lineCat?.metalType ?? 'GOLD';
+                return (
+                  <div key={i} className="rounded-md border border-ink-200 p-3 space-y-2.5">
+                    <div className="flex items-start gap-2">
+                      <div className="flex-1">
+                        <span className="text-[11px] uppercase tracking-wider text-ink-500 block mb-1">Category</span>
+                        <select
+                          value={l.categoryId}
+                          onChange={(e) => onCategoryChange(i, e.target.value)}
+                          className={fieldCls}
+                          required
+                        >
+                          <option value="">Choose category…</option>
+                          {buildCategoryFilterOptions(categories).map((o) => (
+                            <option key={o.value} value={o.value}>{o.label}</option>
+                          ))}
+                        </select>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setLines(lines.filter((_, j) => j !== i))}
+                        disabled={lines.length === 1}
+                        className="mt-6 text-ink-400 hover:text-rose-600 disabled:opacity-30"
+                        aria-label="Remove line"
+                        title="Remove line"
+                      >
+                        ×
+                      </button>
+                    </div>
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                      <div>
+                        <span className="text-[11px] uppercase tracking-wider text-ink-500 block mb-1">SKU</span>
+                        <input
+                          value={l.itemSku}
+                          onChange={(e) => patchLine(i, { itemSku: e.target.value })}
+                          className={fieldCls}
+                          placeholder="DW-0050"
+                        />
+                      </div>
+                      <div>
+                        <span className="text-[11px] uppercase tracking-wider text-ink-500 block mb-1">Weight (g)</span>
+                        <input
+                          type="number"
+                          step="0.001"
+                          value={l.weightG}
+                          onChange={(e) => patchLine(i, { weightG: e.target.value })}
+                          className={fieldCls}
+                        />
+                      </div>
+                      <div>
+                        <span className="text-[11px] uppercase tracking-wider text-ink-500 block mb-1">Cost (₹)</span>
+                        <input
+                          type="number"
+                          step="0.01"
+                          value={l.costRupees}
+                          onChange={(e) => patchLine(i, { costRupees: e.target.value })}
+                          className={fieldCls}
+                        />
+                      </div>
+                    </div>
+                    <div>
+                      <span className="text-[11px] uppercase tracking-wider text-ink-500 block mb-1">Purity</span>
+                      <PurityPicker
+                        value={l.purityCarat}
+                        metalType={lineMetal}
+                        onChange={(v) => patchLine(i, { purityCarat: v })}
+                      />
+                    </div>
+                  </div>
+                );
+              })}
               <Button
                 type="button"
                 variant="outline"
                 size="sm"
-                onClick={() => setLines([...lines, { itemSku: '', weightG: '', purityCarat: '22', costRupees: '' }])}
+                onClick={() =>
+                  setLines([
+                    ...lines,
+                    { categoryId: defaultCatId, itemSku: '', weightG: '', purityCarat: '22', costRupees: '' },
+                  ])
+                }
               >
                 + Add line
               </Button>
