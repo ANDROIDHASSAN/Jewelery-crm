@@ -30,6 +30,7 @@ import {
   useGetAnalyticsDashboardQuery,
   useGetStaffReportQuery,
   useGetTopProductsQuery,
+  useGetTopCategoriesQuery,
   useGetShopPerformanceQuery,
   useGetInventoryValuationQuery,
   useGetCustomerAcquisitionQuery,
@@ -595,20 +596,54 @@ function TopProductsSection(): JSX.Element {
   const [from, setFrom] = useState(daysAgo(30));
   const [to, setTo] = useState(today());
   const [search, setSearch] = useState('');
-  const { data, isLoading } = useGetTopProductsQuery({
+  // Category view is the primary focus per the client (M3 FR#3); product view
+  // is a drill-down.
+  const [view, setView] = useState<'category' | 'product'>('category');
+  const range = {
     from: new Date(from).toISOString(),
     to: new Date(`${to}T23:59:59.999Z`).toISOString(),
     limit: 20,
-  });
-  const allRows = data?.data ?? [];
-  const rows = useTableSearch(allRows, (r) => [r.name, r.slug], search);
+  };
+  const catQ = useGetTopCategoriesQuery(range, { skip: view !== 'category' });
+  const prodQ = useGetTopProductsQuery(range, { skip: view !== 'product' });
+  const isLoading = view === 'category' ? catQ.isLoading : prodQ.isLoading;
+
+  // Normalise both shapes to a common row for the chart/table.
+  const allRows = useMemo(() => {
+    if (view === 'category') {
+      return (catQ.data?.data ?? []).map((r) => ({
+        id: r.categoryId,
+        name: r.name,
+        sub: null as string | null,
+        qty: r.qty,
+        orderCount: r.orderCount,
+        revenuePaise: r.revenuePaise,
+      }));
+    }
+    return (prodQ.data?.data ?? []).map((r) => ({
+      id: r.productId,
+      name: r.name,
+      sub: r.mainCategoryName ?? null,
+      qty: r.qty,
+      orderCount: r.orderCount,
+      revenuePaise: r.revenuePaise,
+    }));
+  }, [view, catQ.data, prodQ.data]);
+  const rows = useTableSearch(allRows, (r) => [r.name, r.sub ?? ''], search);
+  const noun = view === 'category' ? 'category' : 'product';
 
   function handleCsv(): void {
-    downloadCsv(`top-products-${from}-to-${to}.csv`, [
-      ['Top products', `${from} → ${to}`],
+    downloadCsv(`top-${noun}-${from}-to-${to}.csv`, [
+      [`Top ${noun === 'category' ? 'categories' : 'products'}`, `${from} → ${to}`],
       [],
-      ['Rank', 'Product', 'Slug', 'Qty sold', 'Orders', 'Revenue (₹)'],
-      ...rows.map((r, i) => [i + 1, r.name, r.slug, r.qty, r.orderCount, paiseToRupeeString(r.revenuePaise)]),
+      view === 'category'
+        ? ['Rank', 'Category', 'Qty sold', 'Orders', 'Revenue (₹)']
+        : ['Rank', 'Product', 'Main category', 'Qty sold', 'Orders', 'Revenue (₹)'],
+      ...rows.map((r, i) =>
+        view === 'category'
+          ? [i + 1, r.name, r.qty, r.orderCount, paiseToRupeeString(r.revenuePaise)]
+          : [i + 1, r.name, r.sub ?? '', r.qty, r.orderCount, paiseToRupeeString(r.revenuePaise)],
+      ),
     ]);
   }
 
@@ -617,14 +652,33 @@ function TopProductsSection(): JSX.Element {
       <FilterRow>
         <DateInput label="From" value={from} onChange={setFrom} />
         <DateInput label="To" value={to} onChange={setTo} />
-        <div className="sm:col-span-2 flex items-end justify-end">
+        <div className="sm:col-span-2 flex items-end justify-end gap-2">
+          <div className="flex rounded-md border border-ink-200 p-0.5 text-xs">
+            <button
+              type="button"
+              onClick={() => setView('category')}
+              className={`h-8 px-3 rounded font-medium transition-colors ${view === 'category' ? 'bg-brand-500 text-ink-0' : 'text-ink-600 hover:bg-ink-50'}`}
+            >
+              By category
+            </button>
+            <button
+              type="button"
+              onClick={() => setView('product')}
+              className={`h-8 px-3 rounded font-medium transition-colors ${view === 'product' ? 'bg-brand-500 text-ink-0' : 'text-ink-600 hover:bg-ink-50'}`}
+            >
+              By product
+            </button>
+          </div>
           <Button variant="outline" size="sm" onClick={handleCsv} disabled={rows.length === 0}>
             <Download className="h-4 w-4" /> CSV
           </Button>
         </div>
       </FilterRow>
 
-      <ChartCard title="Top-selling storefront products" eyebrow="Catalogue">
+      <ChartCard
+        title={view === 'category' ? 'Top-selling categories' : 'Top-selling products'}
+        eyebrow="Catalogue"
+      >
         {isLoading ? (
           <p className="text-sm text-ink-500">Loading…</p>
         ) : rows.length === 0 ? (
@@ -641,16 +695,17 @@ function TopProductsSection(): JSX.Element {
       <TableToolbar
         query={search}
         onQueryChange={setSearch}
-        searchPlaceholder="Search top products by name or slug…"
+        searchPlaceholder={`Search top ${noun === 'category' ? 'categories' : 'products'}…`}
         count={rows.length}
-        countLabel={rows.length === 1 ? 'product' : 'products'}
+        countLabel={rows.length === 1 ? noun : `${noun === 'category' ? 'categories' : 'products'}`}
       />
       <section className="rounded-md border border-ink-100 bg-ink-0 overflow-x-auto">
         <table className="w-full text-sm min-w-[640px]">
           <thead className="text-eyebrow uppercase text-ink-500 bg-ink-25">
             <tr>
               <th className="text-left px-4 py-2.5">Rank</th>
-              <th className="text-left px-4 py-2.5">Product</th>
+              <th className="text-left px-4 py-2.5">{view === 'category' ? 'Category' : 'Product'}</th>
+              {view === 'product' && <th className="text-left px-4 py-2.5">Main category</th>}
               <th className="text-right px-4 py-2.5">Qty</th>
               <th className="text-right px-4 py-2.5">Orders</th>
               <th className="text-right px-4 py-2.5">Revenue</th>
@@ -658,9 +713,12 @@ function TopProductsSection(): JSX.Element {
           </thead>
           <tbody className="divide-y divide-ink-100">
             {rows.map((r, i) => (
-              <tr key={r.productId}>
+              <tr key={r.id}>
                 <td className="px-4 py-2 font-mono text-xs text-ink-500">#{i + 1}</td>
                 <td className="px-4 py-2 text-ink-900">{r.name}</td>
+                {view === 'product' && (
+                  <td className="px-4 py-2 text-ink-600">{r.sub ?? '—'}</td>
+                )}
                 <td className="px-4 py-2 text-right tabular-nums">{r.qty}</td>
                 <td className="px-4 py-2 text-right text-ink-600 tabular-nums">{r.orderCount}</td>
                 <td className="px-4 py-2 text-right"><Money paise={r.revenuePaise} /></td>

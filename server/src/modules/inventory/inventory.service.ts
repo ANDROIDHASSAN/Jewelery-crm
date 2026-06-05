@@ -1009,9 +1009,49 @@ export async function computeLowStock(threshold: number) {
       isSerialized: true,
       quantityOnHand: true,
       status: true,
+      // Resolve the sub-category + its main (parent) so the Low Stock view can
+      // show the main category too, not just the sub (M3 FR#2).
+      category: {
+        select: { id: true, name: true, parentId: true, parent: { select: { id: true, name: true } } },
+      },
     },
   });
-  return { threshold, rows: lowBuckets, items };
+
+  // Build a category lookup so the per-bucket rows can also carry the main
+  // category. Buckets are keyed by the item's own categoryId (a sub or a main).
+  const bucketCatIds = Array.from(new Set(lowBuckets.map((b) => b.categoryId)));
+  const bucketCats = bucketCatIds.length
+    ? await prisma.category.findMany({
+        where: { id: { in: bucketCatIds } },
+        select: { id: true, name: true, parentId: true, parent: { select: { id: true, name: true } } },
+      })
+    : [];
+  const catById = new Map(bucketCats.map((c) => [c.id, c]));
+
+  // Flatten the main/sub category onto each item + bucket row.
+  const enrichedItems = items.map((it) => {
+    const { category, ...rest } = it;
+    const main = category.parent ?? category; // a main category is its own "main"
+    return {
+      ...rest,
+      mainCategoryId: main.id,
+      mainCategoryName: main.name,
+      subCategoryName: category.parentId ? category.name : null,
+      categoryName: category.name,
+    };
+  });
+  const enrichedRows = lowBuckets.map((b) => {
+    const cat = catById.get(b.categoryId);
+    const main = cat?.parent ?? cat ?? null;
+    return {
+      ...b,
+      mainCategoryId: main?.id ?? null,
+      mainCategoryName: main?.name ?? null,
+      subCategoryName: cat?.parentId ? cat?.name ?? null : null,
+      categoryName: cat?.name ?? null,
+    };
+  });
+  return { threshold, rows: enrichedRows, items: enrichedItems };
 }
 
 // --- Vendors ---

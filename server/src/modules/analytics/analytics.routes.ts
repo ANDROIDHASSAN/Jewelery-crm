@@ -233,29 +233,80 @@ analyticsRouter.get('/top-products', async (req, res, next) => {
         from: z.coerce.date().optional(),
         to: z.coerce.date().optional(),
         limit: z.coerce.number().int().positive().max(50).default(10),
+        // 'product' (default) = item-wise best sellers; 'category' = roll up by
+        // the product's MAIN category (M3 FR#3 — client wants the main-category
+        // view as the primary focus).
+        groupBy: z.enum(['product', 'category']).default('product'),
       })
       .parse(req.query);
+    const where = q.from || q.to ? { order: { createdAt: { gte: q.from, lte: q.to } } } : undefined;
     const grouped = await prisma.orderItem.groupBy({
       by: ['productId'],
-      where: q.from || q.to ? { order: { createdAt: { gte: q.from, lte: q.to } } } : undefined,
+      where,
       _sum: { qty: true, pricePaise: true },
       _count: { _all: true },
       orderBy: { _sum: { qty: 'desc' } },
-      take: q.limit,
+      // For category roll-ups we need every product, not just the top N, so the
+      // category totals are complete; product view keeps the cheap top-N take.
+      ...(q.groupBy === 'category' ? {} : { take: q.limit }),
     });
     const productIds = grouped.map((g) => g.productId);
     const products = await prisma.product.findMany({
       where: { id: { in: productIds } },
-      select: { id: true, name: true, slug: true, basePricePaise: true },
+      select: {
+        id: true,
+        name: true,
+        slug: true,
+        basePricePaise: true,
+        category: {
+          select: { id: true, name: true, parentId: true, parent: { select: { id: true, name: true } } },
+        },
+      },
     });
     const productById = new Map(products.map((p) => [p.id, p]));
+
+    if (q.groupBy === 'category') {
+      // Roll up product sales into their MAIN category bucket.
+      const byCat = new Map<
+        string,
+        { categoryId: string; name: string; qty: number; orderCount: number; revenuePaise: number }
+      >();
+      for (const g of grouped) {
+        const p = productById.get(g.productId);
+        const main = p?.category?.parent ?? p?.category ?? null;
+        const id = main?.id ?? 'uncategorized';
+        const agg = byCat.get(id) ?? {
+          categoryId: id,
+          name: main?.name ?? 'Uncategorised',
+          qty: 0,
+          orderCount: 0,
+          revenuePaise: 0,
+        };
+        agg.qty += g._sum.qty ?? 0;
+        agg.orderCount += g._count._all;
+        agg.revenuePaise += g._sum.pricePaise ?? 0;
+        byCat.set(id, agg);
+      }
+      const data = Array.from(byCat.values())
+        .sort((a, b) => b.qty - a.qty)
+        .slice(0, q.limit);
+      res.json({ data, groupBy: 'category' });
+      return;
+    }
+
     res.json({
+      groupBy: 'product',
       data: grouped.map((g) => {
         const p = productById.get(g.productId);
+        const main = p?.category?.parent ?? p?.category ?? null;
         return {
           productId: g.productId,
           name: p?.name ?? 'Unknown',
           slug: p?.slug ?? '',
+          // Surface the main category alongside each product too, so the
+          // product view can show which category a best-seller belongs to.
+          mainCategoryId: main?.id ?? null,
+          mainCategoryName: main?.name ?? null,
           qty: g._sum.qty ?? 0,
           orderCount: g._count._all,
           revenuePaise: g._sum.pricePaise ?? 0,

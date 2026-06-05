@@ -81,11 +81,26 @@ export interface LowStockItem {
   quantityOnHand: number;
   /** Drives the Sold-out badge + sort order. */
   status: 'IN_STOCK' | 'IN_TRANSIT' | 'SOLD' | 'MELTED';
+  /** Main (parent) category — shown alongside the sub-category (M3 FR#2). */
+  mainCategoryId: string | null;
+  mainCategoryName: string | null;
+  /** Sub-category name (null when the item sits directly on a main category). */
+  subCategoryName: string | null;
+  /** The item's own category name (sub or main). */
+  categoryName: string | null;
 }
 
 export interface LowStockRow {
   threshold: number;
-  rows: Array<{ categoryId: string; shopId: string; itemCount: number }>;
+  rows: Array<{
+    categoryId: string;
+    shopId: string;
+    itemCount: number;
+    mainCategoryId: string | null;
+    mainCategoryName: string | null;
+    subCategoryName: string | null;
+    categoryName: string | null;
+  }>;
   items: LowStockItem[];
 }
 

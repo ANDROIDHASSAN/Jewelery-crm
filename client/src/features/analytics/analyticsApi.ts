@@ -27,6 +27,16 @@ export interface TopProductRow {
   productId: string;
   name: string;
   slug: string;
+  mainCategoryId?: string | null;
+  mainCategoryName?: string | null;
+  qty: number;
+  orderCount: number;
+  revenuePaise: number;
+}
+
+export interface TopCategoryRow {
+  categoryId: string;
+  name: string;
   qty: number;
   orderCount: number;
   revenuePaise: number;
@@ -237,8 +247,23 @@ export const analyticsApi = baseApi.injectEndpoints({
       query: (params) => ({ url: '/analytics/staff', params }),
       providesTags: ['StaffReport'],
     }),
-    getTopProducts: b.query<{ data: TopProductRow[] }, { from?: string; to?: string; limit?: number } | void>({
+    getTopProducts: b.query<
+      { data: TopProductRow[]; groupBy?: 'product' | 'category' },
+      { from?: string; to?: string; limit?: number } | void
+    >({
       query: (params) => ({ url: '/analytics/top-products', params: params ?? undefined }),
+      providesTags: ['SalesReport'],
+    }),
+    // Category-wise best sellers (M3 FR#3) — rolls product sales up to the main
+    // category. Uses the same endpoint with groupBy=category.
+    getTopCategories: b.query<
+      { data: TopCategoryRow[]; groupBy: 'category' },
+      { from?: string; to?: string; limit?: number } | void
+    >({
+      query: (params) => ({
+        url: '/analytics/top-products',
+        params: { ...(params ?? {}), groupBy: 'category' },
+      }),
       providesTags: ['SalesReport'],
     }),
     getShopPerformance: b.query<
@@ -317,6 +342,7 @@ export const {
   useGetAnalyticsDashboardQuery,
   useGetStaffReportQuery,
   useGetTopProductsQuery,
+  useGetTopCategoriesQuery,
   useGetShopPerformanceQuery,
   useGetInventoryValuationQuery,
   useGetCustomerAcquisitionQuery,

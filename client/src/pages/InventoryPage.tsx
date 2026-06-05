@@ -860,7 +860,16 @@ function LowStockTab(): JSX.Element {
                       {shopNameById.get(r.shopId) ?? r.shopId.slice(-6)}
                     </td>
                     <td className="px-5 py-3 text-ink-800">
-                      {catNameById.get(r.categoryId) ?? r.categoryId.slice(-6)}
+                      {r.mainCategoryName ? (
+                        <span>
+                          <span className="font-medium">{r.mainCategoryName}</span>
+                          {r.subCategoryName && (
+                            <span className="text-ink-500"> › {r.subCategoryName}</span>
+                          )}
+                        </span>
+                      ) : (
+                        catNameById.get(r.categoryId) ?? r.categoryId.slice(-6)
+                      )}
                     </td>
                     <td className="px-5 py-3 text-right font-mono tabular-nums">
                       <Badge tone={r.itemCount === 0 ? 'danger' : 'warning'}>{r.itemCount}</Badge>
@@ -979,7 +988,16 @@ function LowStockTab(): JSX.Element {
                         {shopNameById.get(it.shopId) ?? it.shopId.slice(-6)}
                       </td>
                       <td className="px-3 py-3 text-ink-800">
-                        {catNameById.get(it.categoryId) ?? it.categoryId.slice(-6)}
+                        {it.mainCategoryName ? (
+                          <span>
+                            <span className="font-medium">{it.mainCategoryName}</span>
+                            {it.subCategoryName && (
+                              <span className="text-ink-500"> › {it.subCategoryName}</span>
+                            )}
+                          </span>
+                        ) : (
+                          catNameById.get(it.categoryId) ?? it.categoryId.slice(-6)
+                        )}
                       </td>
                       <td className="px-3 py-3 text-right font-mono tabular-nums">
                         {isOut ? (
@@ -2711,6 +2729,11 @@ function AddItemDialog({ open, onClose }: { open: boolean; onClose: () => void }
                 >
                   <CategoryOptions categories={cats?.data ?? []} />
                 </select>
+                {selectedCat && !selectedCat.parentId && (
+                  <p className="mt-1 text-[11px] text-amber-600">
+                    Tip: pick a sub-category (e.g. Rings) so this item is grouped correctly in reports.
+                  </p>
+                )}
               </Field>
             </div>
             <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
