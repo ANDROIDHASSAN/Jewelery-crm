@@ -4,6 +4,7 @@ import { MessageCircle } from 'lucide-react';
 import { StorefrontHeader } from './StorefrontHeader';
 import { StorefrontFooter } from './StorefrontFooter';
 import { AuthGateProvider } from './AuthSheet';
+import { LeadCapturePopup } from './LeadCapturePopup';
 import { setContent } from './storefrontContentSlice';
 import { useGetPublicStorefrontQuery } from './storefrontApi';
 import { useAppDispatch, useAppSelector } from '@/app/hooks';
@@ -60,6 +61,8 @@ export function StorefrontLayout(): JSX.Element {
       >
         <MessageCircle className="h-5 w-5 sm:h-6 sm:w-6 transition-transform duration-200 group-hover:scale-110" />
       </a>
+      {/* Opt-in lead-capture popup → CRM (M3 FR#8) */}
+      <LeadCapturePopup />
     </div>
     </AuthGateProvider>
   );
