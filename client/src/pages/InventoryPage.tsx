@@ -202,6 +202,20 @@ function ItemsTab(): JSX.Element {
     return map;
   }, [catRes?.data]);
 
+  // Effective metal type per category (resolving a sub to its main) so the
+  // Purity badge can label non-precious 0-purity items correctly instead of
+  // defaulting them to "Silver".
+  const categoryMetalById = useMemo(() => {
+    const cats = (catRes?.data ?? []) as CategoryRow[];
+    const byId = new Map(cats.map((c) => [c.id, c]));
+    const map = new Map<string, string>();
+    for (const c of cats) {
+      const main = c.parentId ? byId.get(c.parentId) : c;
+      map.set(c.id, (main ?? c).metalType);
+    }
+    return map;
+  }, [catRes?.data]);
+
   const shopNameById = useMemo(() => {
     const map = new Map<string, string>();
     for (const s of shopsRes?.data ?? []) map.set(s.id, s.name);
@@ -239,7 +253,9 @@ function ItemsTab(): JSX.Element {
       {
         accessorKey: 'purityCaratX100',
         header: 'Purity',
-        cell: (i) => <Purity x100={Number(i.getValue())} />,
+        cell: (i) => (
+          <Purity x100={Number(i.getValue())} metalType={categoryMetalById.get(i.row.original.categoryId)} />
+        ),
       },
       {
         accessorKey: 'hallmarkStatus',
@@ -295,7 +311,7 @@ function ItemsTab(): JSX.Element {
         ),
       },
     ],
-    [categoryNameById, shopNameById],
+    [categoryNameById, shopNameById, categoryMetalById],
   );
 
   return (
@@ -371,7 +387,7 @@ function ItemsTab(): JSX.Element {
                   <Weight mg={selected.weightMg} />
                 </Row>
                 <Row label="Purity">
-                  <Purity x100={selected.purityCaratX100} />
+                  <Purity x100={selected.purityCaratX100} metalType={categoryMetalById.get(selected.categoryId)} />
                 </Row>
                 <Row label="Cost price">
                   <Money paise={selected.costPricePaise} />
@@ -817,6 +833,17 @@ function LowStockTab(): JSX.Element {
 
   const shopNameById = new Map((shopsRes?.data ?? []).map((s) => [s.id, s.name]));
   const catNameById = new Map((catRes?.data ?? []).map((c) => [c.id, c.name]));
+  // Effective metal type per category (sub resolves to its main) for the Purity badge.
+  const catMetalById = (() => {
+    const cats = (catRes?.data ?? []) as CategoryRow[];
+    const byId = new Map(cats.map((c) => [c.id, c]));
+    const map = new Map<string, string>();
+    for (const c of cats) {
+      const main = c.parentId ? byId.get(c.parentId) : c;
+      map.set(c.id, (main ?? c).metalType);
+    }
+    return map;
+  })();
 
   return (
     <div className="space-y-4">
@@ -1012,7 +1039,7 @@ function LowStockTab(): JSX.Element {
                         <Weight mg={it.weightMg} />
                       </td>
                       <td className="px-3 py-3">
-                        <Purity x100={it.purityCaratX100} />
+                        <Purity x100={it.purityCaratX100} metalType={catMetalById.get(it.categoryId)} />
                       </td>
                       <td className="px-3 py-3">
                         <Badge tone={tone as 'success' | 'warning' | 'info' | 'neutral'}>

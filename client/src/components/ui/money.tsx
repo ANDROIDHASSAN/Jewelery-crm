@@ -18,10 +18,26 @@ export function Weight({ mg, className }: { mg: number; className?: string }): J
   return <span className={cn('font-mono tabular-nums', className)}>{grams} g</span>;
 }
 
-export function Purity({ x100, className }: { x100: number; className?: string }): JSX.Element {
+export function Purity({
+  x100,
+  metalType,
+  className,
+}: {
+  x100: number;
+  // Optional — disambiguates purity 0, which is shared by silver and
+  // non-precious metals. Without it the 0 → "Silver" legacy default holds.
+  metalType?: string | null;
+  className?: string;
+}): JSX.Element {
   // Canonical labels first so the preset chips read as expected.
   let label: string;
-  if (x100 === 2400) label = '24K';
+  // Non-precious metals (stainless steel / "other", e.g. gold-tone plated) have
+  // no real carat purity — the stored number is meaningless for them — so always
+  // label them "Non-precious" regardless of the value, rather than "Silver" (0)
+  // or a stray carat. Diamond pieces keep their (white-gold setting) carat.
+  if (metalType === 'STAINLESS_STEEL' || metalType === 'OTHER') {
+    label = 'Non-precious';
+  } else if (x100 === 2400) label = '24K';
   else if (x100 === 2200) label = '22K';
   else if (x100 === 1800) label = '18K';
   else if (x100 === 1400) label = '14K';
