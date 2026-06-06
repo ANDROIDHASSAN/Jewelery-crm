@@ -48,7 +48,7 @@ import {
   useCreateCollectionMutation,
   useUpdateCollectionMutation,
   useDeleteCollectionMutation,
-  useGetCollectionItemsQuery,
+  useListCollectionItemsQuery,
   useAddItemsToCollectionMutation,
   useRemoveItemFromCollectionMutation,
   useLazyGetSkuSuggestionQuery,
@@ -1357,7 +1357,7 @@ function CollectionRow({
   onUpdate: ReturnType<typeof useUpdateCollectionMutation>[0];
   onDelete: () => void;
 }): JSX.Element {
-  const { data: itemsData, isLoading: itemsLoading } = useGetCollectionItemsQuery(collection.id);
+  const { data: itemsData, isLoading: itemsLoading } = useListCollectionItemsQuery(collection.id);
 
   return (
     <>
@@ -3952,6 +3952,240 @@ interface POLine {
   weightG: string;
   purityCarat: string;
   costRupees: string;
+  qty: string;
+}
+
+// Item picker sheet — lets the user pick existing inventory items (by category
+// or collection) and adds them as pre-filled PO lines. Cost is left blank since
+// the vendor price may differ from the current stock cost.
+function ItemPickerSheet({
+  open,
+  onClose,
+  onAdd,
+}: {
+  open: boolean;
+  onClose: () => void;
+  onAdd: (lines: POLine[]) => void;
+}): JSX.Element {
+  const [view, setView] = useState<'category' | 'collection'>('category');
+  const [selectedCatId, setSelectedCatId] = useState('');
+  const [selectedColId, setSelectedColId] = useState('');
+  const [search, setSearch] = useState('');
+  const [checked, setChecked] = useState<Set<string>>(new Set());
+
+  const { data: catsRes } = useGetCategoriesQuery();
+  const { data: colsRes } = useGetCollectionsQuery();
+  const { data: catItems } = useGetItemsQuery(
+    { categoryId: selectedCatId || undefined, limit: 200 },
+    { skip: view !== 'category' || !selectedCatId },
+  );
+  const { data: colItems } = useListCollectionItemsQuery(selectedColId, {
+    skip: view !== 'collection' || !selectedColId,
+  });
+
+  const categories = (catsRes?.data ?? []) as CategoryRow[];
+  const collections = colsRes?.data ?? [];
+  const rawItems = view === 'category' ? (catItems?.data ?? []) : (colItems?.data ?? []);
+  const items = search
+    ? rawItems.filter(
+        (it) =>
+          it.sku.toLowerCase().includes(search.toLowerCase()) ||
+          (it.name?.toLowerCase().includes(search.toLowerCase()) ?? false),
+      )
+    : rawItems;
+
+  const allIds = items.map((it) => it.id);
+  const allChecked = allIds.length > 0 && allIds.every((id) => checked.has(id));
+  const someChecked = allIds.some((id) => checked.has(id));
+
+  function toggle(id: string): void {
+    setChecked((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  function toggleAll(): void {
+    if (allChecked) {
+      setChecked(new Set());
+    } else {
+      setChecked(new Set(allIds));
+    }
+  }
+
+  function handleAdd(): void {
+    const selected = items.filter((it) => checked.has(it.id));
+    const lines: POLine[] = selected.map((it) => ({
+      categoryId: it.categoryId,
+      itemSku: it.sku,
+      weightG: (it.weightMg / 1000).toFixed(3),
+      purityCarat: (it.purityCaratX100 / 100).toString(),
+      costRupees: '',
+      qty: '1',
+    }));
+    onAdd(lines);
+    setChecked(new Set());
+    onClose();
+  }
+
+  function handleClose(): void {
+    setChecked(new Set());
+    setSearch('');
+    onClose();
+  }
+
+  const placeholder =
+    view === 'category'
+      ? !selectedCatId
+        ? 'Select a category above to browse items'
+        : items.length === 0
+          ? 'No items in this category'
+          : null
+      : !selectedColId
+        ? 'Select a collection above to browse items'
+        : items.length === 0
+          ? 'No items in this collection'
+          : null;
+
+  return (
+    <Sheet open={open} onOpenChange={(o) => !o && handleClose()}>
+      <SheetContent className="!max-w-lg">
+        <SheetHeader>
+          <SheetTitle>Pick items for PO</SheetTitle>
+        </SheetHeader>
+        <SheetBody className="flex flex-col gap-3">
+          {/* View toggle */}
+          <div className="flex rounded-md border border-ink-200 overflow-hidden text-sm">
+            <button
+              type="button"
+              onClick={() => { setView('category'); setChecked(new Set()); }}
+              className={`flex-1 py-2 font-medium transition-colors ${view === 'category' ? 'bg-brand-600 text-white' : 'bg-ink-0 text-ink-600 hover:bg-ink-50'}`}
+            >
+              By Category
+            </button>
+            <button
+              type="button"
+              onClick={() => { setView('collection'); setChecked(new Set()); }}
+              className={`flex-1 py-2 font-medium transition-colors ${view === 'collection' ? 'bg-brand-600 text-white' : 'bg-ink-0 text-ink-600 hover:bg-ink-50'}`}
+            >
+              By Collection
+            </button>
+          </div>
+
+          {/* Picker dropdown */}
+          {view === 'category' ? (
+            <select
+              value={selectedCatId}
+              onChange={(e) => { setSelectedCatId(e.target.value); setChecked(new Set()); }}
+              className={fieldCls}
+            >
+              <option value="">Choose category…</option>
+              {buildCategoryFilterOptions(categories).map((o) => (
+                <option key={o.value} value={o.value}>{o.label}</option>
+              ))}
+            </select>
+          ) : (
+            <select
+              value={selectedColId}
+              onChange={(e) => { setSelectedColId(e.target.value); setChecked(new Set()); }}
+              className={fieldCls}
+            >
+              <option value="">Choose collection…</option>
+              {collections.map((c) => (
+                <option key={c.id} value={c.id}>{c.name}</option>
+              ))}
+            </select>
+          )}
+
+          {/* Search */}
+          {(selectedCatId || selectedColId) && rawItems.length > 0 && (
+            <input
+              type="search"
+              placeholder="Search by SKU or name…"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              className={fieldCls}
+            />
+          )}
+
+          {/* Item list */}
+          <div className="flex-1 overflow-y-auto rounded-md border border-ink-100 divide-y divide-ink-100 max-h-[420px]">
+            {placeholder ? (
+              <p className="p-5 text-sm text-ink-500">{placeholder}</p>
+            ) : (
+              <>
+                {/* Select all row */}
+                <label className="flex items-center gap-3 px-3 py-2 bg-ink-50 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={allChecked}
+                    ref={(el) => { if (el) el.indeterminate = someChecked && !allChecked; }}
+                    onChange={toggleAll}
+                    className="h-4 w-4 rounded border-ink-300 accent-brand-600"
+                  />
+                  <span className="text-xs font-medium text-ink-600 uppercase tracking-wide">
+                    Select all ({items.length})
+                  </span>
+                </label>
+                {items.map((it) => (
+                  <label
+                    key={it.id}
+                    className="flex items-center gap-3 px-3 py-2.5 cursor-pointer hover:bg-ink-50 transition-colors"
+                  >
+                    <input
+                      type="checkbox"
+                      checked={checked.has(it.id)}
+                      onChange={() => toggle(it.id)}
+                      className="h-4 w-4 rounded border-ink-300 accent-brand-600 shrink-0"
+                    />
+                    {it.images?.[0] && (
+                      <img
+                        src={cloudinaryThumb(it.images[0], 40) ?? it.images[0]}
+                        alt=""
+                        className="h-9 w-9 rounded object-cover shrink-0 border border-ink-100"
+                      />
+                    )}
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-medium text-ink-900 truncate">
+                        {it.name ?? it.sku}
+                      </p>
+                      <p className="text-xs text-ink-500 font-mono">{it.sku}</p>
+                    </div>
+                    <div className="text-right shrink-0 text-xs text-ink-500">
+                      <p>{(it.weightMg / 1000).toFixed(3)} g</p>
+                      <p>{(it.purityCaratX100 / 100)}K</p>
+                    </div>
+                  </label>
+                ))}
+              </>
+            )}
+          </div>
+
+          {/* Footer */}
+          <div className="flex items-center justify-between pt-2 border-t border-ink-100">
+            <span className="text-sm text-ink-500">
+              {checked.size > 0 ? `${checked.size} item${checked.size > 1 ? 's' : ''} selected` : 'None selected'}
+            </span>
+            <div className="flex gap-2">
+              <Button type="button" variant="outline" size="sm" onClick={handleClose}>
+                Cancel
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                disabled={checked.size === 0}
+                onClick={handleAdd}
+              >
+                Add {checked.size > 0 ? checked.size : ''} to PO
+              </Button>
+            </div>
+          </div>
+        </SheetBody>
+      </SheetContent>
+    </Sheet>
+  );
 }
 
 function CreatePODialog({ open, onClose }: { open: boolean; onClose: () => void }): JSX.Element {
@@ -3959,12 +4193,13 @@ function CreatePODialog({ open, onClose }: { open: boolean; onClose: () => void 
   const { data: catsRes } = useGetCategoriesQuery();
   const [create, { isLoading }] = useCreatePurchaseOrderMutation();
   const [vendorId, setVendorId] = useState('');
+  const [pickerOpen, setPickerOpen] = useState(false);
   const categories = (catsRes?.data ?? []) as CategoryRow[];
   // Default a new line to the first sub-category (falls back to first category)
   // so items land somewhere sensible, and an empty line for the initial state.
   const defaultCatId = categories.find((c) => c.parentId)?.id ?? categories[0]?.id ?? '';
   const [lines, setLines] = useState<POLine[]>([
-    { categoryId: '', itemSku: '', weightG: '', purityCarat: '22', costRupees: '' },
+    { categoryId: '', itemSku: '', weightG: '', purityCarat: '22', costRupees: '', qty: '1' },
   ]);
 
   if (!vendorId && vendors?.data[0]) setVendorId(vendors.data[0].id);
@@ -3973,7 +4208,7 @@ function CreatePODialog({ open, onClose }: { open: boolean; onClose: () => void 
     setLines((ls) => ls.map((l, i) => (i === 0 && !l.categoryId ? { ...l, categoryId: defaultCatId } : l)));
   }
 
-  const total = lines.reduce((s, l) => s + (parseFloat(l.costRupees) || 0), 0);
+  const total = lines.reduce((s, l) => s + (parseFloat(l.costRupees) || 0) * (parseInt(l.qty, 10) || 1), 0);
 
   const patchLine = (i: number, patch: Partial<POLine>): void =>
     setLines((ls) => ls.map((l, j) => (j === i ? { ...l, ...patch } : l)));
@@ -3986,6 +4221,16 @@ function CreatePODialog({ open, onClose }: { open: boolean; onClose: () => void 
     patchLine(i, { categoryId: catId, purityCarat: defaultPurityForMetal(cat?.metalType) });
   };
 
+  // Merge picker-selected lines into the current list, removing the placeholder
+  // blank line if it hasn't been touched yet.
+  function handlePickerAdd(newLines: POLine[]): void {
+    setLines((prev) => {
+      const withoutBlank = prev.filter((l) => l.itemSku.trim() || l.costRupees.trim());
+      const base = withoutBlank.length > 0 ? withoutBlank : [];
+      return [...base, ...newLines];
+    });
+  }
+
   const submit = async (e: React.FormEvent): Promise<void> => {
     e.preventDefault();
     if (!vendorId) return void toast.error('Pick a vendor');
@@ -3996,6 +4241,7 @@ function CreatePODialog({ open, onClose }: { open: boolean; onClose: () => void 
       weightMg: Math.round(parseFloat(l.weightG) * 1000),
       purity: Math.round(parseFloat(l.purityCarat) * 100),
       costPaise: Math.round(parseFloat(l.costRupees) * 100),
+      quantity: Math.max(1, parseInt(l.qty, 10) || 1),
     }));
     if (items.some((i) => !i.itemSku || !Number.isFinite(i.weightMg) || i.weightMg <= 0 || !Number.isFinite(i.costPaise) || i.costPaise <= 0)) {
       return void toast.error('Each line needs a category, SKU, weight, and cost');
@@ -4004,7 +4250,7 @@ function CreatePODialog({ open, onClose }: { open: boolean; onClose: () => void 
       await create({ vendorId, items }).unwrap();
       toast.success('Purchase order created');
       onClose();
-      setLines([{ categoryId: defaultCatId, itemSku: '', weightG: '', purityCarat: '22', costRupees: '' }]);
+      setLines([{ categoryId: defaultCatId, itemSku: '', weightG: '', purityCarat: '22', costRupees: '', qty: '1' }]);
     } catch (err) {
       const message =
         (err as { data?: { error?: { message?: string } } }).data?.error?.message ?? 'Could not create PO.';
@@ -4013,131 +4259,165 @@ function CreatePODialog({ open, onClose }: { open: boolean; onClose: () => void 
   };
 
   return (
-    <Sheet open={open} onOpenChange={(o) => !o && onClose()}>
-      <SheetContent className="!max-w-2xl">
-        <SheetHeader>
-          <SheetTitle>Create purchase order</SheetTitle>
-        </SheetHeader>
-        <SheetBody>
-          <form onSubmit={submit} className="space-y-4 text-sm">
-            <Field label="Vendor">
-              <select value={vendorId} onChange={(e) => setVendorId(e.target.value)} className={fieldCls} required>
-                <option value="">Choose vendor…</option>
-                {(vendors?.data ?? []).map((v) => (
-                  <option key={v.id} value={v.id}>
-                    {v.name}
-                  </option>
-                ))}
-              </select>
-            </Field>
+    <>
+      <Sheet open={open} onOpenChange={(o) => !o && onClose()}>
+        <SheetContent className="!max-w-2xl">
+          <SheetHeader>
+            <SheetTitle>Create purchase order</SheetTitle>
+          </SheetHeader>
+          <SheetBody>
+            <form onSubmit={submit} className="space-y-4 text-sm">
+              <Field label="Vendor">
+                <select value={vendorId} onChange={(e) => setVendorId(e.target.value)} className={fieldCls} required>
+                  <option value="">Choose vendor…</option>
+                  {(vendors?.data ?? []).map((v) => (
+                    <option key={v.id} value={v.id}>
+                      {v.name}
+                    </option>
+                  ))}
+                </select>
+              </Field>
 
-            <div className="space-y-3">
-              <p className="text-eyebrow uppercase text-ink-500">Items by category</p>
-              {lines.map((l, i) => {
-                const lineCat = categories.find((c) => c.id === l.categoryId);
-                const lineMetal: MetalTypeLiteral = lineCat?.metalType ?? 'GOLD';
-                return (
-                  <div key={i} className="rounded-md border border-ink-200 p-3 space-y-2.5">
-                    <div className="flex items-start gap-2">
-                      <div className="flex-1">
-                        <span className="text-[11px] uppercase tracking-wider text-ink-500 block mb-1">Category</span>
-                        <select
-                          value={l.categoryId}
-                          onChange={(e) => onCategoryChange(i, e.target.value)}
-                          className={fieldCls}
-                          required
+              <div className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <p className="text-eyebrow uppercase text-ink-500">Line items</p>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setPickerOpen(true)}
+                  >
+                    <Sparkles className="h-3.5 w-3.5 mr-1" />
+                    Browse inventory
+                  </Button>
+                </div>
+                {lines.length === 0 && (
+                  <p className="text-sm text-ink-400 py-3 text-center border border-dashed border-ink-200 rounded-md">
+                    No lines yet — add manually or browse inventory above.
+                  </p>
+                )}
+                {lines.map((l, i) => {
+                  const lineCat = categories.find((c) => c.id === l.categoryId);
+                  const lineMetal: MetalTypeLiteral = lineCat?.metalType ?? 'GOLD';
+                  return (
+                    <div key={i} className="rounded-md border border-ink-200 p-3 space-y-2.5">
+                      <div className="flex items-start gap-2">
+                        <div className="flex-1">
+                          <span className="text-[11px] uppercase tracking-wider text-ink-500 block mb-1">Category</span>
+                          <select
+                            value={l.categoryId}
+                            onChange={(e) => onCategoryChange(i, e.target.value)}
+                            className={fieldCls}
+                            required
+                          >
+                            <option value="">Choose category…</option>
+                            {buildCategoryFilterOptions(categories).map((o) => (
+                              <option key={o.value} value={o.value}>{o.label}</option>
+                            ))}
+                          </select>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => setLines(lines.filter((_, j) => j !== i))}
+                          className="mt-6 text-ink-400 hover:text-rose-600"
+                          aria-label="Remove line"
+                          title="Remove line"
                         >
-                          <option value="">Choose category…</option>
-                          {buildCategoryFilterOptions(categories).map((o) => (
-                            <option key={o.value} value={o.value}>{o.label}</option>
-                          ))}
-                        </select>
+                          ×
+                        </button>
                       </div>
-                      <button
-                        type="button"
-                        onClick={() => setLines(lines.filter((_, j) => j !== i))}
-                        disabled={lines.length === 1}
-                        className="mt-6 text-ink-400 hover:text-rose-600 disabled:opacity-30"
-                        aria-label="Remove line"
-                        title="Remove line"
-                      >
-                        ×
-                      </button>
-                    </div>
-                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                        <div className="col-span-2 sm:col-span-1">
+                          <span className="text-[11px] uppercase tracking-wider text-ink-500 block mb-1">SKU</span>
+                          <input
+                            value={l.itemSku}
+                            onChange={(e) => patchLine(i, { itemSku: e.target.value })}
+                            className={fieldCls}
+                            placeholder="DW-0050"
+                          />
+                        </div>
+                        <div>
+                          <span className="text-[11px] uppercase tracking-wider text-ink-500 block mb-1">Weight (g)</span>
+                          <input
+                            type="number"
+                            step="0.001"
+                            value={l.weightG}
+                            onChange={(e) => patchLine(i, { weightG: e.target.value })}
+                            className={fieldCls}
+                          />
+                        </div>
+                        <div>
+                          <span className="text-[11px] uppercase tracking-wider text-ink-500 block mb-1">Cost (₹)</span>
+                          <input
+                            type="number"
+                            step="0.01"
+                            value={l.costRupees}
+                            onChange={(e) => patchLine(i, { costRupees: e.target.value })}
+                            className={fieldCls}
+                          />
+                        </div>
+                        <div>
+                          <span className="text-[11px] uppercase tracking-wider text-ink-500 block mb-1">Qty</span>
+                          <input
+                            type="number"
+                            min="1"
+                            step="1"
+                            value={l.qty}
+                            onChange={(e) => patchLine(i, { qty: e.target.value })}
+                            className={fieldCls}
+                          />
+                        </div>
+                      </div>
                       <div>
-                        <span className="text-[11px] uppercase tracking-wider text-ink-500 block mb-1">SKU</span>
-                        <input
-                          value={l.itemSku}
-                          onChange={(e) => patchLine(i, { itemSku: e.target.value })}
-                          className={fieldCls}
-                          placeholder="DW-0050"
+                        <span className="text-[11px] uppercase tracking-wider text-ink-500 block mb-1">Purity</span>
+                        <PurityPicker
+                          value={l.purityCarat}
+                          metalType={lineMetal}
+                          onChange={(v) => patchLine(i, { purityCarat: v })}
                         />
                       </div>
-                      <div>
-                        <span className="text-[11px] uppercase tracking-wider text-ink-500 block mb-1">Weight (g)</span>
-                        <input
-                          type="number"
-                          step="0.001"
-                          value={l.weightG}
-                          onChange={(e) => patchLine(i, { weightG: e.target.value })}
-                          className={fieldCls}
-                        />
-                      </div>
-                      <div>
-                        <span className="text-[11px] uppercase tracking-wider text-ink-500 block mb-1">Cost (₹)</span>
-                        <input
-                          type="number"
-                          step="0.01"
-                          value={l.costRupees}
-                          onChange={(e) => patchLine(i, { costRupees: e.target.value })}
-                          className={fieldCls}
-                        />
-                      </div>
                     </div>
-                    <div>
-                      <span className="text-[11px] uppercase tracking-wider text-ink-500 block mb-1">Purity</span>
-                      <PurityPicker
-                        value={l.purityCarat}
-                        metalType={lineMetal}
-                        onChange={(v) => patchLine(i, { purityCarat: v })}
-                      />
-                    </div>
-                  </div>
-                );
-              })}
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                onClick={() =>
-                  setLines([
-                    ...lines,
-                    { categoryId: defaultCatId, itemSku: '', weightG: '', purityCarat: '22', costRupees: '' },
-                  ])
-                }
-              >
-                + Add line
-              </Button>
-            </div>
+                  );
+                })}
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() =>
+                    setLines([
+                      ...lines,
+                      { categoryId: defaultCatId, itemSku: '', weightG: '', purityCarat: '22', costRupees: '', qty: '1' },
+                    ])
+                  }
+                >
+                  + Add line manually
+                </Button>
+              </div>
 
-            <div className="flex items-center justify-between text-ink-700 border-t border-ink-100 pt-3">
-              <span className="text-eyebrow uppercase">Total</span>
-              <span className="font-mono text-lg">₹{total.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</span>
-            </div>
+              <div className="flex items-center justify-between text-ink-700 border-t border-ink-100 pt-3">
+                <span className="text-eyebrow uppercase">Total</span>
+                <span className="font-mono text-lg">₹{total.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</span>
+              </div>
 
-            <div className="flex gap-2">
-              <Button variant="outline" type="button" onClick={onClose} disabled={isLoading}>
-                Cancel
-              </Button>
-              <Button type="submit" className="flex-1" disabled={isLoading}>
-                {isLoading ? 'Creating…' : 'Create PO'}
-              </Button>
-            </div>
-          </form>
-        </SheetBody>
-      </SheetContent>
-    </Sheet>
+              <div className="flex gap-2">
+                <Button variant="outline" type="button" onClick={onClose} disabled={isLoading}>
+                  Cancel
+                </Button>
+                <Button type="submit" className="flex-1" disabled={isLoading}>
+                  {isLoading ? 'Creating…' : 'Create PO'}
+                </Button>
+              </div>
+            </form>
+          </SheetBody>
+        </SheetContent>
+      </Sheet>
+
+      <ItemPickerSheet
+        open={pickerOpen}
+        onClose={() => setPickerOpen(false)}
+        onAdd={handlePickerAdd}
+      />
+    </>
   );
 }
 
@@ -5041,6 +5321,7 @@ function ShopWiseInventoryTab(): JSX.Element {
                                     <th className="pb-1.5 text-right font-medium text-ink-400 uppercase tracking-wide text-[10px]">Weight</th>
                                     <th className="pb-1.5 text-left font-medium text-ink-400 uppercase tracking-wide text-[10px] pl-4">Purity</th>
                                     <th className="pb-1.5 text-left font-medium text-ink-400 uppercase tracking-wide text-[10px] pl-4">Status</th>
+                                    <th className="pb-1.5 text-right font-medium text-ink-400 uppercase tracking-wide text-[10px] pl-4">Qty</th>
                                     <th className="pb-1.5 text-right font-medium text-ink-400 uppercase tracking-wide text-[10px]">Cost</th>
                                   </tr>
                                 </thead>
@@ -5074,6 +5355,19 @@ function ShopWiseInventoryTab(): JSX.Element {
                                         >
                                           {item.status.replace('_', ' ').toLowerCase()}
                                         </Badge>
+                                      </td>
+                                      <td className="py-2 pl-4 text-right tabular-nums">
+                                        <span className={
+                                          item.isSerialized
+                                            ? 'text-ink-600'
+                                            : item.quantityOnHand <= 0
+                                              ? 'text-red-500 font-medium'
+                                              : item.quantityOnHand <= 2
+                                                ? 'text-amber-600 font-medium'
+                                                : 'text-ink-700 font-medium'
+                                        }>
+                                          {item.isSerialized ? 1 : item.quantityOnHand}
+                                        </span>
                                       </td>
                                       <td className="py-2 text-right text-ink-700 tabular-nums">
                                         <Money paise={item.costPricePaise} />

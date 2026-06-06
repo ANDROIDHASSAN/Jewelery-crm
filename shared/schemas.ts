@@ -437,6 +437,8 @@ export const PurchaseOrderItemInputSchema = z.object({
   weightMg: MgSchema,
   purity: PuritySchema,
   costPaise: PaiseSchema,
+  // qty > 1 → lot item on receive (isSerialized=false, quantityOnHand=quantity).
+  quantity: z.number().int().min(1).max(10000).default(1),
 });
 
 export const PurchaseOrderCreateSchema = z.object({

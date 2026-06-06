@@ -231,7 +231,7 @@ export const inventoryApi = baseApi.injectEndpoints({
       query: (id) => ({ url: `/inventory/collections/${id}`, method: 'DELETE' }),
       invalidatesTags: [{ type: 'Collection', id: 'LIST' }, { type: 'Item', id: 'LIST' }],
     }),
-    getCollectionItems: b.query<ApiList<Item>, string>({
+    listCollectionItems: b.query<ApiList<Item>, string>({
       query: (collectionId) => `/inventory/collections/${collectionId}/items`,
       providesTags: (_, __, collectionId) => [{ type: 'Item', id: collectionId }],
     }),
@@ -356,7 +356,7 @@ export const {
   useCreateCollectionMutation,
   useUpdateCollectionMutation,
   useDeleteCollectionMutation,
-  useGetCollectionItemsQuery,
+  useListCollectionItemsQuery,
   useAddItemsToCollectionMutation,
   useRemoveItemFromCollectionMutation,
   useLazyGetSkuSuggestionQuery,

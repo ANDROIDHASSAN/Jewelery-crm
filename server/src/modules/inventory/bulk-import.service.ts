@@ -323,26 +323,37 @@ export async function bulkImportItems(opts: {
     else errors.push(...out.errors);
   }
 
-  // Duplicate-SKU check across both the sheet itself and existing items.
-  const seenSkus = new Set<string>();
+  // Duplicate check: same (shopId, sku) pair is not allowed — both within the
+  // sheet and against existing items. Same SKU at different shops is allowed.
+  const seenShopSkus = new Set<string>();
   for (const r of validated) {
-    if (seenSkus.has(r.sku)) {
-      errors.push({ row: r.rowNum, column: 'sku', message: `Duplicate SKU "${r.sku}" in the sheet` });
+    const shopId = shopByName.get(r.shopName!.toLowerCase())!;
+    const key = `${shopId}::${r.sku}`;
+    if (seenShopSkus.has(key)) {
+      errors.push({ row: r.rowNum, column: 'sku', message: `Duplicate SKU "${r.sku}" for shop "${r.shopName}" in the sheet` });
     }
-    seenSkus.add(r.sku);
+    seenShopSkus.add(key);
   }
-  const existing = await rawPrisma.item.findMany({
-    where: { tenantId, sku: { in: [...seenSkus] } },
-    select: { sku: true },
-  });
-  const duplicates = existing.map((e) => e.sku);
-  if (duplicates.length > 0) {
+  const pairsToCheck = validated.map((r) => ({
+    sku: r.sku,
+    shopId: shopByName.get(r.shopName!.toLowerCase())!,
+  }));
+  const existingItems = pairsToCheck.length > 0
+    ? await rawPrisma.item.findMany({
+        where: { tenantId, OR: pairsToCheck },
+        select: { sku: true, shopId: true },
+      })
+    : [];
+  const duplicates = existingItems.map((e) => e.sku);
+  const existingKeys = new Set(existingItems.map((e) => `${e.shopId}::${e.sku}`));
+  if (existingKeys.size > 0) {
     for (const r of validated) {
-      if (duplicates.includes(r.sku)) {
+      const shopId = shopByName.get(r.shopName!.toLowerCase())!;
+      if (existingKeys.has(`${shopId}::${r.sku}`)) {
         errors.push({
           row: r.rowNum,
           column: 'sku',
-          message: `SKU "${r.sku}" already exists. Either edit the existing item or change the SKU.`,
+          message: `SKU "${r.sku}" already exists in shop "${r.shopName}". Edit the existing item or use a different SKU.`,
         });
       }
     }
@@ -380,11 +391,11 @@ export async function bulkImportItems(opts: {
       hallmarkRef: r.hallmarkRef ?? null,
     }));
     await tx.item.createMany({ data: dataRows });
-    // Also write a PURCHASE movement per item so stock history reflects
-    // the bulk import. We need ids — re-fetch by tenantId+sku since
-    // createMany doesn't return them.
+    // Re-fetch by (shopId, sku) pairs to get ids for ItemMovement records.
+    // createMany doesn't return inserted ids; filter by exact pairs so we
+    // don't pick up pre-existing rows if the same SKU exists in another shop.
     const inserted = await tx.item.findMany({
-      where: { tenantId, sku: { in: dataRows.map((d) => d.sku) } },
+      where: { tenantId, OR: dataRows.map((d) => ({ shopId: d.shopId, sku: d.sku })) },
       select: { id: true, shopId: true },
     });
     await tx.itemMovement.createMany({

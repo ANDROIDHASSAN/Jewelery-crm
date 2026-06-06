@@ -374,7 +374,7 @@ export async function addStock(
             .toUpperCase();
           sku = `${baseSku}-${suffix}`;
           const dupe = await tx.item.findUnique({
-            where: { tenantId_sku: { tenantId, sku } },
+            where: { tenantId_shopId_sku: { tenantId, shopId: item.shopId, sku } },
             select: { id: true },
           });
           if (!dupe) break;
@@ -858,7 +858,7 @@ export async function suggestSku(categoryId: string): Promise<{ sku: string; cod
   const prefix = parts.filter(Boolean).join('-') || 'SKU';
   // Count existing items whose SKU already starts with this prefix to derive
   // the next sequence number. Cheap + good enough; collisions are caught by the
-  // unique (tenantId, sku) constraint and the user can edit before saving.
+  // unique (tenantId, shopId, sku) constraint and the user can edit before saving.
   const count = await prisma.item.count({
     where: { sku: { startsWith: `${prefix}-` } },
   });
@@ -1122,6 +1122,7 @@ export async function createPurchaseOrder(input: PurchaseOrderCreate) {
           weightMg: i.weightMg,
           purity: i.purity,
           costPaise: i.costPaise,
+          quantity: i.quantity ?? 1,
         })),
       },
     },
@@ -1159,32 +1160,68 @@ export async function receivePurchaseOrder(
 
   const updated = await prisma.$transaction(async (tx) => {
     for (const line of po.items) {
-      // Make SKU unique per (tenant, sku) — append PO-line id suffix.
-      const sku = `${line.itemSku}-${line.id.slice(-6).toUpperCase()}`;
-      const item = await tx.item.create({
-        data: {
-          tenantId,
-          shopId,
-          categoryId: line.categoryId ?? categoryId,
-          sku,
-          barcodeData: sku,
-          weightMg: line.weightMg,
-          purityCaratX100: line.purity,
-          costPricePaise: line.costPaise,
-          hallmarkStatus: 'PENDING',
-          status: 'IN_STOCK',
-        },
+      const qty = (line as typeof line & { quantity?: number }).quantity ?? 1;
+      const sku = line.itemSku; // Use original SKU — no suffix needed (unique per tenant+shop)
+
+      // If the item already exists in this shop, add stock rather than creating
+      // a duplicate row. This mirrors the addStock flow so PO receive feels like
+      // a restock of known items instead of polluting inventory with renamed SKUs.
+      const existing = await tx.item.findUnique({
+        where: { tenantId_shopId_sku: { tenantId, shopId, sku } },
       });
-      await tx.itemMovement.create({
-        data: {
-          tenantId,
-          itemId: item.id,
-          toShopId: shopId,
-          type: 'PURCHASE',
-          reason: `Received PO ${poId.slice(-6).toUpperCase()}`,
-          performedByUserId: userId ?? null,
-        },
-      });
+
+      if (existing) {
+        await tx.item.update({
+          where: { id: existing.id },
+          data: {
+            quantityOnHand: { increment: qty },
+            // Upgrade to lot if receiving multiple units of a previously-serialized piece
+            isSerialized: qty > 1 ? false : existing.isSerialized,
+            status: 'IN_STOCK',
+          },
+        });
+        await tx.itemMovement.create({
+          data: {
+            tenantId,
+            itemId: existing.id,
+            toShopId: shopId,
+            type: 'PURCHASE',
+            qty,
+            reason: `Received PO ${poId.slice(-6).toUpperCase()}`,
+            performedByUserId: userId ?? null,
+          },
+        });
+      } else {
+        // Item doesn't exist yet — create it fresh with the original SKU.
+        const isLot = qty > 1;
+        const item = await tx.item.create({
+          data: {
+            tenantId,
+            shopId,
+            categoryId: line.categoryId ?? categoryId,
+            sku,
+            barcodeData: sku,
+            weightMg: line.weightMg,
+            purityCaratX100: line.purity,
+            costPricePaise: line.costPaise,
+            hallmarkStatus: 'PENDING',
+            status: 'IN_STOCK',
+            isSerialized: !isLot,
+            quantityOnHand: qty,
+          },
+        });
+        await tx.itemMovement.create({
+          data: {
+            tenantId,
+            itemId: item.id,
+            toShopId: shopId,
+            type: 'PURCHASE',
+            qty,
+            reason: `Received PO ${poId.slice(-6).toUpperCase()}`,
+            performedByUserId: userId ?? null,
+          },
+        });
+      }
     }
     return tx.purchaseOrder.update({
       where: { id: poId },

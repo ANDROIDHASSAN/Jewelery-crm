@@ -444,7 +444,7 @@ model Item {
   // mirrors a given inventory Item (one-to-one), so this is `Product?`.
   storefrontProduct Product?       @relation("ProductLinkedItem")
 
-  @@unique([tenantId, sku])
+  @@unique([tenantId, shopId, sku])
   @@index([tenantId])
   @@index([tenantId, shopId])
   @@index([tenantId, categoryId])
@@ -667,6 +667,8 @@ model PurchaseOrderItem {
   weightMg  Int
   purity    Int
   costPaise Int
+  // qty > 1 → lot item (isSerialized=false, quantityOnHand=quantity) on receive.
+  quantity  Int     @default(1)
 
   purchaseOrder PurchaseOrder @relation(fields: [poId], references: [id], onDelete: Cascade)
 

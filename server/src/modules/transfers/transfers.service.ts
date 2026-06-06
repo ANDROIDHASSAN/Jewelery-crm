@@ -322,6 +322,7 @@ export async function completeTransfer(id: string, userId?: string) {
       id: true, sku: true, name: true, isSerialized: true,
       categoryId: true, barcodeData: true, weightMg: true, purityCaratX100: true,
       stoneWeightMg: true, costPricePaise: true, makingChargeBps: true, images: true,
+      hallmarkStatus: true, quantityOnHand: true, status: true,
     },
   });
   const itemById = new Map(itemsNow.map((i) => [i.id, i] as const));
@@ -339,50 +340,62 @@ export async function completeTransfer(id: string, userId?: string) {
       });
     }
 
-    // Lot rows: the destination shop may or may not already have a row for
-    // this SKU. Convention: each (tenant, sku) is unique, so we can't simply
-    // duplicate the row. Strategy: find or create a *destination* Item row
-    // that mirrors the source SKU but lives at toShopId, and increment its
-    // quantityOnHand. The naming convention `{sku}@{toShopId.slice(-6)}` keeps
-    // SKUs distinct per shop without colliding with the source.
+    // Lot rows — two cases:
+    //
+    // A. Full transfer (source drained to 0 at approve time): move the source
+    //    row itself to the destination shop. Same SKU, no new row, no duplicate.
+    //
+    // B. Partial transfer (source still has remaining qty): source row stays at
+    //    the source shop. Find or create a destination lot row with the SAME SKU
+    //    (SKU is now unique per (tenant, shop), so no suffix needed).
     for (const line of transfer.lines) {
       const src = itemById.get(line.itemId);
       if (!src || src.isSerialized) continue;
-      const destSku = `${src.sku}@${transfer.toShopId.slice(-6).toUpperCase()}`;
-      const existing = await tx.item.findFirst({
-        where: { sku: destSku, shopId: transfer.toShopId },
-        select: { id: true },
-      });
-      if (existing) {
+
+      if (src.quantityOnHand === 0 || src.status === 'SOLD') {
+        // Full transfer — move the source row to destination in place.
         await tx.item.update({
-          where: { id: existing.id },
+          where: { id: src.id },
           data: {
-            quantityOnHand: { increment: line.quantity },
-            // Re-open the row if it had drained to zero previously.
+            shopId: transfer.toShopId,
+            quantityOnHand: line.quantity,
             status: 'IN_STOCK',
           },
         });
       } else {
-        await tx.item.create({
-          data: {
-            tenantId,
-            shopId: transfer.toShopId,
-            categoryId: src.categoryId,
-            sku: destSku,
-            barcodeData: destSku,
-            name: src.name,
-            images: src.images,
-            weightMg: src.weightMg,
-            purityCaratX100: src.purityCaratX100,
-            stoneWeightMg: src.stoneWeightMg,
-            costPricePaise: src.costPricePaise,
-            makingChargeBps: src.makingChargeBps,
-            hallmarkStatus: 'PENDING',
-            status: 'IN_STOCK',
-            isSerialized: false,
-            quantityOnHand: line.quantity,
-          },
+        // Partial transfer — source keeps remaining qty; find or create the
+        // destination lot row using the SAME SKU (now unique per shop, not tenant).
+        const existing = await tx.item.findUnique({
+          where: { tenantId_shopId_sku: { tenantId, shopId: transfer.toShopId, sku: src.sku } },
+          select: { id: true },
         });
+        if (existing) {
+          await tx.item.update({
+            where: { id: existing.id },
+            data: { quantityOnHand: { increment: line.quantity }, status: 'IN_STOCK' },
+          });
+        } else {
+          await tx.item.create({
+            data: {
+              tenantId,
+              shopId: transfer.toShopId,
+              categoryId: src.categoryId,
+              sku: src.sku,
+              barcodeData: src.barcodeData,
+              name: src.name,
+              images: src.images,
+              weightMg: src.weightMg,
+              purityCaratX100: src.purityCaratX100,
+              stoneWeightMg: src.stoneWeightMg,
+              costPricePaise: src.costPricePaise,
+              makingChargeBps: src.makingChargeBps,
+              hallmarkStatus: src.hallmarkStatus,
+              status: 'IN_STOCK',
+              isSerialized: false,
+              quantityOnHand: line.quantity,
+            },
+          });
+        }
       }
     }
 
