@@ -5,6 +5,7 @@ import { createApp } from './app.js';
 import { logger } from './lib/logger.js';
 import { syncPermissionCatalog, syncBuiltInRoles } from './lib/seed-permissions.js';
 import { pollMcxAndCache } from './lib/gold-rate.js';
+import { initializeMailer } from './lib/mailer.js';
 
 async function boot(): Promise<void> {
   // RBAC self-heal: ensure the Permission catalog and built-in roles match
@@ -16,6 +17,10 @@ async function boot(): Promise<void> {
   } catch (err) {
     logger.error({ err }, '[boot] RBAC sync failed (continuing)');
   }
+
+  // Initialize email transporter (Nodemailer with SMTP).
+  // Logs a warning if SMTP is not configured, but does not crash.
+  initializeMailer();
 
   // Loud warning if the admin-sentinel bypass is configured in production.
   // It's defence-disabled inside authMiddleware regardless, but its presence

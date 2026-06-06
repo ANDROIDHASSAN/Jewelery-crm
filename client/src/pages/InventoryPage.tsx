@@ -24,12 +24,13 @@ import {
   Globe,
   ChevronUp,
   ChevronDown,
+  ChevronRight,
   Sparkles,
   Trash2,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { uploadImageToCloudinary, isCloudinaryConfigured, cloudinaryThumb } from '@/lib/cloudinary';
-import type { Item } from '@goldos/shared/types';
+import type { Item, Collection } from '@goldos/shared/types';
 import {
   DIAMOND_SHAPES,
   DIAMOND_CUTS,
@@ -47,6 +48,9 @@ import {
   useCreateCollectionMutation,
   useUpdateCollectionMutation,
   useDeleteCollectionMutation,
+  useGetCollectionItemsQuery,
+  useAddItemsToCollectionMutation,
+  useRemoveItemFromCollectionMutation,
   useLazyGetSkuSuggestionQuery,
   useDeleteItemMutation,
   useCreateItemMutation,
@@ -84,6 +88,7 @@ import { cn } from '@/lib/cn';
 import { BulkImportModal } from '@/features/inventory/BulkImportModal';
 
 type Tab =
+  | 'shop-inventory'
   | 'items'
   | 'categories'
   | 'collections'
@@ -97,6 +102,7 @@ type Tab =
   | 'making-charges';
 
 const TABS: Array<{ id: Tab; label: string; icon: typeof Boxes }> = [
+  { id: 'shop-inventory', label: 'Shop-wise inventory', icon: Globe },
   { id: 'items', label: 'Items', icon: Boxes },
   { id: 'categories', label: 'Categories', icon: TagIcon },
   { id: 'collections', label: 'Collections', icon: Sparkles },
@@ -111,7 +117,7 @@ const TABS: Array<{ id: Tab; label: string; icon: typeof Boxes }> = [
 ];
 
 export function InventoryPage(): JSX.Element {
-  const [tab, setTab] = useState<Tab>('items');
+  const [tab, setTab] = useState<Tab>('shop-inventory');
   const tabItems: TabStripItem<Tab>[] = TABS.map((t) => ({ id: t.id, label: t.label, icon: t.icon }));
   return (
     <div className="space-y-5">
@@ -124,6 +130,7 @@ export function InventoryPage(): JSX.Element {
 
       <TabStrip<Tab> items={tabItems} value={tab} onChange={setTab} />
 
+      {tab === 'shop-inventory' && <ShopWiseInventoryTab />}
       {tab === 'items' && <ItemsTab />}
       {tab === 'categories' && <CategoriesTab />}
       {tab === 'collections' && <CollectionsManageTab />}
@@ -1260,6 +1267,8 @@ function CollectionsManageTab(): JSX.Element {
   const [del] = useDeleteCollectionMutation();
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
+  const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [addItemsOpen, setAddItemsOpen] = useState<string | null>(null);
   const collections = data?.data ?? [];
 
   const add = async (e: React.FormEvent): Promise<void> => {
@@ -1316,31 +1325,213 @@ function CollectionsManageTab(): JSX.Element {
       {collections.length > 0 && (
         <ul className="divide-y divide-ink-100 rounded-md border border-ink-100 bg-ink-0">
           {collections.map((c) => (
-            <li key={c.id} className="flex items-center justify-between gap-3 px-4 py-3">
-              <div className="min-w-0">
-                <input
-                  defaultValue={c.name}
-                  onBlur={(e) => {
-                    const v = e.target.value.trim();
-                    if (v && v !== c.name) void update({ id: c.id, patch: { name: v } }).unwrap().catch(() => toast.error('Rename failed'));
-                  }}
-                  className="text-sm text-ink-900 bg-transparent border-0 px-0 focus:ring-0 focus:outline-none focus:border-b focus:border-brand-400"
-                />
-                {c.description && <p className="text-[11px] text-ink-500">{c.description}</p>}
-              </div>
-              <button
-                type="button"
-                onClick={() => void remove(c.id, c.name)}
-                className="inline-flex items-center justify-center h-7 w-7 rounded-md text-ink-500 hover:bg-rose-50 hover:text-rose-600"
-                aria-label={`Delete ${c.name}`}
-                title="Delete"
-              >
-                <Trash2 className="h-3.5 w-3.5" />
-              </button>
-            </li>
+            <CollectionRow
+              key={c.id}
+              collection={c}
+              isExpanded={expandedId === c.id}
+              onExpandChange={(expanded) => setExpandedId(expanded ? c.id : null)}
+              onAddItems={() => setAddItemsOpen(c.id)}
+              onUpdate={update}
+              onDelete={() => void remove(c.id, c.name)}
+            />
           ))}
         </ul>
       )}
+      {addItemsOpen && <AddItemsModal collectionId={addItemsOpen} onClose={() => setAddItemsOpen(null)} />}
+    </div>
+  );
+}
+
+function CollectionRow({
+  collection,
+  isExpanded,
+  onExpandChange,
+  onAddItems,
+  onUpdate,
+  onDelete,
+}: {
+  collection: Collection;
+  isExpanded: boolean;
+  onExpandChange: (expanded: boolean) => void;
+  onAddItems: () => void;
+  onUpdate: ReturnType<typeof useUpdateCollectionMutation>[0];
+  onDelete: () => void;
+}): JSX.Element {
+  const { data: itemsData, isLoading: itemsLoading } = useGetCollectionItemsQuery(collection.id);
+
+  return (
+    <>
+      <li className="px-4 py-3">
+        <div className="flex items-center justify-between gap-3">
+          <button
+            type="button"
+            onClick={() => onExpandChange(!isExpanded)}
+            className="flex items-center gap-2 flex-1 text-left hover:opacity-75 transition-opacity"
+          >
+            <ChevronRight className={`h-4 w-4 transition-transform ${isExpanded ? 'rotate-90' : ''}`} />
+            <div className="min-w-0 flex-1">
+              <input
+                defaultValue={collection.name}
+                onBlur={(e) => {
+                  const v = e.target.value.trim();
+                  if (v && v !== collection.name) void onUpdate({ id: collection.id, patch: { name: v } }).catch(() => toast.error('Rename failed'));
+                }}
+                onClick={(e) => e.stopPropagation()}
+                className="text-sm text-ink-900 bg-transparent border-0 px-0 focus:ring-0 focus:outline-none focus:border-b focus:border-brand-400"
+              />
+              {collection.description && <p className="text-[11px] text-ink-500">{collection.description}</p>}
+            </div>
+          </button>
+          <div className="flex items-center gap-1">
+            <button
+              type="button"
+              onClick={() => onAddItems()}
+              className="inline-flex items-center justify-center h-7 w-7 rounded-md text-ink-500 hover:bg-brand-50 hover:text-brand-600"
+              aria-label="Add items"
+              title="Add items"
+            >
+              <Plus className="h-3.5 w-3.5" />
+            </button>
+            <button
+              type="button"
+              onClick={() => onDelete()}
+              className="inline-flex items-center justify-center h-7 w-7 rounded-md text-ink-500 hover:bg-rose-50 hover:text-rose-600"
+              aria-label={`Delete ${collection.name}`}
+              title="Delete"
+            >
+              <Trash2 className="h-3.5 w-3.5" />
+            </button>
+          </div>
+        </div>
+      </li>
+      {isExpanded && (
+        <li className="bg-ink-50 px-4 py-3 border-t border-ink-100">
+          {itemsLoading && <p className="text-sm text-ink-500">Loading items…</p>}
+          {!itemsLoading && (itemsData?.data ?? []).length === 0 && <p className="text-sm text-ink-400">No items in this collection</p>}
+          {!itemsLoading && (itemsData?.data ?? []).length > 0 && (
+            <CollectionItemsList collectionId={collection.id} items={itemsData?.data ?? []} />
+          )}
+        </li>
+      )}
+    </>
+  );
+}
+
+function CollectionItemsList({ collectionId, items }: { collectionId: string; items: Item[] }): JSX.Element {
+  const [removeItem] = useRemoveItemFromCollectionMutation();
+
+  const handleRemove = async (itemId: string, itemName: string): Promise<void> => {
+    if (!window.confirm(`Remove "${itemName}" from this collection?`)) return;
+    try {
+      await removeItem({ collectionId, itemId }).unwrap();
+      toast.success(`Removed item`);
+    } catch {
+      toast.error('Could not remove item');
+    }
+  };
+
+  return (
+    <ul className="space-y-2">
+      {items.map((item) => (
+        <li key={item.id} className="flex items-center justify-between gap-3 p-2 bg-white rounded border border-ink-100">
+          <div className="min-w-0 flex-1">
+            <p className="text-sm text-ink-900 truncate">{item.name ?? 'Unknown'}</p>
+            <p className="text-xs text-ink-500">{item.sku}</p>
+          </div>
+          <button
+            type="button"
+            onClick={() => void handleRemove(item.id, item.name ?? 'Unknown')}
+            className="inline-flex items-center justify-center h-6 w-6 rounded-md text-ink-400 hover:bg-rose-50 hover:text-rose-600"
+            aria-label={`Remove ${item.name ?? 'Unknown'}`}
+            title="Remove"
+          >
+            <X className="h-3.5 w-3.5" />
+          </button>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+function AddItemsModal({ collectionId, onClose }: { collectionId: string; onClose: () => void }): JSX.Element {
+  const { data: allItems } = useGetItemsQuery({});
+  const [addItems, { isLoading: adding }] = useAddItemsToCollectionMutation();
+  const [selectedItemIds, setSelectedItemIds] = useState<Set<string>>(new Set());
+  const [searchTerm, setSearchTerm] = useState('');
+
+  const items = (allItems?.data ?? []).filter((item) =>
+    (item.name ?? '').toLowerCase().includes(searchTerm.toLowerCase()) || (item.sku ?? '').toLowerCase().includes(searchTerm.toLowerCase()),
+  );
+
+  const handleAddItems = async (): Promise<void> => {
+    if (selectedItemIds.size === 0) return void toast.error('Select at least one item');
+    try {
+      await addItems({ collectionId, itemIds: Array.from(selectedItemIds) }).unwrap();
+      toast.success(`Added ${selectedItemIds.size} item(s)`);
+      onClose();
+    } catch (err) {
+      const msg = (err as { data?: { error?: { message?: string } } }).data?.error?.message ?? 'Could not add items';
+      toast.error(msg);
+    }
+  };
+
+  const toggleItem = (itemId: string): void => {
+    const newSet = new Set(selectedItemIds);
+    if (newSet.has(itemId)) {
+      newSet.delete(itemId);
+    } else {
+      newSet.add(itemId);
+    }
+    setSelectedItemIds(newSet);
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+      <div className="bg-white rounded-lg shadow-lg w-full max-w-md max-h-[80vh] flex flex-col">
+        <div className="flex items-center justify-between p-4 border-b border-ink-100">
+          <h3 className="text-base font-semibold text-ink-900">Add items to collection</h3>
+          <button type="button" onClick={onClose} className="text-ink-400 hover:text-ink-600">
+            <X className="h-5 w-5" />
+          </button>
+        </div>
+
+        <div className="flex-1 overflow-y-auto p-4 space-y-3">
+          <input
+            type="text"
+            placeholder="Search by name or SKU…"
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+            className={fieldCls}
+          />
+          {items.length === 0 && <p className="text-sm text-ink-500 text-center py-4">No items found</p>}
+          {items.map((item) => (
+            <label key={item.id} className="flex items-center gap-3 p-2 hover:bg-ink-50 rounded cursor-pointer">
+              <input
+                type="checkbox"
+                checked={selectedItemIds.has(item.id)}
+                onChange={() => toggleItem(item.id)}
+                className="h-4 w-4 rounded border-ink-300 text-brand-600 focus:ring-brand-500"
+              />
+              <div className="min-w-0 flex-1">
+                <p className="text-sm text-ink-900 truncate">{item.name ?? 'Unknown'}</p>
+                <p className="text-xs text-ink-500">{item.sku ?? 'N/A'}</p>
+              </div>
+            </label>
+          ))}
+        </div>
+
+        <div className="flex items-center justify-between gap-2 p-4 border-t border-ink-100">
+          <p className="text-xs text-ink-500">{selectedItemIds.size} selected</p>
+          <div className="flex gap-2">
+            <Button variant="secondary" onClick={onClose} disabled={adding}>
+              Cancel
+            </Button>
+            <Button onClick={() => void handleAddItems()} disabled={adding || selectedItemIds.size === 0}>
+              {adding ? 'Adding…' : 'Add'}
+            </Button>
+          </div>
+        </div>
+      </div>
     </div>
   );
 }
@@ -4657,5 +4848,252 @@ function DistributeStockDialog({
         </SheetBody>
       </SheetContent>
     </Sheet>
+  );
+}
+
+// ----------------------------------------------------------------------------
+// Shop-wise inventory tab — hierarchical view by Shop → Main Category → Sub Category → Items.
+
+function ShopWiseInventoryTab(): JSX.Element {
+  const { data: itemsRes, isLoading: itemsLoading } = useGetItemsQuery({ cursor: undefined, limit: 500 });
+  const { data: shopsRes } = useGetShopsQuery();
+  const { data: catRes } = useGetCategoriesQuery();
+
+  const shops = shopsRes?.data ?? [];
+  const allItems = (itemsRes?.data ?? []) as Item[];
+  const cats = (catRes?.data ?? []) as CategoryRow[];
+
+  const [selectedShopId, setSelectedShopId] = useState<string>('');
+  const [expandedMainCats, setExpandedMainCats] = useState<Set<string>>(new Set());
+  const [expandedSubCats, setExpandedSubCats] = useState<Set<string>>(new Set());
+
+  // Auto-select first shop once data arrives
+  useEffect(() => {
+    if (shops.length > 0 && !selectedShopId) {
+      setSelectedShopId(shops[0]!.id);
+    }
+  }, [shops, selectedShopId]);
+
+  const byId = useMemo(() => new Map(cats.map((c) => [c.id, c])), [cats]);
+
+  const categoryMetalById = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const c of cats) {
+      const main = c.parentId ? byId.get(c.parentId) : c;
+      map.set(c.id, (main ?? c).metalType ?? '');
+    }
+    return map;
+  }, [cats, byId]);
+
+  const shopItems = useMemo(
+    () => (selectedShopId ? allItems.filter((i) => i.shopId === selectedShopId) : allItems),
+    [allItems, selectedShopId],
+  );
+
+  // Group by Main Category → Sub Category
+  const grouped = useMemo(() => {
+    const map = new Map<string, Map<string, Item[]>>();
+    for (const item of shopItems) {
+      const itemCat = byId.get(item.categoryId);
+      const mainCatId = itemCat?.parentId ?? item.categoryId;
+      if (!map.has(mainCatId)) map.set(mainCatId, new Map());
+      const bySub = map.get(mainCatId)!;
+      if (!bySub.has(item.categoryId)) bySub.set(item.categoryId, []);
+      bySub.get(item.categoryId)!.push(item);
+    }
+    return map;
+  }, [shopItems, byId]);
+
+  const totalWeightMg = useMemo(() => shopItems.reduce((s, i) => s + i.weightMg, 0), [shopItems]);
+
+  const toggleMainCat = (id: string) =>
+    setExpandedMainCats((prev) => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
+
+  const toggleSubCat = (id: string) =>
+    setExpandedSubCats((prev) => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
+
+  if (itemsLoading) return <TableSkeleton rows={6} columns={5} />;
+
+  if (shops.length === 0) {
+    return (
+      <EmptyState
+        eyebrow="No shops yet"
+        title="Add shops to see inventory breakdown"
+        body="Create your first shop in Settings before viewing shop-wise inventory."
+      />
+    );
+  }
+
+  return (
+    <div className="space-y-4">
+      {/* Toolbar: shop selector + stats */}
+      <Toolbar>
+        <div className="flex items-center gap-2">
+          <label className="text-sm text-ink-500 whitespace-nowrap">Shop</label>
+          <div className="relative">
+            <select
+              value={selectedShopId}
+              onChange={(e) => {
+                setSelectedShopId(e.target.value);
+                setExpandedMainCats(new Set());
+                setExpandedSubCats(new Set());
+              }}
+              className="h-8 pl-3 pr-8 text-sm border border-ink-200 rounded-md bg-white text-ink-900 focus:outline-none focus:ring-2 focus:ring-gold-400 appearance-none cursor-pointer min-w-[200px]"
+            >
+              {shops.map((s) => (
+                <option key={s.id} value={s.id}>{s.name}</option>
+              ))}
+            </select>
+            <ChevronDown className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-ink-400" />
+          </div>
+        </div>
+        <div className="flex items-center gap-2">
+          <StatPill>{shopItems.length} item{shopItems.length === 1 ? '' : 's'}</StatPill>
+          {shopItems.length > 0 && (
+            <StatPill><Weight mg={totalWeightMg} /></StatPill>
+          )}
+        </div>
+      </Toolbar>
+
+      {/* Empty shop */}
+      {shopItems.length === 0 && (
+        <EmptyState
+          eyebrow={shops.find((s) => s.id === selectedShopId)?.name ?? 'This shop'}
+          title="No inventory in this shop"
+          body="Items added or transferred to this shop will appear here."
+        />
+      )}
+
+      {/* Main Category → Sub Category → Items table */}
+      {grouped.size > 0 && (
+        <div className="border border-ink-100 rounded-lg overflow-hidden divide-y divide-ink-100">
+          {Array.from(grouped.entries()).map(([mainCatId, bySub]) => {
+            const mainCat = byId.get(mainCatId);
+            const isExpanded = expandedMainCats.has(mainCatId);
+            const allInMain = Array.from(bySub.values()).flat();
+            const mainWeightMg = allInMain.reduce((s, i) => s + i.weightMg, 0);
+
+            return (
+              <div key={mainCatId}>
+                {/* Main category header */}
+                <button
+                  onClick={() => toggleMainCat(mainCatId)}
+                  className="w-full px-4 py-3 flex items-center gap-3 bg-ink-25 hover:bg-ink-50 transition-colors text-left"
+                >
+                  <ChevronRight
+                    className={`h-4 w-4 text-ink-400 transition-transform shrink-0 ${isExpanded ? 'rotate-90' : ''}`}
+                  />
+                  <span className="font-semibold text-sm text-ink-800 flex-1">
+                    {mainCat?.name ?? mainCatId.slice(-6)}
+                  </span>
+                  <span className="text-xs text-ink-400 mr-3">
+                    {allInMain.length} item{allInMain.length === 1 ? '' : 's'}
+                    {' · '}
+                    <Weight mg={mainWeightMg} />
+                  </span>
+                  <Badge tone="neutral">{allInMain.length}</Badge>
+                </button>
+
+                {/* Sub-categories */}
+                {isExpanded && (
+                  <div className="divide-y divide-ink-100">
+                    {Array.from(bySub.entries()).map(([subCatId, itemList]) => {
+                      const subCat = byId.get(subCatId);
+                      const isSubExpanded = expandedSubCats.has(subCatId);
+                      const subWeightMg = itemList.reduce((s, i) => s + i.weightMg, 0);
+                      const subLabel =
+                        subCatId === mainCatId
+                          ? (mainCat?.name ?? '—')
+                          : (subCat?.name ?? '—');
+
+                      return (
+                        <div key={subCatId} className="bg-white">
+                          <button
+                            onClick={() => toggleSubCat(subCatId)}
+                            className="w-full px-6 py-2.5 flex items-center gap-3 hover:bg-ink-25 transition-colors text-left"
+                          >
+                            <ChevronRight
+                              className={`h-3.5 w-3.5 text-ink-300 transition-transform shrink-0 ${isSubExpanded ? 'rotate-90' : ''}`}
+                            />
+                            <span className="text-sm text-ink-700 flex-1">{subLabel}</span>
+                            <span className="text-xs text-ink-400 mr-1">
+                              {itemList.length} item{itemList.length === 1 ? '' : 's'}
+                              {' · '}
+                              <Weight mg={subWeightMg} />
+                            </span>
+                          </button>
+
+                          {/* Items table */}
+                          {isSubExpanded && (
+                            <div className="px-6 pb-3 pt-1">
+                              <table className="w-full text-xs">
+                                <thead>
+                                  <tr className="border-b border-ink-100">
+                                    <th className="pb-1.5 text-left font-medium text-ink-400 uppercase tracking-wide text-[10px]">SKU</th>
+                                    <th className="pb-1.5 text-right font-medium text-ink-400 uppercase tracking-wide text-[10px]">Weight</th>
+                                    <th className="pb-1.5 text-left font-medium text-ink-400 uppercase tracking-wide text-[10px] pl-4">Purity</th>
+                                    <th className="pb-1.5 text-left font-medium text-ink-400 uppercase tracking-wide text-[10px] pl-4">Status</th>
+                                    <th className="pb-1.5 text-right font-medium text-ink-400 uppercase tracking-wide text-[10px]">Cost</th>
+                                  </tr>
+                                </thead>
+                                <tbody className="divide-y divide-ink-50">
+                                  {itemList.map((item) => (
+                                    <tr key={item.id} className="hover:bg-ink-25 transition-colors">
+                                      <td className="py-2 font-mono text-ink-900">
+                                        {item.sku}
+                                        {item.name && (
+                                          <span className="ml-1.5 font-sans text-ink-400 not-italic">{item.name}</span>
+                                        )}
+                                      </td>
+                                      <td className="py-2 text-right text-ink-700 tabular-nums">
+                                        <Weight mg={item.weightMg} />
+                                      </td>
+                                      <td className="py-2 pl-4">
+                                        <Purity
+                                          x100={item.purityCaratX100}
+                                          metalType={categoryMetalById.get(item.categoryId)}
+                                        />
+                                      </td>
+                                      <td className="py-2 pl-4">
+                                        <Badge
+                                          tone={
+                                            item.status === 'IN_STOCK'
+                                              ? 'success'
+                                              : item.status === 'SOLD'
+                                                ? 'neutral'
+                                                : 'info'
+                                          }
+                                        >
+                                          {item.status.replace('_', ' ').toLowerCase()}
+                                        </Badge>
+                                      </td>
+                                      <td className="py-2 text-right text-ink-700 tabular-nums">
+                                        <Money paise={item.costPricePaise} />
+                                      </td>
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
   );
 }

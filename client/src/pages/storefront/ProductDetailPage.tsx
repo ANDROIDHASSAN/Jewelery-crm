@@ -83,6 +83,14 @@ export function ProductDetailPage(): JSX.Element {
   const purityK = product.purityCaratX100 / 100;
   const purity = `${purityK}K · BIS Hallmarked`;
 
+  // Determine if this product is gold-based. Only GOLD and DIAMOND items
+  // use the gold rate for valuation. Silver, Stainless Steel, Platinum and
+  // Other metals must NOT use the gold rate — this was the root cause of the
+  // Tone Necklace (STAINLESS_STEEL) being priced using the silver rate but
+  // labelled as "Gold value".
+  const isGold = product.metalType === 'GOLD' || product.metalType === 'DIAMOND' || product.metalType === null;
+  const isSilver = product.metalType === 'SILVER';
+
   // Resolve a per-gram rate from the live feed. Strategy:
   //   1. If the feed has an entry matching this piece's exact purity
   //      (silver → purity=0, 14K → 1400, 18K → 1800, 22K → 2200, 24K → 2400),
@@ -95,33 +103,67 @@ export function ProductDetailPage(): JSX.Element {
   const findRate = (p: number): number | undefined =>
     liveRate?.rates.find((r) => r.purity === p)?.ratePerGramPaise;
   const live22 = findRate(2200);
+  const liveSilver = findRate(0); // purity=0 is the silver canonical
   const exactRate = findRate(product.purityCaratX100);
-  const ratePerGramPaise =
-    exactRate ?? live22 ?? FALLBACK_RATE_PER_GRAM_22K_PAISE;
-  // The per-gram rate displayed in the pill + breakdown — always the rate
-  // we actually multiplied by, so the label and the maths agree.
-  const displayRatePerGramPaise = exactRate ?? ratePerGramPaise;
-  const goldValuePaise = exactRate
-    ? Math.round((product.weightMg * exactRate) / 1000)
-    : Math.round(
-        (product.weightMg * ratePerGramPaise * product.purityCaratX100) /
-          (1000 * 2200),
-      );
-  const gold = goldValuePaise;
-  const making = Math.round((gold * product.makingChargeBps) / 10000);
+
+  // Metal value calculation — gated on metal type.
+  // Gold/Diamond: use gold rate (exact match or 22K-scaled). Default for
+  //   legacy products without a metalType (backwards compatibility).
+  // Silver: use the silver (purity=0) rate from the feed.
+  // Stainless Steel / Platinum / Other: no live-rate metal component;
+  //   basePricePaise already captures the fixed cost.
+  let metalValuePaise = 0;
+  let displayRatePerGramPaise = 0;
+  let ratePerGramPaise = 0;
+
+  if (isGold) {
+    ratePerGramPaise = exactRate ?? live22 ?? FALLBACK_RATE_PER_GRAM_22K_PAISE;
+    displayRatePerGramPaise = exactRate ?? ratePerGramPaise;
+    metalValuePaise = exactRate
+      ? Math.round((product.weightMg * exactRate) / 1000)
+      : Math.round(
+          (product.weightMg * ratePerGramPaise * product.purityCaratX100) /
+            (1000 * 2200),
+        );
+  } else if (isSilver) {
+    ratePerGramPaise = liveSilver ?? 0;
+    displayRatePerGramPaise = ratePerGramPaise;
+    metalValuePaise = Math.round((product.weightMg * ratePerGramPaise) / 1000);
+  } else {
+    // For Stainless Steel / Platinum / Other: basePricePaise is the actual 
+    // cost set for the item.
+    metalValuePaise = product.basePricePaise;
+  }
+
+  const gold = metalValuePaise; // kept as `gold` for downstream compatibility
+
+  // Making charges — respect the item-level mode (PERCENTAGE or PER_GRAM).
+  // PERCENTAGE: bps × metalValue / 10000 (e.g. 12% of gold value)
+  // PER_GRAM:   perGramPaise × weightG (flat ₹/g regardless of metal rate)
+  // If metalType is non-precious (no metalValuePaise), making charges are
+  // per-gram only since there is no metal value to take a percentage of.
+  let making = 0;
+  if (product.makingChargeMode === 'PER_GRAM' && product.makingChargePerGramPaise != null) {
+    making = Math.round((product.makingChargePerGramPaise * product.weightMg) / 1000);
+  } else if (product.makingChargeBps > 0 && gold > 0) {
+    // PERCENTAGE mode (default) — percentage of gold/silver metal value
+    making = Math.round((gold * product.makingChargeBps) / 10000);
+  }
+
   const subtotal = gold + making + product.stoneChargePaise;
   const gst = Math.round((subtotal * GST_BPS) / 10000);
   const total = subtotal + gst;
 
-  // Human label for the pill — "22K", "18K", "Silver", "Pt 950", or the
-  // exact carat for custom alloys. 0 = silver canonical; 9500 = Pt 950;
-  // any positive value <= 2400 is gold carat × 100 (including 9K = 900).
+  // Human label for the pill — "22K", "18K", "Silver", "Stainless Steel", "Pt 950", or the
+  // exact carat for custom alloys.
   const purityLabelShort =
-    product.purityCaratX100 === 0
-      ? 'Silver'
-      : product.purityCaratX100 === 9500
-        ? 'Pt 950'
-        : `${Number.isInteger(purityK) ? purityK.toFixed(0) : purityK.toFixed(1)}K`;
+    product.metalType === 'STAINLESS_STEEL'
+      ? 'Stainless Steel'
+      : product.metalType === 'SILVER' || product.purityCaratX100 === 0
+        ? 'Silver'
+        : product.purityCaratX100 === 9500
+          ? 'Pt 950'
+          : `${Number.isInteger(purityK) ? purityK.toFixed(0) : purityK.toFixed(1)}K`;
   // "Updated 4:12 PM IST" — null until the live feed lands, in which case
   // we hide the "Updated …" portion rather than showing a fake time.
   const rateUpdatedLabel = liveRate
@@ -192,9 +234,10 @@ export function ProductDetailPage(): JSX.Element {
             <span className="text-xs text-ink-500">Incl. of all taxes</span>
           </div>
 
-          {/* Today's rate pill — driven by the live /website/gold-rate feed.
-              Falls back to "loading" copy while the first poll resolves so
-              the page never shows a fake timestamp. */}
+          {/* Today's rate pill — only shown for gold/silver items with a live
+              rate feed. Non-precious metals (Stainless Steel etc.) have a fixed
+              cost price so no live rate applies. */}
+          {(isGold || isSilver) && displayRatePerGramPaise > 0 && (
           <div
             className={cn(
               'inline-flex flex-wrap items-center gap-x-1.5 gap-y-1 px-3 py-1.5 rounded-full text-xs font-mono tabular-nums',
@@ -219,25 +262,31 @@ export function ProductDetailPage(): JSX.Element {
               </span>
             )}
           </div>
+          )}
 
-          {/* Transparent price breakdown — Bluestone-grade. */}
+          {/* Transparent price breakdown. Only shown for gold/silver items
+              where a live rate drives the total. Non-precious metals (Stainless
+              Steel, Other) use basePricePaise as the fixed price — no breakdown. */}
+          {(isGold || isSilver) && (
           <div className="rounded-md border border-[#EFE0D2] bg-ink-0 p-4 sm:p-5 space-y-2.5 text-sm">
             <p className="text-eyebrow uppercase text-brand-700">Price breakdown</p>
             <Row
               label={
-                exactRate
-                  ? `Gold value · ${weightG.toFixed(2)} g × ₹${(displayRatePerGramPaise / 100).toLocaleString('en-IN')}/g`
-                  : `Gold value · ${weightG.toFixed(2)} g × ₹${(ratePerGramPaise / 100).toLocaleString('en-IN')}/g (22K) × ${purityK}/22`
+                isGold
+                  ? (exactRate
+                    ? `Gold value · ${weightG.toFixed(2)} g × ₹${(displayRatePerGramPaise / 100).toLocaleString('en-IN')}/g`
+                    : `Gold value · ${weightG.toFixed(2)} g × ₹${(ratePerGramPaise / 100).toLocaleString('en-IN')}/g (22K) × ${purityK}/22`)
+                  : `Silver value · ${weightG.toFixed(2)} g × ₹${(displayRatePerGramPaise / 100).toLocaleString('en-IN')}/g`
               }
               value={<Money paise={gold} />}
             />
-            <Row label="Making charges" value={<Money paise={making} />} />
             <Row label="GST (3%)" value={<Money paise={gst} />} />
             <div className="border-t border-ink-100 pt-2.5 flex items-center justify-between">
               <span className="text-ink-900 font-medium">Total</span>
               <Money paise={total} className="text-ink-900 font-medium font-mono tabular-nums" />
             </div>
           </div>
+          )}
 
           {/* Size */}
           <div>
@@ -421,7 +470,7 @@ export function ProductDetailPage(): JSX.Element {
             >
               <dl className="grid grid-cols-2 gap-y-2 text-sm">
                 <dt className="text-ink-500">SKU</dt>
-                <dd className="text-ink-800 font-mono text-xs">{product.slug}</dd>
+                <dd className="text-ink-800 font-mono text-xs">{product.sku ?? product.slug}</dd>
                 <dt className="text-ink-500">Gross weight</dt>
                 <dd className="text-ink-800 tabular-nums">{weightG.toFixed(2)} g</dd>
                 <dt className="text-ink-500">Metal</dt>

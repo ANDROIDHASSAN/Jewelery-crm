@@ -22,6 +22,9 @@ import crypto from 'node:crypto';
 import { rawPrisma } from '../../lib/prisma.js';
 import { hashPassword } from '../auth/password.js';
 import { BusinessRuleError, NotFoundError, UnauthorizedError } from '../../lib/errors.js';
+import { sendEmail, getInvitationEmailHTML, getWelcomeEmailHTML } from '../../lib/mailer.js';
+import { logger } from '../../lib/logger.js';
+import { env } from '../../env.js';
 
 const INVITATION_TTL_DAYS = 7;
 
@@ -42,6 +45,7 @@ export interface CreateInvitationInput {
   roleId: string;
   shopId?: string | null;
   invitedByUserId: string | null;
+  sendEmail?: boolean; // default: true
 }
 
 export async function createInvitation(input: CreateInvitationInput): Promise<{
@@ -104,7 +108,38 @@ export async function createInvitation(input: CreateInvitationInput): Promise<{
       expiresAt,
       invitedByUserId: input.invitedByUserId,
     },
+    include: {
+      role: { select: { name: true } },
+      tenant: { select: { businessName: true } },
+    },
   });
+
+  // Send invitation email if enabled (default: true)
+  if (input.sendEmail !== false) {
+    const invitationLink = `${env.APP_BASE_URL}/accept-invitation/${plaintext}`;
+
+    const emailHTML = getInvitationEmailHTML({
+      recipientName: input.name,
+      invitationLink,
+      tenantName: created.tenant.businessName,
+      roleName: created.role.name,
+      expiresInDays: INVITATION_TTL_DAYS,
+    });
+
+    const sent = await sendEmail({
+      to: email,
+      subject: `You're invited to join ${created.tenant.businessName} on Zehlora`,
+      html: emailHTML,
+      text: `You've been invited to join ${created.tenant.businessName}. Click here to accept: ${invitationLink}`,
+    });
+
+    if (!sent) {
+      logger.warn(
+        { tenantId: input.tenantId, email, invitationId: created.id },
+        'Invitation created but email could not be sent (SMTP may not be configured)',
+      );
+    }
+  }
 
   return { invitationId: created.id, tokenPlaintext: plaintext, expiresAt };
 }
@@ -247,12 +282,37 @@ export async function acceptInvitation(input: AcceptInvitationInput): Promise<Ac
         isActive: true,
         createdByUserId: inv.invitedByUserId,
       },
+      include: {
+        tenant: { select: { businessName: true } },
+      },
     });
 
     await tx.userInvitation.update({
       where: { id: inv.id },
       data: { acceptedAt: new Date(), acceptedUserId: user.id },
     });
+
+    // Send welcome email after successful signup
+    const welcomeUrl = `${env.APP_BASE_URL}/dashboard`;
+    const emailHTML = getWelcomeEmailHTML({
+      recipientName: input.name.trim() || inv.name,
+      tenantName: user.tenant.businessName,
+      dashboardUrl: welcomeUrl,
+    });
+
+    const sent = await sendEmail({
+      to: inv.email,
+      subject: `Welcome to Zehlora - ${user.tenant.businessName}`,
+      html: emailHTML,
+      text: `Welcome to Zehlora! Go to ${welcomeUrl} to start using your account.`,
+    });
+
+    if (!sent) {
+      logger.warn(
+        { tenantId: inv.tenantId, email: inv.email, userId: user.id },
+        'Invitation accepted but welcome email could not be sent (SMTP may not be configured)',
+      );
+    }
 
     return { userId: user.id, tenantId: inv.tenantId, email: inv.email };
   });

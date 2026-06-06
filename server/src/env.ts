@@ -69,6 +69,17 @@ const EnvSchema = z.object({
   // production so images go to your Cloudinary instead of bloating the DB.
   CLOUDINARY_URL: z.string().optional().default(''),
 
+  // Email (SMTP)
+  SMTP_HOST: z.string().optional().default(''),
+  SMTP_PORT: z.coerce.number().optional().default(465),
+  SMTP_USER: z.string().optional().default(''),
+  SMTP_PASSWORD: z.string().optional().default(''),
+  SMTP_FROM_EMAIL: z.string().optional().default(''),
+  SMTP_FROM_NAME: z.string().optional().default('Zehlora'),
+  // Base URL for email links (invitations, password reset, etc.)
+  // Dev: http://localhost:3000, Prod: https://app.yourdomain.com
+  APP_BASE_URL: z.string().url().optional().default('http://localhost:3000'),
+
   SENTRY_DSN: z.string().optional().default(''),
 });
 

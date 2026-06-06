@@ -11,6 +11,8 @@ import { z } from 'zod';
 import * as svc from './inventory.service.js';
 import { bulkImportItems, bulkImportTemplate } from './bulk-import.service.js';
 import { requirePermission, requireAnyPermission } from '../../middleware/require-permission.js';
+import { prisma } from '../../lib/prisma.js';
+import { getTenantId } from '../../lib/async-context.js';
 
 export const inventoryRouter: Router = Router();
 
@@ -34,7 +36,7 @@ const ListQuery = z.object({
   shopId: z.string().optional(),
   categoryId: z.string().optional(),
   cursor: z.string().optional(),
-  limit: z.coerce.number().int().positive().max(100).optional(),
+  limit: z.coerce.number().int().positive().max(500).optional(),
 });
 
 inventoryRouter.get('/items', async (req, res, next) => {
@@ -305,6 +307,110 @@ inventoryRouter.delete('/collections/:id', requirePermission('inventory.delete')
     next(err);
   }
 });
+
+// Get items in a collection
+inventoryRouter.get('/collections/:collectionId/items', async (req, res, next) => {
+  try {
+    const collectionId = req.params['collectionId']!;
+    const items = await prisma.itemCollection.findMany({
+      where: { collectionId },
+      include: {
+        item: {
+          select: {
+            id: true,
+            sku: true,
+            name: true,
+            images: true,
+            weightMg: true,
+            purityCaratX100: true,
+            status: true,
+          },
+        },
+      },
+      orderBy: { item: { createdAt: 'desc' } },
+    });
+    const itemsWithDetails = items.map((ic) => ({
+      id: ic.item.id,
+      sku: ic.item.sku,
+      name: ic.item.name,
+      images: ic.item.images,
+      weightMg: ic.item.weightMg,
+      purityCaratX100: ic.item.purityCaratX100,
+      status: ic.item.status,
+    }));
+    res.json({ data: itemsWithDetails, page: { hasMore: false } });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Add items to a collection
+inventoryRouter.post(
+  '/collections/:collectionId/items',
+  requirePermission('inventory.write'),
+  async (req, res, next) => {
+    try {
+      const collectionId = req.params['collectionId']!;
+      const { itemIds } = z.object({ itemIds: z.array(z.string().min(1)) }).parse(req.body);
+
+      // Check collection exists
+      const collection = await prisma.collection.findUnique({ where: { id: collectionId } });
+      if (!collection) {
+        res.status(404).json({ error: { message: 'Collection not found' } });
+        return;
+      }
+
+      const tenantId = getTenantId();
+      if (!tenantId) throw new Error('tenantId missing');
+
+      // Create ItemCollection entries, skipping duplicates
+      const created = [];
+      for (const itemId of itemIds) {
+        const existing = await prisma.itemCollection.findUnique({
+          where: { itemId_collectionId: { itemId, collectionId } },
+        });
+        if (!existing) {
+          const ic = await prisma.itemCollection.create({
+            data: { tenantId, itemId, collectionId },
+            include: { item: { select: { sku: true, name: true } } },
+          });
+          created.push(ic);
+        }
+      }
+
+      res.status(201).json({
+        data: {
+          message: `Added ${created.length} items to collection`,
+          added: created.length,
+          skipped: itemIds.length - created.length,
+        },
+      });
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+// Remove item from collection
+inventoryRouter.delete(
+  '/collections/:collectionId/items/:itemId',
+  requirePermission('inventory.write'),
+  async (req, res, next) => {
+    try {
+      const { collectionId, itemId } = req.params;
+      await prisma.itemCollection.delete({
+        where: { itemId_collectionId: { itemId: itemId!, collectionId: collectionId! } },
+      });
+      res.status(204).end();
+    } catch (err) {
+      if (err instanceof Error && err.message.includes('not found')) {
+        res.status(404).json({ error: { message: 'Item not in collection' } });
+      } else {
+        next(err);
+      }
+    }
+  },
+);
 
 inventoryRouter.get('/valuation', async (req, res, next) => {
   try {

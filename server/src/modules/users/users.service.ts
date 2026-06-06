@@ -5,6 +5,9 @@ import { prisma, rawPrisma } from '../../lib/prisma.js';
 import { ConflictError, NotFoundError, BadRequestError } from '../../lib/errors.js';
 import { hashPassword, generateTempPassword } from '../auth/password.js';
 import { getTenantId } from '../../lib/async-context.js';
+import { sendEmail, getMemberAddedEmailHTML } from '../../lib/mailer.js';
+import { logger } from '../../lib/logger.js';
+import { env } from '../../env.js';
 
 function tenantIdOrThrow(): string {
   const id = getTenantId();
@@ -78,6 +81,7 @@ export async function createUser(input: {
   shopId?: string | null;
   roleId: string;
   initialPassword?: string;
+  sendEmail?: boolean; // default: true
 }, createdByUserId: string) {
   const tenantId = tenantIdOrThrow();
   const email = input.email.toLowerCase().trim();
@@ -87,7 +91,7 @@ export async function createUser(input: {
   // could otherwise reference another tenant's row.
   const role = await rawPrisma.role.findFirst({
     where: { id: input.roleId, tenantId },
-    select: { id: true, slug: true },
+    select: { id: true, slug: true, name: true },
   });
   if (!role) throw new BadRequestError('Role not found for this tenant');
 
@@ -131,6 +135,33 @@ export async function createUser(input: {
       createdAt: true,
     },
   });
+
+  // Send welcome email with temporary credentials if enabled (default: true)
+  if (input.sendEmail !== false && !input.initialPassword) {
+    // Only send auto-generated password email, not if a custom password was provided
+    const loginUrl = `${env.APP_BASE_URL}/login`;
+    const emailHTML = getMemberAddedEmailHTML({
+      recipientName: input.name,
+      tempUsername: email,
+      tempPassword: plain,
+      loginUrl,
+      roleName: role.name,
+    });
+
+    const sent = await sendEmail({
+      to: email,
+      subject: `Your ${role.name} account is ready - Zehlora`,
+      html: emailHTML,
+      text: `Your account is ready. Username: ${email}\nTemporary Password: ${plain}\nLogin: ${loginUrl}`,
+    });
+
+    if (!sent) {
+      logger.warn(
+        { tenantId, email, userId: user.id },
+        'User created but welcome email could not be sent (SMTP may not be configured)',
+      );
+    }
+  }
 
   // Return the generated password ONCE so the admin can hand it off. We
   // never store it elsewhere and never expose it again.

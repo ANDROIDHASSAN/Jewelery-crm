@@ -231,6 +231,22 @@ export const inventoryApi = baseApi.injectEndpoints({
       query: (id) => ({ url: `/inventory/collections/${id}`, method: 'DELETE' }),
       invalidatesTags: [{ type: 'Collection', id: 'LIST' }, { type: 'Item', id: 'LIST' }],
     }),
+    getCollectionItems: b.query<ApiList<Item>, string>({
+      query: (collectionId) => `/inventory/collections/${collectionId}/items`,
+      providesTags: (_, __, collectionId) => [{ type: 'Item', id: collectionId }],
+    }),
+    addItemsToCollection: b.mutation<ApiOne<{ message: string; added: number; skipped: number }>, { collectionId: string; itemIds: string[] }>({
+      query: ({ collectionId, itemIds }) => ({
+        url: `/inventory/collections/${collectionId}/items`,
+        method: 'POST',
+        body: { itemIds },
+      }),
+      invalidatesTags: (_, __, { collectionId }) => [{ type: 'Item', id: collectionId }],
+    }),
+    removeItemFromCollection: b.mutation<void, { collectionId: string; itemId: string }>({
+      query: ({ collectionId, itemId }) => ({ url: `/inventory/collections/${collectionId}/items/${itemId}`, method: 'DELETE' }),
+      invalidatesTags: (_, __, { collectionId }) => [{ type: 'Item', id: collectionId }],
+    }),
     // Suggest the next SKU ([CODE]-[seq]) for a category — prefills the form.
     getSkuSuggestion: b.query<ApiOne<{ sku: string; code: string | null }>, string>({
       query: (categoryId) => ({ url: '/inventory/sku-suggestion', params: { categoryId } }),
@@ -340,6 +356,9 @@ export const {
   useCreateCollectionMutation,
   useUpdateCollectionMutation,
   useDeleteCollectionMutation,
+  useGetCollectionItemsQuery,
+  useAddItemsToCollectionMutation,
+  useRemoveItemFromCollectionMutation,
   useLazyGetSkuSuggestionQuery,
   useUpdateCategoryMakingChargeMutation,
   useGetValuationQuery,

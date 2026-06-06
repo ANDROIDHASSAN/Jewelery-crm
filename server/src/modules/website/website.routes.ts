@@ -16,6 +16,8 @@ import {
 import { env } from '../../env.js';
 import { enqueueWhatsApp } from '../../lib/queue.js';
 import { createShiprocketAwb, isShiprocketConfigured } from '../../lib/shiprocket.js';
+import { sendEmail, getCustomerWelcomeEmailHTML } from '../../lib/mailer.js';
+import { logger } from '../../lib/logger.js';
 
 export const websiteRouter: Router = Router();
 
@@ -125,6 +127,77 @@ websiteRouter.get('/collections', async (req, res, next) => {
   }
 });
 
+// Public get items in an inventory collection by slug. Returns published products
+// linked to items in the collection. Used by the storefront collection page.
+websiteRouter.get('/collections/:slug/items', async (req, res, next) => {
+  try {
+    const { slug } = z.object({ slug: z.string().min(1) }).parse(req.params);
+    const tenantId = await tenantFromQueryOrFirst(req);
+
+    // Find the collection by slug
+    const collection = await rawPrisma.collection.findFirst({
+      where: { tenantId, slug },
+    });
+    if (!collection) {
+      res.status(404).json({ error: { message: 'Collection not found' } });
+      return;
+    }
+
+    // Get all items in this collection
+    const itemCollections = await rawPrisma.itemCollection.findMany({
+      where: { tenantId, collectionId: collection.id },
+      select: { itemId: true },
+    });
+    const itemIds = itemCollections.map((ic) => ic.itemId);
+
+    // For each item, find the published product linked to it
+    const products = await rawPrisma.product.findMany({
+      where: {
+        tenantId,
+        isPublished: true,
+        linkedItemId: { in: itemIds },
+      },
+      orderBy: { createdAt: 'desc' },
+      include: {
+        linkedItem: {
+          select: {
+            sku: true,
+            status: true,
+            isSerialized: true,
+            quantityOnHand: true,
+            makingChargeMode: true,
+            makingChargePerGramPaise: true,
+            category: { select: { metalType: true } },
+          },
+        },
+      },
+    });
+
+    // Compute a single `inStock` boolean per product
+    const enriched = products.map((p) => {
+      const { linkedItem, ...rest } = p;
+      let inStock = true;
+      if (linkedItem) {
+        const isSerializedSold = linkedItem.isSerialized && linkedItem.status !== 'IN_STOCK';
+        const lotEmpty = !linkedItem.isSerialized && linkedItem.quantityOnHand <= 0;
+        inStock = !(isSerializedSold || lotEmpty);
+      }
+      return {
+        ...rest,
+        inStock,
+        sku: linkedItem?.sku ?? null,
+        metalType: linkedItem?.category?.metalType ?? null,
+        makingChargeMode: linkedItem?.makingChargeMode ?? null,
+        makingChargePerGramPaise: linkedItem?.makingChargePerGramPaise ?? null,
+      };
+    });
+
+    res.json({ data: enriched, page: { hasMore: false } });
+  } catch (err) {
+    next(err);
+  }
+});
+
 const STOREFRONT_SECTION_VALUES = ['NEW_ARRIVAL', 'BEST_SELLER', 'FEATURED', 'TRENDING', 'DEAL'];
 
 websiteRouter.get('/products', async (req, res, next) => {
@@ -145,12 +218,19 @@ websiteRouter.get('/products', async (req, res, next) => {
       orderBy: { createdAt: 'desc' },
       take: 60,
       // Pull the linked inventory row (if any) so we can compute live stock
-      // for the "Sold out" badge on the storefront card. `select` keeps the
-      // payload slim — no need to ship cost prices or hallmark refs to the
-      // public.
+      // for the "Sold out" badge on the storefront card and expose metal type
+      // + making charge mode for accurate PDP price breakdown.
       include: {
         linkedItem: {
-          select: { status: true, isSerialized: true, quantityOnHand: true },
+          select: {
+            sku: true,
+            status: true,
+            isSerialized: true,
+            quantityOnHand: true,
+            makingChargeMode: true,
+            makingChargePerGramPaise: true,
+            category: { select: { metalType: true } },
+          },
         },
       },
     });
@@ -165,7 +245,19 @@ websiteRouter.get('/products', async (req, res, next) => {
         const lotEmpty = !linkedItem.isSerialized && linkedItem.quantityOnHand <= 0;
         inStock = !(isSerializedSold || lotEmpty);
       }
-      return { ...rest, inStock };
+      return {
+        ...rest,
+        inStock,
+        // SKU from the linked inventory item (null for legacy products)
+        sku: linkedItem?.sku ?? null,
+        // Expose metalType so the storefront can gate gold vs silver/non-precious
+        // price calculations correctly. Null for legacy products without a linked item.
+        metalType: linkedItem?.category?.metalType ?? null,
+        // Expose making charge mode + per-gram rate so the PDP can compute the
+        // correct making charge (percentage of metal value OR flat ₹/g × weight).
+        makingChargeMode: linkedItem?.makingChargeMode ?? null,
+        makingChargePerGramPaise: linkedItem?.makingChargePerGramPaise ?? null,
+      };
     });
     res.json({ data: enriched, page: { hasMore: false } });
   } catch (err) {
@@ -362,8 +454,20 @@ websiteRouter.post('/orders', async (req, res, next) => {
         name: true,
         basePricePaise: true,
         stoneChargePaise: true,
+        weightMg: true,
+        purityCaratX100: true,
+        makingChargeBps: true,
         linkedItem: {
-          select: { id: true, status: true, isSerialized: true, quantityOnHand: true, shopId: true },
+          select: {
+            id: true,
+            status: true,
+            isSerialized: true,
+            quantityOnHand: true,
+            shopId: true,
+            makingChargeMode: true,
+            makingChargePerGramPaise: true,
+            category: { select: { metalType: true } },
+          },
         },
       },
     });
@@ -425,7 +529,48 @@ websiteRouter.post('/orders', async (req, res, next) => {
       }
     }
 
-    const priceByProductId = new Map(products.map((p) => [p.id, p.basePricePaise + p.stoneChargePaise]));
+    // Fetch live rates so we can compute the accurate price at checkout
+    // just like the storefront product page does.
+    const purities = [2400, 2200, 1800, 1400, 0] as const;
+    const ratesArray = await Promise.all(purities.map((p) => readGoldRatePaise(p)));
+    const rates = purities.map((p, i) => ({ purity: p, ratePerGramPaise: ratesArray[i]?.paise ?? 0 }));
+    const findRate = (p: number): number | undefined => rates.find((r) => r.purity === p)?.ratePerGramPaise || undefined;
+    const live22 = findRate(2200);
+    const liveSilver = findRate(0);
+
+    const priceByProductId = new Map<string, number>();
+    for (const p of products) {
+      const metalType = p.linkedItem?.category?.metalType;
+      const isGold = metalType === 'GOLD' || metalType === 'DIAMOND' || metalType == null;
+      const isSilver = metalType === 'SILVER';
+      
+      const exactRate = findRate(p.purityCaratX100);
+      let metalValuePaise = 0;
+      let ratePerGramPaise = 0;
+
+      if (isGold) {
+        ratePerGramPaise = exactRate ?? live22 ?? 642000;
+        metalValuePaise = exactRate
+          ? Math.round((p.weightMg * exactRate) / 1000)
+          : Math.round((p.weightMg * ratePerGramPaise * p.purityCaratX100) / (1000 * 2200));
+      } else if (isSilver) {
+        ratePerGramPaise = liveSilver ?? 0;
+        metalValuePaise = Math.round((p.weightMg * ratePerGramPaise) / 1000);
+      } else {
+        metalValuePaise = p.basePricePaise;
+      }
+
+      let making = 0;
+      if (p.linkedItem?.makingChargeMode === 'PER_GRAM' && p.linkedItem.makingChargePerGramPaise != null) {
+        making = Math.round((p.linkedItem.makingChargePerGramPaise * p.weightMg) / 1000);
+      } else if (p.makingChargeBps > 0 && metalValuePaise > 0) {
+        making = Math.round((metalValuePaise * p.makingChargeBps) / 10000);
+      }
+
+      const itemTotal = metalValuePaise + making + p.stoneChargePaise;
+      priceByProductId.set(p.id, itemTotal);
+    }
+
     const nameById = new Map(products.map((p) => [p.id, p.name]));
     const subtotalPaise = resolvedItems.reduce(
       (s, { product, qty }) => s + (priceByProductId.get(product.id) ?? 0) * qty,
@@ -1333,6 +1478,36 @@ websiteRouter.post('/customers/identify', async (req, res, next) => {
       return { customer, cart, wishlist, addresses, isNew };
     });
 
+    // Send welcome email to new customers who provided an email
+    if (result.isNew && body.email) {
+      const tenant = await rawPrisma.tenant.findUnique({
+        where: { id: tenantId },
+        select: { businessName: true },
+      });
+      if (tenant) {
+        const storeUrl = env.APP_BASE_URL;
+        const emailHTML = getCustomerWelcomeEmailHTML({
+          recipientName: result.customer.name,
+          businessName: tenant.businessName,
+          storeUrl,
+        });
+
+        const sent = await sendEmail({
+          to: body.email,
+          subject: `Welcome to ${tenant.businessName} on Zehlora! 💎`,
+          html: emailHTML,
+          text: `Welcome ${result.customer.name}! Thanks for joining ${tenant.businessName} on Zehlora. Visit ${storeUrl} to explore our jewelry collection.`,
+        });
+
+        if (!sent) {
+          logger.warn(
+            { tenantId, customerId: result.customer.id, email: body.email },
+            'Customer signup complete but welcome email could not be sent (SMTP may not be configured)',
+          );
+        }
+      }
+    }
+
     res.json({
       data: {
         customer: {
@@ -1643,6 +1818,154 @@ websiteRouter.post('/enquiry', async (req, res, next) => {
       return rawPrisma.lead.create({ data: { ...body, tenantId, status: 'NEW' } });
     });
     res.status(201).json({ data: { id: lead.id } });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Admin: Migrate all local images in storefront content to Cloudinary.
+// This endpoint requires authentication via middleware (tenant scope).
+// Finds data URLs and local paths, uploads to Cloudinary, updates database.
+websiteRouter.post('/migrate-images-to-cloudinary', async (req, res, next) => {
+  try {
+    const tenantId = await tenantFromQueryOrFirst(req);
+    const { migrateStorefrontImagesToCloudinary } = await import('../../lib/migrate-images-cloudinary.js');
+
+    res.setHeader('Cache-Control', 'private, no-store');
+    const result = await migrateStorefrontImagesToCloudinary(tenantId);
+
+    res.json({
+      data: {
+        message: 'Image migration completed',
+        ...result,
+      },
+    });
+  } catch (err) {
+    const message =
+      err instanceof Error ? err.message : 'Image migration failed. Check server logs.';
+    res.status(500).json({ error: { code: 'MIGRATION_FAILED', message } });
+  }
+});
+
+// Admin: Sync inventory collections to CMS with dynamic product counts.
+// Returns all collections from inventory, including the count of products in each.
+// Used by the CMS to populate the "Shop by occasion" section dynamically.
+websiteRouter.get('/sync-collections-from-inventory', async (req, res, next) => {
+  try {
+    const tenantId = await tenantFromQueryOrFirst(req);
+    res.setHeader('Cache-Control', 'private, no-store');
+
+    // Fetch all collections for this tenant
+    const collections = await rawPrisma.collection.findMany({
+      where: { tenantId },
+      orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }],
+      select: { id: true, name: true, slug: true, description: true, sortOrder: true },
+    });
+
+    // For each collection, count the items in it
+    const collectionsWithCounts = await Promise.all(
+      collections.map(async (col) => {
+        const itemCount = await rawPrisma.itemCollection.count({
+          where: { tenantId, collectionId: col.id },
+        });
+        return {
+          name: col.name,
+          slug: col.slug,
+          count: itemCount,
+          // Note: img is not included; CMS will use existing image or allow upload
+        };
+      }),
+    );
+
+    res.json({
+      data: collectionsWithCounts,
+      page: { hasMore: false },
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Admin: Auto-sync inventory collections to storefront content.
+// Updates shopByOccasion array with collections from inventory.
+// Preserves existing images; only syncs name, slug, and product count.
+websiteRouter.post('/auto-sync-collections', async (req, res, next) => {
+  try {
+    const tenantId = await tenantFromQueryOrFirst(req);
+    res.setHeader('Cache-Control', 'private, no-store');
+
+    // Fetch all collections with product counts
+    const collections = await rawPrisma.collection.findMany({
+      where: { tenantId },
+      orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }],
+    });
+
+    const collectionsWithCounts = await Promise.all(
+      collections.map(async (col) => {
+        const count = await rawPrisma.itemCollection.count({
+          where: { tenantId, collectionId: col.id },
+        });
+        return {
+          name: col.name,
+          slug: col.slug,
+          count,
+        };
+      }),
+    );
+
+    // Get current storefront content
+    const storefront = await rawPrisma.storefrontContent.findUnique({
+      where: { tenantId },
+    });
+
+    if (!storefront) {
+      res.status(404).json({
+        error: {
+          code: 'STOREFRONT_NOT_FOUND',
+          message: 'No storefront content found',
+        },
+      });
+      return;
+    }
+
+    const content = storefront.content as any;
+    const currentShopByOccasion = content.shopByOccasion ?? [];
+
+    // Merge: preserve images from current data, update name/slug/count from inventory
+    const mergedShopByOccasion = collectionsWithCounts.map((invCol) => {
+      const existing = currentShopByOccasion.find((sbo: any) => sbo.slug === invCol.slug);
+      return {
+        name: invCol.name,
+        slug: invCol.slug,
+        count: invCol.count,
+        img: existing?.img || '', // Preserve existing image or empty string
+      };
+    });
+
+    // Update storefront content
+    const updatedContent = {
+      ...content,
+      shopByOccasion: mergedShopByOccasion,
+    };
+
+    await rawPrisma.storefrontContent.update({
+      where: { tenantId },
+      data: {
+        content: updatedContent,
+        version: (storefront.version ?? 1) + 1,
+      },
+    });
+
+    // Bust cache so changes appear immediately
+    void bustKey(tenantId, 'storefront-content');
+
+    res.json({
+      data: {
+        message: 'Collections synced successfully',
+        synced: mergedShopByOccasion.length,
+        collections: mergedShopByOccasion,
+      },
+    });
   } catch (err) {
     next(err);
   }

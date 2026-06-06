@@ -6,6 +6,7 @@ import { useAppSelector } from '@/app/hooks';
 import {
   useGetPublicProductsQuery,
   useGetPublicCollectionsQuery,
+  useGetCollectionItemsQuery,
   type PublicProduct,
   type PublicCategory,
 } from '@/features/storefront/storefrontApi';
@@ -163,6 +164,8 @@ export function CollectionPage(): JSX.Element {
 
   const { data: products = [], isLoading: productsLoading } = useGetPublicProductsQuery();
   const { data: categories = [] } = useGetPublicCollectionsQuery();
+  // Try to fetch collection items if slug is provided. Returns 404 if not an inventory collection.
+  const { data: collectionItems = [], isLoading: collectionItemsLoading, isError: collectionItemsError } = useGetCollectionItemsQuery(slug ?? '', { skip: !slug });
 
   // Title resolution order:
   //   1. Hardcoded TITLES entry (legacy pseudo-collections + curated copy)
@@ -187,7 +190,10 @@ export function CollectionPage(): JSX.Element {
   }, [filtersConfig, slug]);
 
   const filtered = useMemo(() => {
-    const bySlug = filterBySlug(products, categories, slug);
+    // If this is an inventory collection and items were loaded, use them directly.
+    // Otherwise, fall back to category-based filtering.
+    const baseProducts = !collectionItemsError && collectionItems.length > 0 ? collectionItems : filterBySlug(products, categories, slug);
+
     // Token-AND match on name + slug only — descriptionMd is excluded because
     // every gold-jewellery description repeats "gold/BIS/hallmarked" and would
     // turn the in-collection search into a no-op (everything matches). Match
@@ -277,10 +283,10 @@ export function CollectionPage(): JSX.Element {
         return !pred && !catSet && optStem.length < 3;
       });
     };
-    return bySlug.filter(
+    return baseProducts.filter(
       (p) => passQ(p) && visibleGroups.every((g) => passGroup(p, g)),
     );
-  }, [products, categories, slug, q, selections, visibleGroups]);
+  }, [products, categories, slug, q, selections, visibleGroups, collectionItems, collectionItemsError]);
 
   function toggleOption(groupKey: string, value: string): void {
     setSelections((curr) => {
@@ -427,7 +433,7 @@ export function CollectionPage(): JSX.Element {
         )}
 
         <section className="grid grid-cols-2 md:grid-cols-3 gap-x-3 gap-y-8 sm:gap-x-5 sm:gap-y-10 md:gap-x-6">
-          {productsLoading && (
+          {(productsLoading || collectionItemsLoading) && (
             <p className="col-span-full text-sm text-ink-500">Loading the collection…</p>
           )}
           {!productsLoading && sorted.length === 0 && (

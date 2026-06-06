@@ -20,13 +20,21 @@ export interface PublicProduct {
   weightMg: number;
   purityCaratX100: number;
   makingChargeBps: number;
+  /** Mode for making charge calculation: PERCENTAGE (of metal value) or PER_GRAM (flat ₹/g). */
+  makingChargeMode: 'PERCENTAGE' | 'PER_GRAM' | null;
+  /** Per-gram making charge in paise. Used when makingChargeMode is PER_GRAM. */
+  makingChargePerGramPaise: number | null;
   basePricePaise: number;
   stoneChargePaise: number;
   categoryId: string;
+  /** Metal type from the linked category — gates gold vs silver vs non-precious price calc. */
+  metalType: 'GOLD' | 'SILVER' | 'DIAMOND' | 'PLATINUM' | 'STAINLESS_STEEL' | 'OTHER' | null;
   /** BIS Hallmark Unique ID (6-char). Null for non-gold pieces. */
   bisHuid: string | null;
   /** ISO timestamp of when the piece was hallmarked. */
   hallmarkedAt: string | null;
+  /** SKU from the linked inventory item. Null for products without a linked item. */
+  sku: string | null;
   isPublished: boolean;
   createdAt: string;
   /**
@@ -138,6 +146,11 @@ export const storefrontApi = baseApi.injectEndpoints({
       query: () => ({ url: '/website/collections' }),
       transformResponse: (raw: { data: PublicCategory[] }) => raw.data,
       providesTags: [{ type: 'Category', id: 'PUBLIC' }],
+    }),
+    getCollectionItems: build.query<PublicProduct[], string>({
+      query: (slug) => ({ url: `/website/collections/${slug}/items` }),
+      transformResponse: (raw: { data: PublicProduct[] }) => raw.data,
+      providesTags: (_r, _e, slug) => [{ type: 'Product', id: `COLLECTION:${slug}` }],
     }),
     // Public reviews for a product. Returns aggregate (avg, count, per-star
     // distribution) + a limited list of recent reviews. Author names are
@@ -412,6 +425,7 @@ export const {
   useUpdateStorefrontMutation,
   useGetPublicProductsQuery,
   useGetPublicCollectionsQuery,
+  useGetCollectionItemsQuery,
   useCreateEnquiryMutation,
   useIdentifyCustomerMutation,
   useCreatePublicOrderMutation,

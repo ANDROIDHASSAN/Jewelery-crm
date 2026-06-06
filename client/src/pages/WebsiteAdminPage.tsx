@@ -16,13 +16,11 @@ import { Badge } from '@/components/ui/badge';
 import { cn } from '@/lib/cn';
 import { useAppDispatch, useAppSelector } from '@/app/hooks';
 import {
-  addCollection,
   addFilterGroup,
   addFilterOption,
   addLocation,
   addNavItem,
   clearFiltersOverride,
-  removeCollection,
   removeFilterGroup,
   removeFilterOption,
   removeLocation,
@@ -34,7 +32,6 @@ import {
   setNavMenu,
   type StorefrontContent,
   updateBrand,
-  updateCollection,
   updateFilterGroup,
   updateHero,
   updateLocation,
@@ -500,82 +497,191 @@ export function WebsiteAdminPage(): JSX.Element {
 
           {tab === 'collections' && (
             <Card
-              title="Collection tiles"
-              desc="The four cards shown under 'Shop by occasion'."
+              title="Shop by occasion (6-tile body-shot grid)"
+              desc="Synced from Inventory Collections. Each tile: name, slug, product count, image URL. Upload local files or paste image URLs."
               action={
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={() => {
-                    dispatch(
-                      addCollection({
-                        slug: `new-${Date.now()}`,
-                        name: 'New collection',
-                        tagline: 'Add a tagline',
-                        img: 'https://images.unsplash.com/photo-1605100804763-247f67b3557e?auto=format&fit=crop&w=900&q=80',
-                      }),
-                    );
-                    notify();
-                  }}
-                >
-                  <Plus className="h-4 w-4" /> Add
-                </Button>
+                <div className="flex items-center gap-2">
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={async () => {
+                      try {
+                        const response = await fetch('/api/v1/website/auto-sync-collections', {
+                          method: 'POST',
+                          headers: { 'Content-Type': 'application/json' },
+                        });
+                        const result = (await response.json()) as { data?: { collections?: any[] } };
+                        if (result.data?.collections) {
+                          dispatch(setContent({ ...content, shopByOccasion: result.data.collections }));
+                          notify();
+                          toast.success(`Synced ${result.data.collections.length} collections from Inventory`);
+                        }
+                      } catch (err) {
+                        toast.error(err instanceof Error ? err.message : 'Sync failed');
+                      }
+                    }}
+                  >
+                    ↻ Sync from Inventory
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => {
+                      dispatch(
+                        setContent({
+                          ...content,
+                          shopByOccasion: [
+                            ...(content.shopByOccasion ?? []),
+                            { name: '', slug: '', count: 0, img: 'https://images.unsplash.com/photo-1599643478518-a784e5dc4c8f?auto=format&fit=crop&w=900&q=80' },
+                          ],
+                        }),
+                      );
+                      notify();
+                    }}
+                  >
+                    <Plus className="h-4 w-4" /> Add tile
+                  </Button>
+                </div>
               }
             >
               <div className="space-y-4">
-                {content.collections.map((c, i) => (
-                  <div key={c.slug + i} className="rounded-md border border-ink-100 p-4 space-y-3 bg-ink-25">
-                    <div className="flex flex-col sm:flex-row items-start gap-3">
-                      <img src={c.img} alt="" className="h-16 w-16 object-cover rounded-sm bg-ink-100 shrink-0" />
-                      <div className="flex-1 grid grid-cols-1 sm:grid-cols-2 gap-3 w-full">
-                        <Field label="Name" compact>
-                          <Input
-                            value={c.name}
-                            onChange={(e) =>
-                              dispatch(updateCollection({ index: i, patch: { name: e.target.value } }))
-                            }
-                            onBlur={notify}
-                          />
-                        </Field>
-                        <Field label="Slug" compact>
-                          <Input
-                            value={c.slug}
-                            onChange={(e) =>
-                              dispatch(updateCollection({ index: i, patch: { slug: e.target.value } }))
-                            }
-                            onBlur={notify}
-                          />
-                        </Field>
-                        <Field label="Tagline" compact>
-                          <Input
-                            value={c.tagline}
-                            onChange={(e) =>
-                              dispatch(updateCollection({ index: i, patch: { tagline: e.target.value } }))
-                            }
-                            onBlur={notify}
-                          />
-                        </Field>
-                        <Field label="Image URL" compact>
-                          <Input
-                            value={c.img}
-                            onChange={(e) =>
-                              dispatch(updateCollection({ index: i, patch: { img: e.target.value } }))
-                            }
-                            onBlur={notify}
-                          />
-                        </Field>
+                {(content.shopByOccasion ?? []).map((tile, i) => (
+                  <div key={i} className="rounded-md border border-ink-100 p-4 space-y-3 bg-ink-25">
+                    <div className="grid grid-cols-1 gap-4">
+                      <div className="flex items-start justify-between">
+                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 flex-1">
+                          <Field label="Tile name" compact>
+                            <Input
+                              value={tile.name}
+                              onChange={(e) => {
+                                const updated = [...(content.shopByOccasion ?? [])];
+                                updated[i] = { ...tile, name: e.target.value };
+                                dispatch(setContent({ ...content, shopByOccasion: updated }));
+                              }}
+                              onBlur={notify}
+                            />
+                          </Field>
+                          <Field label="Collection slug" compact>
+                            <Input
+                              value={tile.slug}
+                              placeholder="bridal"
+                              onChange={(e) => {
+                                const updated = [...(content.shopByOccasion ?? [])];
+                                updated[i] = { ...tile, slug: e.target.value };
+                                dispatch(setContent({ ...content, shopByOccasion: updated }));
+                              }}
+                              onBlur={notify}
+                            />
+                          </Field>
+                          <Field label="Product count" compact>
+                            <Input
+                              type="number"
+                              value={tile.count}
+                              disabled
+                              title="Auto-synced from Inventory. Click 'Sync from Inventory' to update."
+                              className="bg-ink-50 text-ink-600 cursor-not-allowed"
+                            />
+                            <p className="text-xs text-ink-500 mt-1">Auto-synced from Inventory</p>
+                          </Field>
+                        </div>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => {
+                            const updated = content.shopByOccasion?.filter((_, idx) => idx !== i) ?? [];
+                            dispatch(setContent({ ...content, shopByOccasion: updated }));
+                            notify();
+                          }}
+                          aria-label={`Remove ${tile.name}`}
+                          className="mt-6"
+                        >
+                          <Trash2 className="h-4 w-4 text-danger-500" />
+                        </Button>
                       </div>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => {
-                          dispatch(removeCollection(i));
-                          notify();
-                        }}
-                        aria-label={`Remove ${c.name}`}
+                      <Field
+                        label="Image"
+                        compact
+                        hint="Upload a local file (≤ 2 MB) or paste an image URL. Saves to Cloudinary."
                       >
-                        <Trash2 className="h-4 w-4 text-danger-500" />
-                      </Button>
+                        <div className="flex items-start gap-3">
+                          <div
+                            className="h-20 w-28 rounded-md bg-ink-50 border border-ink-100 overflow-hidden shrink-0"
+                            aria-hidden="true"
+                          >
+                            {tile.img ? (
+                              <img src={tile.img} alt="" className="h-full w-full object-cover" />
+                            ) : (
+                              <div className="h-full w-full flex items-center justify-center text-xs text-ink-400">
+                                No image
+                              </div>
+                            )}
+                          </div>
+                          <div className="flex-1 space-y-2">
+                            <Input
+                              placeholder="https://… or paste a URL"
+                              value={tile.img}
+                              onChange={(e) => {
+                                const updated = [...(content.shopByOccasion ?? [])];
+                                updated[i] = { ...tile, img: e.target.value };
+                                dispatch(setContent({ ...content, shopByOccasion: updated }));
+                              }}
+                              onBlur={notify}
+                            />
+                            <div className="flex items-center gap-2">
+                              <label
+                                htmlFor={`occasion-image-${i}`}
+                                className="inline-flex items-center gap-1.5 h-8 px-3 rounded-md border border-ink-200 bg-ink-0 text-xs text-ink-700 hover:bg-ink-50 cursor-pointer"
+                              >
+                                Upload image
+                              </label>
+                              <input
+                                id={`occasion-image-${i}`}
+                                type="file"
+                                accept="image/png,image/jpeg,image/webp"
+                                className="sr-only"
+                                onChange={async (e) => {
+                                  const file = e.target.files?.[0];
+                                  if (!file) return;
+                                  if (file.size > 2_000 * 1024) {
+                                    toast.error('Image must be under 2 MB');
+                                    e.target.value = '';
+                                    return;
+                                  }
+                                  try {
+                                    const result = await uploadImageToCloudinary(file, {
+                                      folder: 'zelora/collections',
+                                    });
+                                    const updated = [...(content.shopByOccasion ?? [])];
+                                    updated[i] = { ...tile, img: result.secureUrl };
+                                    dispatch(setContent({ ...content, shopByOccasion: updated }));
+                                    notify();
+                                    toast.success('Image uploaded');
+                                  } catch (err) {
+                                    toast.error(
+                                      err instanceof Error ? err.message : 'Failed to upload image',
+                                    );
+                                  }
+                                  e.target.value = '';
+                                }}
+                              />
+                              {tile.img && (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    const updated = [...(content.shopByOccasion ?? [])];
+                                    updated[i] = { ...tile, img: '' };
+                                    dispatch(setContent({ ...content, shopByOccasion: updated }));
+                                    notify();
+                                  }}
+                                  className="inline-flex items-center gap-1.5 h-8 px-3 rounded-md text-xs text-ink-600 hover:text-ink-900 hover:bg-ink-50"
+                                >
+                                  <Trash2 className="h-3.5 w-3.5" /> Remove
+                                </button>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                      </Field>
                     </div>
                   </div>
                 ))}
@@ -2154,13 +2260,6 @@ function StringListEditor({
 }
 
 // -- Field schemas per section --
-const SHOP_BY_OCCASION_FIELDS = [
-  { key: 'name', label: 'Tile name', type: 'text', span: 2 },
-  { key: 'slug', label: 'Collection slug', type: 'text', placeholder: 'bridal', span: 2 },
-  { key: 'count', label: 'Product count', type: 'number', span: 1 },
-  { key: 'img', label: 'Image URL', type: 'image', span: 3 },
-] as const;
-
 const BROWSE_CATEGORY_FIELDS = [
   { key: 'label', label: 'Tile label', type: 'text', span: 2 },
   { key: 'slug', label: 'Collection slug', type: 'text', placeholder: 'rings', span: 2 },
@@ -2357,17 +2456,6 @@ function HomepageSectionsTab({
       {/* Hero video moved to the Hero tab so it lives next to the title /
           subtitle / poster image. Avoids editors hunting through two tabs
           to update what reads as one section on the live site. */}
-
-      <Card title="Shop by occasion (6-tile body-shot grid)" desc="Each tile: name, slug (existing collection), product count, image URL.">
-        <ListItemEditor
-          items={content.shopByOccasion ?? []}
-          fields={SHOP_BY_OCCASION_FIELDS as ReadonlyArray<FieldDef<{ name: string; slug: string; count: number; img: string }>>}
-          newItem={() => ({ name: '', slug: '', count: 0, img: '' })}
-          onChange={(v) => onPatch({ shopByOccasion: v })}
-          itemLabel={(it) => it.name || it.slug || 'New tile'}
-          max={12}
-        />
-      </Card>
 
       <Card title="Browse by category (circular marquee)" desc="Each tile: label, slug, image URL. 6–12 tiles recommended.">
         <ListItemEditor
