@@ -115,30 +115,41 @@ export async function createInvitation(input: CreateInvitationInput): Promise<{
   });
 
   // Send invitation email if enabled (default: true)
+  // Non-blocking: send in background, don't fail the invitation if email fails
   if (input.sendEmail !== false) {
-    const invitationLink = `${env.APP_BASE_URL}/accept-invitation/${plaintext}`;
+    setImmediate(async () => {
+      try {
+        const baseUrl = env.APP_BASE_URL || 'https://app.zehlora.com';
+        const invitationLink = `${baseUrl}/accept-invitation/${plaintext}`;
 
-    const emailHTML = getInvitationEmailHTML({
-      recipientName: input.name,
-      invitationLink,
-      tenantName: created.tenant.businessName,
-      roleName: created.role.name,
-      expiresInDays: INVITATION_TTL_DAYS,
+        const emailHTML = getInvitationEmailHTML({
+          recipientName: input.name,
+          invitationLink,
+          tenantName: created.tenant.businessName,
+          roleName: created.role.name,
+          expiresInDays: INVITATION_TTL_DAYS,
+        });
+
+        const sent = await sendEmail({
+          to: email,
+          subject: `You're invited to join ${created.tenant.businessName} on Zehlora`,
+          html: emailHTML,
+          text: `You've been invited to join ${created.tenant.businessName}. Click here to accept: ${invitationLink}`,
+        });
+
+        if (!sent) {
+          logger.warn(
+            { tenantId: input.tenantId, email, invitationId: created.id },
+            'Invitation created but email could not be sent (SMTP may not be configured)',
+          );
+        }
+      } catch (err) {
+        logger.error(
+          { tenantId: input.tenantId, email, invitationId: created.id, err },
+          'Error sending invitation email',
+        );
+      }
     });
-
-    const sent = await sendEmail({
-      to: email,
-      subject: `You're invited to join ${created.tenant.businessName} on Zehlora`,
-      html: emailHTML,
-      text: `You've been invited to join ${created.tenant.businessName}. Click here to accept: ${invitationLink}`,
-    });
-
-    if (!sent) {
-      logger.warn(
-        { tenantId: input.tenantId, email, invitationId: created.id },
-        'Invitation created but email could not be sent (SMTP may not be configured)',
-      );
-    }
   }
 
   return { invitationId: created.id, tokenPlaintext: plaintext, expiresAt };
@@ -292,27 +303,37 @@ export async function acceptInvitation(input: AcceptInvitationInput): Promise<Ac
       data: { acceptedAt: new Date(), acceptedUserId: user.id },
     });
 
-    // Send welcome email after successful signup
-    const welcomeUrl = `${env.APP_BASE_URL}/dashboard`;
-    const emailHTML = getWelcomeEmailHTML({
-      recipientName: input.name.trim() || inv.name,
-      tenantName: user.tenant.businessName,
-      dashboardUrl: welcomeUrl,
-    });
+    // Send welcome email after successful signup (non-blocking)
+    setImmediate(async () => {
+      try {
+        const baseUrl = env.APP_BASE_URL || 'https://app.zehlora.com';
+        const welcomeUrl = `${baseUrl}/dashboard`;
+        const emailHTML = getWelcomeEmailHTML({
+          recipientName: input.name.trim() || inv.name,
+          tenantName: user.tenant.businessName,
+          dashboardUrl: welcomeUrl,
+        });
 
-    const sent = await sendEmail({
-      to: inv.email,
-      subject: `Welcome to Zehlora - ${user.tenant.businessName}`,
-      html: emailHTML,
-      text: `Welcome to Zehlora! Go to ${welcomeUrl} to start using your account.`,
-    });
+        const sent = await sendEmail({
+          to: inv.email,
+          subject: `Welcome to Zehlora - ${user.tenant.businessName}`,
+          html: emailHTML,
+          text: `Welcome to Zehlora! Go to ${welcomeUrl} to start using your account.`,
+        });
 
-    if (!sent) {
-      logger.warn(
-        { tenantId: inv.tenantId, email: inv.email, userId: user.id },
-        'Invitation accepted but welcome email could not be sent (SMTP may not be configured)',
-      );
-    }
+        if (!sent) {
+          logger.warn(
+            { tenantId: inv.tenantId, email: inv.email, userId: user.id },
+            'Invitation accepted but welcome email could not be sent (SMTP may not be configured)',
+          );
+        }
+      } catch (err) {
+        logger.error(
+          { tenantId: inv.tenantId, email: inv.email, userId: user.id, err },
+          'Error sending welcome email after invitation acceptance',
+        );
+      }
+    });
 
     return { userId: user.id, tenantId: inv.tenantId, email: inv.email };
   });

@@ -70,6 +70,11 @@ export function getInvitationEmailHTML(params: {
   roleName: string;
   expiresInDays: number;
 }): string {
+  // Validate invitation link is properly formed
+  if (!params.invitationLink || !params.invitationLink.startsWith('http')) {
+    logger.error('Invalid invitation link in email template', { link: params.invitationLink });
+    throw new Error('Invalid invitation link');
+  }
   return `<!DOCTYPE html>
 <html>
 <head>

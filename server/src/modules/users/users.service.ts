@@ -137,30 +137,41 @@ export async function createUser(input: {
   });
 
   // Send welcome email with temporary credentials if enabled (default: true)
+  // Non-blocking: send in background, don't fail user creation if email fails
   if (input.sendEmail !== false && !input.initialPassword) {
     // Only send auto-generated password email, not if a custom password was provided
-    const loginUrl = `${env.APP_BASE_URL}/login`;
-    const emailHTML = getMemberAddedEmailHTML({
-      recipientName: input.name,
-      tempUsername: email,
-      tempPassword: plain,
-      loginUrl,
-      roleName: role.name,
-    });
+    setImmediate(async () => {
+      try {
+        const baseUrl = env.APP_BASE_URL || 'https://app.zehlora.com';
+        const loginUrl = `${baseUrl}/login`;
+        const emailHTML = getMemberAddedEmailHTML({
+          recipientName: input.name,
+          tempUsername: email,
+          tempPassword: plain,
+          loginUrl,
+          roleName: role.name,
+        });
 
-    const sent = await sendEmail({
-      to: email,
-      subject: `Your ${role.name} account is ready - Zehlora`,
-      html: emailHTML,
-      text: `Your account is ready. Username: ${email}\nTemporary Password: ${plain}\nLogin: ${loginUrl}`,
-    });
+        const sent = await sendEmail({
+          to: email,
+          subject: `Your ${role.name} account is ready - Zehlora`,
+          html: emailHTML,
+          text: `Your account is ready. Username: ${email}\nTemporary Password: ${plain}\nLogin: ${loginUrl}`,
+        });
 
-    if (!sent) {
-      logger.warn(
-        { tenantId, email, userId: user.id },
-        'User created but welcome email could not be sent (SMTP may not be configured)',
-      );
-    }
+        if (!sent) {
+          logger.warn(
+            { tenantId, email, userId: user.id },
+            'User created but welcome email could not be sent (SMTP may not be configured)',
+          );
+        }
+      } catch (err) {
+        logger.error(
+          { tenantId, email, userId: user.id, err },
+          'Error sending welcome email after user creation',
+        );
+      }
+    });
   }
 
   // Return the generated password ONCE so the admin can hand it off. We

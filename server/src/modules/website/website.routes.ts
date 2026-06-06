@@ -1478,34 +1478,44 @@ websiteRouter.post('/customers/identify', async (req, res, next) => {
       return { customer, cart, wishlist, addresses, isNew };
     });
 
-    // Send welcome email to new customers who provided an email
+    // Send welcome email to new customers who provided an email (non-blocking)
     if (result.isNew && body.email) {
-      const tenant = await rawPrisma.tenant.findUnique({
-        where: { id: tenantId },
-        select: { businessName: true },
-      });
-      if (tenant) {
-        const storeUrl = env.APP_BASE_URL;
-        const emailHTML = getCustomerWelcomeEmailHTML({
-          recipientName: result.customer.name,
-          businessName: tenant.businessName,
-          storeUrl,
-        });
+      const email = body.email; // Capture for closure
+      setImmediate(async () => {
+        try {
+          const tenant = await rawPrisma.tenant.findUnique({
+            where: { id: tenantId },
+            select: { businessName: true },
+          });
+          if (tenant) {
+            const storeUrl: string = env.APP_BASE_URL || 'https://app.zehlora.com';
+            const emailHTML = getCustomerWelcomeEmailHTML({
+              recipientName: result.customer.name,
+              businessName: tenant.businessName,
+              storeUrl,
+            });
 
-        const sent = await sendEmail({
-          to: body.email,
-          subject: `Welcome to ${tenant.businessName} on Zehlora! 💎`,
-          html: emailHTML,
-          text: `Welcome ${result.customer.name}! Thanks for joining ${tenant.businessName} on Zehlora. Visit ${storeUrl} to explore our jewelry collection.`,
-        });
+            const sent = await sendEmail({
+              to: email,
+              subject: `Welcome to ${tenant.businessName} on Zehlora! 💎`,
+              html: emailHTML,
+              text: `Welcome ${result.customer.name}! Thanks for joining ${tenant.businessName} on Zehlora. Visit ${storeUrl} to explore our jewelry collection.`,
+            });
 
-        if (!sent) {
-          logger.warn(
-            { tenantId, customerId: result.customer.id, email: body.email },
-            'Customer signup complete but welcome email could not be sent (SMTP may not be configured)',
+            if (!sent) {
+              logger.warn(
+                { tenantId, customerId: result.customer.id, email },
+                'Customer signup complete but welcome email could not be sent (SMTP may not be configured)',
+              );
+            }
+          }
+        } catch (err) {
+          logger.error(
+            { tenantId, customerId: result.customer.id, email, err },
+            'Error sending welcome email to customer',
           );
         }
-      }
+      });
     }
 
     res.json({
