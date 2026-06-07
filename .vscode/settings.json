@@ -9,7 +9,7 @@
     ".vercel": true,
     ".client-dev.log": true,
     ".mcp.json": true,
-    ".gitignore": true,
+    ".gitignore":false,
     "docker-compose.yml": true,
     "ecosystem.config.cjs": true,
     "render.yaml": true,

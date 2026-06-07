@@ -27,6 +27,7 @@ import { DayBookSection } from '@/features/finance/sections/DayBookSection';
 import { TrialBalanceSection } from '@/features/finance/sections/TrialBalanceSection';
 import { BalanceSheetSection } from '@/features/finance/sections/BalanceSheetSection';
 import { LedgerSection } from '@/features/finance/sections/LedgerSection';
+import { ReturnsSection } from '@/features/finance/sections/ReturnsSection';
 import { AddExpenseDialog } from '@/features/finance/components/AddExpenseDialog';
 import { ShopPicker } from '@/features/finance/components/FinanceFilters';
 import { downloadTallyExport } from '@/features/finance/lib/export';
@@ -47,6 +48,7 @@ type TabKey =
   | 'bank'
   | 'advances'
   | 'fy'
+  | 'returns'
   // Accounting reports (Tally-style)
   | 'daybook'
   | 'trial'
@@ -66,6 +68,7 @@ const TAB_DEFS: Array<{ key: TabKey; label: string; eyebrow: string; title: stri
   { key: 'bank', label: 'Bank', eyebrow: 'Banking', title: 'Bank accounts' },
   { key: 'advances', label: 'Advances', eyebrow: 'Customer', title: 'Advance receipts' },
   { key: 'fy', label: 'Yearly', eyebrow: 'Annual', title: 'Financial year report' },
+  { key: 'returns', label: 'Returns', eyebrow: 'Returns & Refunds', title: 'Returns & refund ledger' },
   // Accounting block — Tally-style reports for the CA / accountant.
   { key: 'daybook', label: 'Day Book', eyebrow: 'Accounting', title: 'Day book — chronological vouchers' },
   { key: 'trial', label: 'Trial Balance', eyebrow: 'Accounting', title: 'Trial balance' },
@@ -167,6 +170,7 @@ export function FinancePage(): JSX.Element {
         {activeTab === 'bank' && <BankSection />}
         {activeTab === 'advances' && <AdvancesSection />}
         {activeTab === 'fy' && <FinancialYearSection />}
+        {activeTab === 'returns' && <ReturnsSection />}
         {activeTab === 'daybook' && <DayBookSection />}
         {activeTab === 'trial' && <TrialBalanceSection />}
         {activeTab === 'balance' && <BalanceSheetSection />}

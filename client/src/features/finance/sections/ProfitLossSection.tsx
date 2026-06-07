@@ -7,8 +7,8 @@ import { Download, Printer, FileText } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Money } from '@/components/ui/money';
 import { MetricCard } from '@/components/ui/MetricCard';
-import { ChartCard, CurrencyBarChart } from '@/components/ui/charts';
-import { useGetPlQuery } from '@/features/finance/financeApi';
+import { ChartCard, CurrencyBarChart, RankedBarChart, CurrencyDonutChart } from '@/components/ui/charts';
+import { useGetPlQuery, useGetCogsQuery, useGetRevenueByCategoryQuery } from '@/features/finance/financeApi';
 import { downloadCsv, paiseToRupeeString, printSection, downloadTallyExport } from '@/features/finance/lib/export';
 import { FilterRow, ShopPicker, DateInput } from '@/features/finance/components/FinanceFilters';
 import { toast } from 'sonner';
@@ -26,12 +26,17 @@ export function ProfitLossSection(): JSX.Element {
   const [to, setTo] = useState(today());
   const [shopId, setShopId] = useState<string | undefined>(undefined);
 
-  const { data, isLoading } = useGetPlQuery({
-    from: new Date(from).toISOString(),
-    to: new Date(`${to}T23:59:59.999Z`).toISOString(),
-    shopId,
-  });
+  const fromIso = new Date(from).toISOString();
+  const toIso = new Date(`${to}T23:59:59.999Z`).toISOString();
+
+  const { data, isLoading } = useGetPlQuery({ from: fromIso, to: toIso, shopId });
   const pl = data?.data;
+
+  const { data: cogsData } = useGetCogsQuery({ from: fromIso, to: toIso, shopId });
+  const cogs = cogsData?.data ?? [];
+
+  const { data: revCatData } = useGetRevenueByCategoryQuery({ from: fromIso, to: toIso, shopId });
+  const revCat = revCatData?.data;
 
   const expensesByCategory = pl?.expensesByCategory ?? [];
   const expenseChartData = useMemo(
@@ -116,7 +121,11 @@ export function ProfitLossSection(): JSX.Element {
           <MetricCard
             label="Net revenue"
             value={pl ? <Money paise={pl.grossRevenuePaise} /> : isLoading ? '…' : '—'}
-            delta={{ value: `${from} → ${to}`, direction: 'flat' }}
+            delta={
+              pl && (pl.ecomRevenuePaise ?? 0) > 0
+                ? { value: `POS + ${pl.ecomOrderCount} online orders`, direction: 'flat' }
+                : { value: `${from} → ${to}`, direction: 'flat' }
+            }
             tone="success"
           />
           <MetricCard
@@ -156,7 +165,11 @@ export function ProfitLossSection(): JSX.Element {
           </header>
           <div className="divide-y divide-ink-100">
             <PlGroup title="Income">
-              <PlLine label="Gross billed (incl. GST)" paise={pl?.revenuePaise ?? 0} />
+              <PlLine label="Gross billed — POS (incl. GST)" paise={pl?.posRevenuePaise ?? 0} muted />
+              {(pl?.ecomRevenuePaise ?? 0) > 0 && (
+                <PlLine label={`Gross billed — Online (incl. GST) · ${pl?.ecomOrderCount ?? 0} orders`} paise={pl?.ecomRevenuePaise ?? 0} muted />
+              )}
+              <PlLine label="Total gross billed" paise={pl?.revenuePaise ?? 0} />
               <PlLine label="Less: GST collected" paise={-(pl?.gstPaise ?? 0)} muted />
               <PlLine
                 label="Net revenue"
@@ -164,10 +177,13 @@ export function ProfitLossSection(): JSX.Element {
                 strong
               />
               <PlLine
-                label="Making charges included"
+                label="Making charges included (POS)"
                 paise={pl?.makingChargesPaise ?? 0}
                 muted
               />
+              {(pl?.ecomShippingPaise ?? 0) > 0 && (
+                <PlLine label="Shipping collected (Online)" paise={pl?.ecomShippingPaise ?? 0} muted />
+              )}
               <PlLine label="Discounts given" paise={pl?.discountPaise ?? 0} muted />
               <PlLine label="Old-gold value accepted" paise={pl?.oldGoldPaise ?? 0} muted />
             </PlGroup>
@@ -211,7 +227,80 @@ export function ProfitLossSection(): JSX.Element {
             />
           </ChartCard>
         )}
+
+        {/* COGS breakdown */}
+        {cogs.length > 0 && (
+          <ChartCard
+            className="mt-4"
+            title="Cost of goods — metal / making / stone"
+            eyebrow="COGS"
+          >
+            <CurrencyBarChart
+              data={cogs.map((r) => ({
+                label: r.label,
+                metal: r.metalCostPaise,
+                making: r.makingChargesPaise,
+                stone: r.stoneChargesPaise,
+              }))}
+              series={[
+                { key: 'metal', name: 'Metal value', color: '#C99B2A' },
+                { key: 'making', name: 'Making charges', color: '#6E695F' },
+                { key: 'stone', name: 'Stone charges', color: '#A16207' },
+              ]}
+              height={260}
+            />
+          </ChartCard>
+        )}
       </div>
+
+      {/* Revenue by category */}
+      {revCat && (
+        <section className="space-y-3 sm:space-y-4 mt-4">
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-3 sm:gap-4">
+            {revCat.byMainCategory.length > 0 && (
+              <ChartCard title="Revenue by category" eyebrow="Category">
+                <CurrencyDonutChart
+                  data={revCat.byMainCategory.map((c) => ({
+                    label: c.category,
+                    value: c.revenuePaise,
+                  }))}
+                  height={240}
+                  centerLabel="Total"
+                  centerValue={`₹${(revCat.byMainCategory.reduce((s, c) => s + c.revenuePaise, 0) / 100).toLocaleString('en-IN', { maximumFractionDigits: 0 })}`}
+                />
+              </ChartCard>
+            )}
+            {revCat.bySubCategory.length > 0 && (
+              <ChartCard title="Revenue by sub-category" eyebrow="Sub-category">
+                <RankedBarChart
+                  data={revCat.bySubCategory.map((c) => ({
+                    label: c.subCategory,
+                    value: c.revenuePaise,
+                    sub: c.mainCategory,
+                  }))}
+                  height={Math.max(160, revCat.bySubCategory.length * 36)}
+                  unit="currency"
+                  name="Revenue"
+                />
+              </ChartCard>
+            )}
+          </div>
+          {revCat.topItems.length > 0 && (
+            <ChartCard title="Top 10 items by revenue" eyebrow="Items">
+              <RankedBarChart
+                data={revCat.topItems.map((i) => ({
+                  label: i.itemName,
+                  value: i.revenuePaise,
+                  sub: i.categoryName,
+                }))}
+                height={Math.max(160, revCat.topItems.length * 36)}
+                unit="currency"
+                name="Revenue"
+              />
+            </ChartCard>
+          )}
+        </section>
+      )}
     </div>
   );
 }

@@ -93,7 +93,16 @@ export function DailySalesSection(): JSX.Element {
         <MetricCard
           label="Revenue"
           value={ds ? <Money paise={ds.totals.revenuePaise} /> : isLoading ? '…' : '—'}
-          delta={ds ? { value: `${ds.totals.billCount} bills`, direction: 'flat' } : undefined}
+          delta={
+            ds
+              ? {
+                  value: (ds.totals.ecomOrderCount ?? 0) > 0
+                    ? `${ds.totals.billCount - (ds.totals.ecomOrderCount ?? 0)} POS + ${ds.totals.ecomOrderCount} online`
+                    : `${ds.totals.billCount} bills`,
+                  direction: 'flat',
+                }
+              : undefined
+          }
           tone="success"
         />
         <MetricCard

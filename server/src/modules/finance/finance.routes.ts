@@ -15,7 +15,7 @@
 
 import { Router } from 'express';
 import { z } from 'zod';
-import { Prisma } from '@prisma/client';
+import { Prisma, OrderStatus, PaymentStatus } from '@prisma/client';
 import {
   ExpenseInputSchema,
   ExpenseUpdateSchema,
@@ -118,9 +118,11 @@ financeRouter.get('/summary', async (req, res, next) => {
       openLoansAgg,
       vendorDuesAgg,
       activeAdvancesAgg,
+      mtdEcomAgg,
+      trendEcomOrders,
     ] = await Promise.all([
       prisma.bill.aggregate({
-        where: { tenantId, ...shopFilter, createdAt: { gte: monthStart, lte: now } },
+        where: { tenantId, voidedAt: null, ...shopFilter, createdAt: { gte: monthStart, lte: now } },
         _sum: { totalPaise: true, cgstPaise: true, sgstPaise: true, igstPaise: true },
         _count: { _all: true },
       }),
@@ -130,7 +132,7 @@ financeRouter.get('/summary', async (req, res, next) => {
         _count: { _all: true },
       }),
       prisma.bill.aggregate({
-        where: { tenantId, ...shopFilter, createdAt: { gte: lastMonthStart, lt: lastMonthEnd } },
+        where: { tenantId, voidedAt: null, ...shopFilter, createdAt: { gte: lastMonthStart, lt: lastMonthEnd } },
         _sum: { cgstPaise: true, sgstPaise: true, igstPaise: true, totalPaise: true },
         _count: { _all: true },
       }),
@@ -138,6 +140,7 @@ financeRouter.get('/summary', async (req, res, next) => {
         SELECT date_trunc('month', "createdAt") AS month, SUM("totalPaise")::bigint AS revenue
         FROM "Bill"
         WHERE "tenantId" = ${tenantId}
+          AND "voidedAt" IS NULL
           AND "createdAt" >= ${trendStart}
           ${q.shopId ? prismaShopFilter(q.shopId) : prismaNoOp()}
         GROUP BY 1
@@ -165,7 +168,7 @@ financeRouter.get('/summary', async (req, res, next) => {
       }),
       prisma.bill.groupBy({
         by: ['shopId'],
-        where: { tenantId, createdAt: { gte: monthStart, lte: now } },
+        where: { tenantId, voidedAt: null, createdAt: { gte: monthStart, lte: now } },
         _sum: { totalPaise: true, cgstPaise: true, sgstPaise: true, igstPaise: true },
         _count: { _all: true },
       }),
@@ -189,6 +192,27 @@ financeRouter.get('/summary', async (req, res, next) => {
         _sum: { amountPaise: true },
         _count: { _all: true },
       }),
+      // Ecommerce order MTD aggregate
+      prisma.order.aggregate({
+        where: {
+          paymentStatus: PaymentStatus.PAID,
+          status: { notIn: [OrderStatus.CANCELLED, OrderStatus.RETURNED] },
+          paidAt: { gte: monthStart, lte: now },
+        },
+        _sum: { totalPaise: true, taxPaise: true },
+        _count: { _all: true },
+      }),
+      // Ecommerce 6-month revenue trend
+      prisma.$queryRaw<Array<{ month: Date; revenue: bigint }>>`
+        SELECT date_trunc('month', "paidAt") AS month, SUM("totalPaise")::bigint AS revenue
+        FROM "Order"
+        WHERE "tenantId" = ${tenantId}
+          AND "paymentStatus" = 'PAID'
+          AND "status" NOT IN ('CANCELLED', 'RETURNED')
+          AND "paidAt" >= ${trendStart}
+        GROUP BY 1
+        ORDER BY 1 ASC
+      `,
     ]);
 
     const monthKeys: string[] = [];
@@ -206,19 +230,27 @@ financeRouter.get('/summary', async (req, res, next) => {
     for (const r of trendExpenses) {
       expByMonth.set(new Date(r.month).toISOString().slice(0, 7), Number(r.expense));
     }
+    const ecomRevByMonth = new Map<string, number>();
+    for (const r of trendEcomOrders) {
+      ecomRevByMonth.set(new Date(r.month).toISOString().slice(0, 7), Number(r.revenue));
+    }
     const trend = monthKeys.map((k, i) => ({
       month: k,
       label: monthLabels[i]!,
-      revenuePaise: revByMonth.get(k) ?? 0,
+      revenuePaise: (revByMonth.get(k) ?? 0) + (ecomRevByMonth.get(k) ?? 0),
       expensePaise: expByMonth.get(k) ?? 0,
     }));
 
-    const revenuePaise = mtdBillAgg._sum.totalPaise ?? 0;
+    const posRevenuePaise = mtdBillAgg._sum.totalPaise ?? 0;
+    const ecomRevenuePaise = mtdEcomAgg._sum.totalPaise ?? 0;
+    const revenuePaise = posRevenuePaise + ecomRevenuePaise;
     const expensePaise = mtdExpenseAgg._sum.amountPaise ?? 0;
-    const gstPaise =
+    const posGstPaise =
       (mtdBillAgg._sum.cgstPaise ?? 0) +
       (mtdBillAgg._sum.sgstPaise ?? 0) +
       (mtdBillAgg._sum.igstPaise ?? 0);
+    const ecomGstPaise = mtdEcomAgg._sum.taxPaise ?? 0;
+    const gstPaise = posGstPaise + ecomGstPaise;
 
     // Build branch-level rollup (shop name lookup happens in one extra query).
     const branchShopIds = Array.from(
@@ -256,6 +288,8 @@ financeRouter.get('/summary', async (req, res, next) => {
       asOf: now.toISOString(),
       mtd: {
         revenuePaise,
+        ecomRevenuePaise,
+        ecomOrderCount: mtdEcomAgg._count._all,
         expensePaise,
         gstPaise,
         netPaise: revenuePaise - expensePaise,
@@ -343,7 +377,13 @@ financeRouter.get('/daily-sales', async (req, res, next) => {
     }
     const shopFilter = shopWhere(q.shopId);
 
-    const [bills, payments, refundAgg, byShop, byDay] = await Promise.all([
+    const ecomDailyWhere = {
+      paymentStatus: PaymentStatus.PAID,
+      status: { notIn: [OrderStatus.CANCELLED, OrderStatus.RETURNED] },
+      paidAt: { gte: from, lte: to },
+    };
+
+    const [bills, payments, refundAgg, byShop, byDay, ecomAgg, ecomByDay] = await Promise.all([
       prisma.bill.aggregate({
         where: { tenantId, ...shopFilter, createdAt: { gte: from, lte: to }, voidedAt: null },
         _sum: { totalPaise: true, cgstPaise: true, sgstPaise: true, igstPaise: true, discountPaise: true },
@@ -386,6 +426,25 @@ financeRouter.get('/daily-sales', async (req, res, next) => {
         GROUP BY 1
         ORDER BY 1 ASC
       `,
+      // Ecommerce orders aggregate
+      prisma.order.aggregate({
+        where: ecomDailyWhere,
+        _sum: { totalPaise: true, taxPaise: true },
+        _count: { _all: true },
+      }),
+      // Ecommerce day-by-day
+      prisma.$queryRaw<Array<{ day: Date; revenue: bigint; cnt: bigint }>>`
+        SELECT date_trunc('day', "paidAt") AS day,
+               SUM("totalPaise")::bigint AS revenue,
+               COUNT(*)::bigint AS cnt
+        FROM "Order"
+        WHERE "tenantId" = ${tenantId}
+          AND "paymentStatus" = 'PAID'
+          AND "status" NOT IN ('CANCELLED', 'RETURNED')
+          AND "paidAt" BETWEEN ${from} AND ${to}
+        GROUP BY 1
+        ORDER BY 1 ASC
+      `,
     ]);
 
     const shopIds = byShop.map((b) => b.shopId);
@@ -394,6 +453,30 @@ financeRouter.get('/daily-sales', async (req, res, next) => {
       select: { id: true, name: true },
     });
     const nameById = new Map(shops.map((s) => [s.id, s.name]));
+
+    const ecomRevenuePaise = ecomAgg._sum.totalPaise ?? 0;
+    const ecomGstPaise = ecomAgg._sum.taxPaise ?? 0;
+    const ecomOrderCount = ecomAgg._count._all;
+
+    // Merge byDay arrays (POS bill days + ecommerce order days)
+    const dayMap = new Map<string, { revenuePaise: number; billCount: number }>();
+    for (const d of byDay) {
+      const key = new Date(d.day).toISOString().slice(0, 10);
+      dayMap.set(key, { revenuePaise: Number(d.revenue), billCount: Number(d.cnt) });
+    }
+    for (const d of ecomByDay) {
+      const key = new Date(d.day).toISOString().slice(0, 10);
+      const existing = dayMap.get(key);
+      if (existing) {
+        existing.revenuePaise += Number(d.revenue);
+        existing.billCount += Number(d.cnt);
+      } else {
+        dayMap.set(key, { revenuePaise: Number(d.revenue), billCount: Number(d.cnt) });
+      }
+    }
+    const mergedByDay = Array.from(dayMap.entries())
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([day, v]) => ({ day, ...v }));
 
     const totalRev = bills._sum.totalPaise ?? 0;
     const billCount = bills._count._all;
@@ -407,22 +490,29 @@ financeRouter.get('/daily-sales', async (req, res, next) => {
       .filter((p) => p.mode === 'UPI' || p.mode === 'CARD')
       .reduce((acc, p) => acc + Number(p.amount), 0);
 
+    const combinedRevenuePaise = totalRev + ecomRevenuePaise;
+    const combinedBillCount = billCount + ecomOrderCount;
+    const posGstPaiseDailySales =
+      (bills._sum.cgstPaise ?? 0) + (bills._sum.sgstPaise ?? 0) + (bills._sum.igstPaise ?? 0);
+    const combinedGstPaise = posGstPaiseDailySales + ecomGstPaise;
+
     res.json({
       data: {
         from: from.toISOString(),
         to: to.toISOString(),
         totals: {
-          revenuePaise: totalRev,
-          billCount,
-          avgBillPaise: billCount ? Math.round(totalRev / billCount) : 0,
+          revenuePaise: combinedRevenuePaise,
+          ecomRevenuePaise,
+          ecomOrderCount,
+          billCount: combinedBillCount,
+          avgBillPaise: combinedBillCount ? Math.round(combinedRevenuePaise / combinedBillCount) : 0,
           cashPaise,
           digitalPaise,
-          gstPaise:
-            (bills._sum.cgstPaise ?? 0) + (bills._sum.sgstPaise ?? 0) + (bills._sum.igstPaise ?? 0),
+          gstPaise: combinedGstPaise,
           discountPaise: bills._sum.discountPaise ?? 0,
           refundPaise,
           refundCount,
-          netCollectionPaise: totalRev - refundPaise,
+          netCollectionPaise: combinedRevenuePaise - refundPaise,
         },
         paymentMix: payments.map((p) => ({
           mode: p.mode,
@@ -439,10 +529,10 @@ financeRouter.get('/daily-sales', async (req, res, next) => {
             billCount: b._count._all,
           }))
           .sort((a, b) => b.revenuePaise - a.revenuePaise),
-        byDay: byDay.map((d) => ({
-          day: new Date(d.day).toISOString().slice(0, 10),
-          revenuePaise: Number(d.revenue),
-          billCount: Number(d.cnt),
+        byDay: mergedByDay.map((d) => ({
+          day: d.day,
+          revenuePaise: d.revenuePaise,
+          billCount: d.billCount,
         })),
       },
     });
@@ -467,13 +557,25 @@ financeRouter.get('/pl', async (req, res, next) => {
 
     const where = {
       createdAt: { gte: q.from, lte: q.to },
+      voidedAt: null,
       ...shopWhere(q.shopId),
     };
 
-    const [bills, expenses, expensesByCat] = await Promise.all([
+    // Ecommerce orders: revenue-recognized when payment is captured
+    const ecomWhere = {
+      paidAt: { gte: q.from, lte: q.to },
+      paymentStatus: PaymentStatus.PAID,
+      status: { notIn: [OrderStatus.CANCELLED, OrderStatus.RETURNED] },
+    };
+
+    const [bills, ecomOrders, expenses, expensesByCat] = await Promise.all([
       prisma.bill.findMany({
         where,
         select: { totalPaise: true, cgstPaise: true, sgstPaise: true, igstPaise: true, oldGoldValuePaise: true, makingChargesPaise: true, discountPaise: true },
+      }),
+      prisma.order.findMany({
+        where: ecomWhere,
+        select: { totalPaise: true, taxPaise: true, subtotalPaise: true, shippingPaise: true },
       }),
       prisma.expense.findMany({
         where: { paidAt: { gte: q.from, lte: q.to }, ...shopWhere(q.shopId) },
@@ -486,12 +588,22 @@ financeRouter.get('/pl', async (req, res, next) => {
         _count: { _all: true },
       }),
     ]);
-    const revenuePaise = sumPaise(bills.map((b) => b.totalPaise));
-    const gstPaise = sumPaise(bills.map((b) => b.cgstPaise + b.sgstPaise + b.igstPaise));
+
+    const posRevenuePaise = sumPaise(bills.map((b) => b.totalPaise));
+    const posGstPaise = sumPaise(bills.map((b) => b.cgstPaise + b.sgstPaise + b.igstPaise));
     const makingChargesPaise = sumPaise(bills.map((b) => b.makingChargesPaise));
     const discountPaise = sumPaise(bills.map((b) => b.discountPaise));
     const oldGoldPaise = sumPaise(bills.map((b) => b.oldGoldValuePaise));
+
+    const ecomRevenuePaise = sumPaise(ecomOrders.map((o) => o.totalPaise));
+    const ecomGstPaise = sumPaise(ecomOrders.map((o) => o.taxPaise));
+    const ecomShippingPaise = sumPaise(ecomOrders.map((o) => o.shippingPaise));
+    const ecomOrderCount = ecomOrders.length;
+
+    const revenuePaise = posRevenuePaise + ecomRevenuePaise;
+    const gstPaise = posGstPaise + ecomGstPaise;
     const grossRevenuePaise = revenuePaise - gstPaise;
+
     const expensePaise = sumPaise(expenses.map((e) => e.amountPaise));
     const revenueExpensePaise = sumPaise(
       expenses.filter((e) => e.classification === 'REVENUE').map((e) => e.amountPaise),
@@ -507,6 +619,12 @@ financeRouter.get('/pl', async (req, res, next) => {
         makingChargesPaise,
         discountPaise,
         oldGoldPaise,
+        posRevenuePaise,
+        posGstPaise,
+        ecomRevenuePaise,
+        ecomGstPaise,
+        ecomShippingPaise,
+        ecomOrderCount,
         expensePaise,
         revenueExpensePaise,
         capitalExpensePaise,
@@ -1861,6 +1979,339 @@ financeRouter.get('/vendors', async (_req, res, next) => {
       select: { id: true, name: true, gstNumber: true, phone: true, outstandingPaise: true },
     });
     res.json({ data: vendors });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// =====================================================================
+// COGS BREAKDOWN — monthly metal / making / stone breakdown
+// =====================================================================
+
+financeRouter.get('/cogs', async (req, res, next) => {
+  try {
+    const q = z
+      .object({
+        from: z.coerce.date(),
+        to: z.coerce.date(),
+        shopId: z.string().optional(),
+      })
+      .parse(req.query);
+    const tenantId = getTenantId();
+    if (!tenantId) { res.status(401).json(noTenantError()); return; }
+    const shopFilter = q.shopId ? prismaShopFilter(q.shopId) : prismaNoOp();
+
+    const rows = await prisma.$queryRaw<
+      Array<{
+        month: Date;
+        metalCostPaise: bigint;
+        makingChargesPaise: bigint;
+        stoneChargesPaise: bigint;
+        totalPaise: bigint;
+        billCount: bigint;
+      }>
+    >`
+      SELECT
+        DATE_TRUNC('month', "createdAt") AS month,
+        SUM("subtotalPaise" - "makingChargesPaise" - "stoneChargesPaise") AS "metalCostPaise",
+        SUM("makingChargesPaise")  AS "makingChargesPaise",
+        SUM("stoneChargesPaise")   AS "stoneChargesPaise",
+        SUM("subtotalPaise")       AS "totalPaise",
+        COUNT(*)                   AS "billCount"
+      FROM "Bill"
+      WHERE "tenantId" = ${tenantId}
+        AND "voidedAt" IS NULL
+        AND "createdAt" >= ${q.from}
+        AND "createdAt" <= ${q.to}
+        ${shopFilter}
+      GROUP BY DATE_TRUNC('month', "createdAt")
+      ORDER BY month ASC
+    `;
+
+    res.json({
+      data: rows.map((r) => ({
+        month: (r.month as Date).toISOString().slice(0, 7),
+        label: (r.month as Date).toLocaleDateString('en-IN', { month: 'short', year: '2-digit' }),
+        metalCostPaise: Number(r.metalCostPaise),
+        makingChargesPaise: Number(r.makingChargesPaise),
+        stoneChargesPaise: Number(r.stoneChargesPaise),
+        totalPaise: Number(r.totalPaise),
+        billCount: Number(r.billCount),
+      })),
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// =====================================================================
+// RETURNS — refund ledger with monthly trend
+// =====================================================================
+
+financeRouter.get('/returns', async (req, res, next) => {
+  try {
+    const q = z
+      .object({
+        from: z.coerce.date(),
+        to: z.coerce.date(),
+        shopId: z.string().optional(),
+        limit: z.coerce.number().int().min(1).max(200).default(50),
+      })
+      .parse(req.query);
+    const tenantId = getTenantId();
+    if (!tenantId) { res.status(401).json(noTenantError()); return; }
+    const shopFilter = q.shopId
+      ? Prisma.sql`AND b."shopId" = ${q.shopId}`
+      : Prisma.empty;
+
+    const [trend, refunds, ecomReturned] = await Promise.all([
+      prisma.$queryRaw<
+        Array<{ month: Date; refundPaise: bigint; refundCount: bigint }>
+      >`
+        SELECT
+          DATE_TRUNC('month', r."refundedAt") AS month,
+          SUM(r."amountPaise") AS "refundPaise",
+          COUNT(*)             AS "refundCount"
+        FROM "Refund" r
+        JOIN "Bill" b ON b.id = r."billId"
+        WHERE b."tenantId" = ${tenantId}
+          AND r."refundedAt" >= ${q.from}
+          AND r."refundedAt" <= ${q.to}
+          ${shopFilter}
+        GROUP BY DATE_TRUNC('month', r."refundedAt")
+        ORDER BY month ASC
+      `,
+      prisma.$queryRaw<
+        Array<{
+          id: string;
+          billNumber: string;
+          customerName: string | null;
+          shopName: string;
+          amountPaise: bigint;
+          reason: string;
+          refundedAt: Date;
+        }>
+      >`
+        SELECT
+          r.id,
+          b."billNumber",
+          c.name       AS "customerName",
+          s.name       AS "shopName",
+          r."amountPaise",
+          r.reason,
+          r."refundedAt"
+        FROM "Refund" r
+        JOIN "Bill"     b ON b.id   = r."billId"
+        JOIN "Shop"     s ON s.id   = b."shopId"
+        LEFT JOIN "Customer" c ON c.id = b."customerId"
+        WHERE b."tenantId" = ${tenantId}
+          AND r."refundedAt" >= ${q.from}
+          AND r."refundedAt" <= ${q.to}
+          ${shopFilter}
+        ORDER BY r."refundedAt" DESC
+        LIMIT ${q.limit}
+      `,
+      // Ecommerce RETURNED orders — use createdAt as the return date proxy
+      prisma.$queryRaw<
+        Array<{
+          id: string;
+          amountPaise: bigint;
+          reason: string | null;
+          returnedAt: Date;
+          customerName: string | null;
+        }>
+      >`
+        SELECT
+          o.id,
+          o."totalPaise"   AS "amountPaise",
+          o."cancelReason" AS reason,
+          o."createdAt"    AS "returnedAt",
+          c.name           AS "customerName"
+        FROM "Order" o
+        LEFT JOIN "Customer" c ON c.id = o."customerId"
+        WHERE o."tenantId" = ${tenantId}
+          AND o.status = 'RETURNED'
+          AND o."createdAt" >= ${q.from}
+          AND o."createdAt" <= ${q.to}
+        ORDER BY o."createdAt" DESC
+        LIMIT ${q.limit}
+      `,
+    ]);
+
+    // Merge POS refunds and ecommerce returns into unified trend
+    const trendMap = new Map<string, { refundPaise: number; refundCount: number }>();
+    for (const r of trend) {
+      const key = (r.month as Date).toISOString().slice(0, 7);
+      trendMap.set(key, { refundPaise: Number(r.refundPaise), refundCount: Number(r.refundCount) });
+    }
+    for (const o of ecomReturned) {
+      const key = (o.returnedAt as Date).toISOString().slice(0, 7);
+      const existing = trendMap.get(key);
+      if (existing) {
+        existing.refundPaise += Number(o.amountPaise);
+        existing.refundCount += 1;
+      } else {
+        trendMap.set(key, { refundPaise: Number(o.amountPaise), refundCount: 1 });
+      }
+    }
+
+    const mergedTrend = Array.from(trendMap.entries())
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([month, v]) => {
+        const d = new Date(`${month}-01T00:00:00Z`);
+        return {
+          month,
+          label: d.toLocaleDateString('en-IN', { month: 'short', year: '2-digit', timeZone: 'UTC' }),
+          refundPaise: v.refundPaise,
+          refundCount: v.refundCount,
+        };
+      });
+
+    const posRefundRows = refunds.map((r) => ({
+      id: r.id,
+      billNumber: r.billNumber,
+      orderNumber: null as string | null,
+      customerName: r.customerName ?? null,
+      shopName: r.shopName,
+      amountPaise: Number(r.amountPaise),
+      reason: r.reason,
+      refundedAt: (r.refundedAt as Date).toISOString(),
+      source: 'POS' as const,
+    }));
+
+    const ecomRefundRows = ecomReturned.map((o) => ({
+      id: o.id,
+      billNumber: null as string | null,
+      orderNumber: o.id.slice(-8).toUpperCase(),
+      customerName: o.customerName ?? null,
+      shopName: 'Online Store',
+      amountPaise: Number(o.amountPaise),
+      reason: o.reason ?? 'Returned',
+      refundedAt: (o.returnedAt as Date).toISOString(),
+      source: 'ECOM' as const,
+    }));
+
+    const allRefundRows = [...posRefundRows, ...ecomRefundRows].sort(
+      (a, b) => new Date(b.refundedAt).getTime() - new Date(a.refundedAt).getTime(),
+    ).slice(0, q.limit);
+
+    const totalRefundPaise = allRefundRows.reduce((s, r) => s + r.amountPaise, 0);
+
+    res.json({
+      data: {
+        trend: mergedTrend,
+        refunds: allRefundRows,
+        totals: { refundPaise: totalRefundPaise, refundCount: allRefundRows.length },
+      },
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// =====================================================================
+// REVENUE BY CATEGORY — main category / sub-category / top items
+// =====================================================================
+
+financeRouter.get('/revenue-by-category', async (req, res, next) => {
+  try {
+    const q = z
+      .object({
+        from: z.coerce.date(),
+        to: z.coerce.date(),
+        shopId: z.string().optional(),
+      })
+      .parse(req.query);
+    const tenantId = getTenantId();
+    if (!tenantId) { res.status(401).json(noTenantError()); return; }
+    const shopFilter = q.shopId
+      ? Prisma.sql`AND b."shopId" = ${q.shopId}`
+      : Prisma.empty;
+
+    const [catRows, topItems] = await Promise.all([
+      prisma.$queryRaw<
+        Array<{
+          mainCategory: string | null;
+          subCategory: string;
+          revenuePaise: bigint;
+          billCount: bigint;
+        }>
+      >`
+        SELECT
+          parent_cat.name  AS "mainCategory",
+          cat.name         AS "subCategory",
+          SUM(bl."linePaise")         AS "revenuePaise",
+          COUNT(DISTINCT b.id)        AS "billCount"
+        FROM "BillLine" bl
+        JOIN "Bill"     b         ON b.id   = bl."billId"
+        JOIN "Item"     i         ON i.id   = bl."itemId"
+        JOIN "Category" cat       ON cat.id = i."categoryId"
+        LEFT JOIN "Category" parent_cat ON parent_cat.id = cat."parentId"
+        WHERE b."tenantId" = ${tenantId}
+          AND b."voidedAt" IS NULL
+          AND b."createdAt" >= ${q.from}
+          AND b."createdAt" <= ${q.to}
+          ${shopFilter}
+        GROUP BY parent_cat.name, cat.name
+        ORDER BY "revenuePaise" DESC
+      `,
+      prisma.$queryRaw<
+        Array<{
+          itemName: string | null;
+          sku: string;
+          categoryName: string;
+          revenuePaise: bigint;
+          billCount: bigint;
+        }>
+      >`
+        SELECT
+          COALESCE(i.name, i.sku) AS "itemName",
+          i.sku,
+          cat.name                AS "categoryName",
+          SUM(bl."linePaise")     AS "revenuePaise",
+          COUNT(DISTINCT b.id)    AS "billCount"
+        FROM "BillLine" bl
+        JOIN "Bill"     b   ON b.id   = bl."billId"
+        JOIN "Item"     i   ON i.id   = bl."itemId"
+        JOIN "Category" cat ON cat.id = i."categoryId"
+        WHERE b."tenantId" = ${tenantId}
+          AND b."voidedAt" IS NULL
+          AND b."createdAt" >= ${q.from}
+          AND b."createdAt" <= ${q.to}
+          ${shopFilter}
+        GROUP BY i.id, i.name, i.sku, cat.name
+        ORDER BY "revenuePaise" DESC
+        LIMIT 10
+      `,
+    ]);
+
+    // Aggregate sub-categories up to main category level
+    const mainCatMap = new Map<string, number>();
+    for (const row of catRows) {
+      const key = row.mainCategory ?? row.subCategory;
+      mainCatMap.set(key, (mainCatMap.get(key) ?? 0) + Number(row.revenuePaise));
+    }
+
+    res.json({
+      data: {
+        byMainCategory: Array.from(mainCatMap.entries())
+          .map(([category, revenuePaise]) => ({ category, revenuePaise }))
+          .sort((a, b) => b.revenuePaise - a.revenuePaise),
+        bySubCategory: catRows.map((r) => ({
+          mainCategory: r.mainCategory ?? r.subCategory,
+          subCategory: r.subCategory,
+          revenuePaise: Number(r.revenuePaise),
+          billCount: Number(r.billCount),
+        })),
+        topItems: topItems.map((i) => ({
+          itemName: i.itemName ?? i.sku,
+          sku: i.sku,
+          categoryName: i.categoryName,
+          revenuePaise: Number(i.revenuePaise),
+          billCount: Number(i.billCount),
+        })),
+      },
+    });
   } catch (err) {
     next(err);
   }

@@ -64,7 +64,9 @@ export function OverviewSection({ shopId }: { shopId?: string }): JSX.Element {
           delta={
             mtd
               ? {
-                  value: `${mtd.billCount} bill${mtd.billCount === 1 ? '' : 's'}`,
+                  value: (mtd.ecomOrderCount ?? 0) > 0
+                    ? `${mtd.billCount} POS + ${mtd.ecomOrderCount} online`
+                    : `${mtd.billCount} bill${mtd.billCount === 1 ? '' : 's'}`,
                   direction: 'flat',
                 }
               : undefined

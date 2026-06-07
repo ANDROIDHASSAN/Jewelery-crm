@@ -29,6 +29,14 @@ export interface PlSummary {
   makingChargesPaise: number;
   discountPaise: number;
   oldGoldPaise: number;
+  // POS breakdown
+  posRevenuePaise: number;
+  posGstPaise: number;
+  // Ecommerce breakdown
+  ecomRevenuePaise: number;
+  ecomGstPaise: number;
+  ecomShippingPaise: number;
+  ecomOrderCount: number;
   expensePaise: number;
   revenueExpensePaise: number;
   capitalExpensePaise: number;
@@ -101,6 +109,8 @@ export interface FinanceSummary {
   asOf: string;
   mtd: {
     revenuePaise: number;
+    ecomRevenuePaise: number;
+    ecomOrderCount: number;
     expensePaise: number;
     gstPaise: number;
     netPaise: number;
@@ -124,6 +134,8 @@ export interface DailySales {
   to: string;
   totals: {
     revenuePaise: number;
+    ecomRevenuePaise: number;
+    ecomOrderCount: number;
     billCount: number;
     avgBillPaise: number;
     cashPaise: number;
@@ -393,6 +405,55 @@ export interface LedgerResponse {
 }
 
 // ---------------------------------------------------------------------
+// New response shapes (COGS / Returns / Revenue-by-Category)
+// ---------------------------------------------------------------------
+
+export interface CogsMonthRow {
+  month: string;
+  label: string;
+  metalCostPaise: number;
+  makingChargesPaise: number;
+  stoneChargesPaise: number;
+  totalPaise: number;
+  billCount: number;
+}
+
+export interface ReturnRow {
+  id: string;
+  billNumber: string | null;
+  orderNumber: string | null;
+  customerName: string | null;
+  shopName: string;
+  amountPaise: number;
+  reason: string;
+  refundedAt: string;
+  source: 'POS' | 'ECOM';
+}
+
+export interface ReturnsResponse {
+  trend: Array<{ month: string; label: string; refundPaise: number; refundCount: number }>;
+  refunds: ReturnRow[];
+  totals: { refundPaise: number; refundCount: number };
+}
+
+export interface RevenueByCategoryResponse {
+  byMainCategory: Array<{ category: string; revenuePaise: number }>;
+  bySubCategory: Array<{
+    mainCategory: string;
+    subCategory: string;
+    revenuePaise: number;
+    billCount: number;
+  }>;
+  topItems: Array<{
+    itemName: string;
+    sku: string;
+    categoryName: string;
+    revenuePaise: number;
+    billCount: number;
+  }>;
+}
+
+// ---------------------------------------------------------------------
 // Endpoints
 // ---------------------------------------------------------------------
 
@@ -614,6 +675,33 @@ export const financeApi = baseApi.injectEndpoints({
       query: (params) => ({ url: '/finance/accounting/ledger', params }),
       providesTags: ['Bill', 'Expense', 'VendorPayment', 'BankTransaction'],
     }),
+
+    // COGS breakdown by month
+    getCogs: b.query<
+      { data: CogsMonthRow[] },
+      { from: string; to: string; shopId?: string }
+    >({
+      query: (params) => ({ url: '/finance/cogs', params }),
+      providesTags: ['Bill'],
+    }),
+
+    // Returns / refunds
+    getReturns: b.query<
+      { data: ReturnsResponse },
+      { from: string; to: string; shopId?: string; limit?: number }
+    >({
+      query: (params) => ({ url: '/finance/returns', params }),
+      providesTags: ['Bill'],
+    }),
+
+    // Revenue by category / sub-category / item
+    getRevenueByCategory: b.query<
+      { data: RevenueByCategoryResponse },
+      { from: string; to: string; shopId?: string }
+    >({
+      query: (params) => ({ url: '/finance/revenue-by-category', params }),
+      providesTags: ['Bill'],
+    }),
   }),
 });
 
@@ -653,4 +741,7 @@ export const {
   useGetBalanceSheetQuery,
   useGetLedgerQuery,
   useSearchCustomersQuery,
+  useGetCogsQuery,
+  useGetReturnsQuery,
+  useGetRevenueByCategoryQuery,
 } = financeApi;

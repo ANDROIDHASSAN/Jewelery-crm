@@ -1,4 +1,7 @@
 node_modules/
+docs/
+req/
+review assests/
 dist/
 build/
 coverage/
