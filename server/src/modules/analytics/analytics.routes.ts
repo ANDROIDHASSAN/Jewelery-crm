@@ -1257,3 +1257,312 @@ analyticsRouter.delete('/scheduled-reports/:id', (req, res) => {
   scheduledReports.delete(req.params.id);
   res.status(204).end();
 });
+
+// =====================================================================
+// /repeat-orders — repeat customer orders shop-wise, by granularity
+// =====================================================================
+// A "repeat order" is an order/bill made by a customer who has at least
+// one prior order/bill before it. Covers both POS (Bill) and ecommerce
+// (Order). Returns a time series split by channel + a per-shop breakdown.
+
+analyticsRouter.get('/repeat-orders', async (req, res, next) => {
+  try {
+    const q = z
+      .object({
+        from: z.coerce.date(),
+        to: z.coerce.date(),
+        granularity: z.enum(['month', 'quarter', 'year']).default('month'),
+        shopId: z.string().optional(),
+      })
+      .parse(req.query);
+    const tenantId = getTenantId();
+    if (!tenantId) return noTenant(res);
+
+    const truncUnit =
+      q.granularity === 'year' ? 'year' : q.granularity === 'quarter' ? 'quarter' : 'month';
+    const truncSql = Prisma.raw(`'${truncUnit}'`);
+    const shopSql = q.shopId ? Prisma.sql`AND b."shopId" = ${q.shopId}` : Prisma.empty;
+
+    // POS repeat orders: bills made by a customer who had a prior bill before this one
+    const posRepeat = await prisma.$queryRaw<
+      Array<{ bucket: Date; shopId: string; repeatOrders: bigint; repeatCustomers: bigint }>
+    >`
+      SELECT
+        date_trunc(${truncSql}, b."createdAt") AS bucket,
+        b."shopId",
+        COUNT(*)::bigint AS "repeatOrders",
+        COUNT(DISTINCT b."customerId")::bigint AS "repeatCustomers"
+      FROM "Bill" b
+      WHERE b."tenantId" = ${tenantId}
+        AND b."createdAt" BETWEEN ${q.from} AND ${q.to}
+        AND b."voidedAt" IS NULL
+        AND b."customerId" IS NOT NULL
+        ${shopSql}
+        AND EXISTS (
+          SELECT 1 FROM "Bill" pb
+          WHERE pb."tenantId" = b."tenantId"
+            AND pb."customerId" = b."customerId"
+            AND pb."createdAt" < b."createdAt"
+            AND pb."voidedAt" IS NULL
+            AND pb."id" <> b."id"
+        )
+      GROUP BY 1, 2
+      ORDER BY 1 ASC
+    `;
+
+    // Ecommerce repeat orders: same logic on Order table
+    const ecomRepeat = await prisma.$queryRaw<
+      Array<{ bucket: Date; repeatOrders: bigint; repeatCustomers: bigint }>
+    >`
+      SELECT
+        date_trunc(${truncSql}, o."createdAt") AS bucket,
+        COUNT(*)::bigint AS "repeatOrders",
+        COUNT(DISTINCT o."customerId")::bigint AS "repeatCustomers"
+      FROM "Order" o
+      WHERE o."tenantId" = ${tenantId}
+        AND o."createdAt" BETWEEN ${q.from} AND ${q.to}
+        AND o."customerId" IS NOT NULL
+        AND o."status" <> 'CANCELLED'
+        AND EXISTS (
+          SELECT 1 FROM "Order" po
+          WHERE po."tenantId" = o."tenantId"
+            AND po."customerId" = o."customerId"
+            AND po."createdAt" < o."createdAt"
+            AND po."id" <> o."id"
+            AND po."status" <> 'CANCELLED'
+        )
+      GROUP BY 1
+      ORDER BY 1 ASC
+    `;
+
+    const shopIds = [...new Set(posRepeat.map((r) => r.shopId))];
+    const shops = shopIds.length
+      ? await prisma.shop.findMany({ where: { id: { in: shopIds } }, select: { id: true, name: true } })
+      : [];
+    const shopNameById = new Map(shops.map((s) => [s.id, s.name]));
+
+    type SeriesBucket = {
+      bucket: string;
+      posRepeatOrders: number;
+      posRepeatCustomers: number;
+      ecomRepeatOrders: number;
+      ecomRepeatCustomers: number;
+      totalRepeatOrders: number;
+    };
+    const bucketMap = new Map<string, SeriesBucket>();
+
+    const ensureBucket = (key: string): SeriesBucket => {
+      if (!bucketMap.has(key)) {
+        bucketMap.set(key, {
+          bucket: key,
+          posRepeatOrders: 0,
+          posRepeatCustomers: 0,
+          ecomRepeatOrders: 0,
+          ecomRepeatCustomers: 0,
+          totalRepeatOrders: 0,
+        });
+      }
+      return bucketMap.get(key)!;
+    };
+
+    for (const r of posRepeat) {
+      const b = ensureBucket(new Date(r.bucket).toISOString().slice(0, 10));
+      b.posRepeatOrders += Number(r.repeatOrders);
+      b.posRepeatCustomers += Number(r.repeatCustomers);
+      b.totalRepeatOrders += Number(r.repeatOrders);
+    }
+    for (const r of ecomRepeat) {
+      const b = ensureBucket(new Date(r.bucket).toISOString().slice(0, 10));
+      b.ecomRepeatOrders += Number(r.repeatOrders);
+      b.ecomRepeatCustomers += Number(r.repeatCustomers);
+      b.totalRepeatOrders += Number(r.repeatOrders);
+    }
+
+    const series = Array.from(bucketMap.values()).sort((a, c) => a.bucket.localeCompare(c.bucket));
+
+    const byShop = new Map<string, { shopId: string; shopName: string; repeatOrders: number; repeatCustomers: number }>();
+    for (const r of posRepeat) {
+      const entry = byShop.get(r.shopId) ?? {
+        shopId: r.shopId,
+        shopName: shopNameById.get(r.shopId) ?? r.shopId.slice(-6),
+        repeatOrders: 0,
+        repeatCustomers: 0,
+      };
+      entry.repeatOrders += Number(r.repeatOrders);
+      entry.repeatCustomers += Number(r.repeatCustomers);
+      byShop.set(r.shopId, entry);
+    }
+
+    res.json({
+      data: {
+        from: q.from.toISOString(),
+        to: q.to.toISOString(),
+        granularity: q.granularity,
+        series,
+        byShop: Array.from(byShop.values()).sort((a, b) => b.repeatOrders - a.repeatOrders),
+        totals: {
+          posRepeatOrders: series.reduce((a, r) => a + r.posRepeatOrders, 0),
+          ecomRepeatOrders: series.reduce((a, r) => a + r.ecomRepeatOrders, 0),
+          totalRepeatOrders: series.reduce((a, r) => a + r.totalRepeatOrders, 0),
+        },
+      },
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// =====================================================================
+// /returns — POS refunds + ecommerce RETURNED/CANCELLED by granularity
+// =====================================================================
+// "RTO" (Return to Origin) covers both channel types:
+//   - POS: Refund rows joined to Bill for shop / date
+//   - Ecommerce: Order.status = RETURNED (post-delivery) or CANCELLED
+
+analyticsRouter.get('/returns', async (req, res, next) => {
+  try {
+    const q = z
+      .object({
+        from: z.coerce.date(),
+        to: z.coerce.date(),
+        granularity: z.enum(['month', 'quarter', 'year']).default('month'),
+        shopId: z.string().optional(),
+      })
+      .parse(req.query);
+    const tenantId = getTenantId();
+    if (!tenantId) return noTenant(res);
+
+    const truncUnit =
+      q.granularity === 'year' ? 'year' : q.granularity === 'quarter' ? 'quarter' : 'month';
+    const truncSql = Prisma.raw(`'${truncUnit}'`);
+    const shopSql = q.shopId ? Prisma.sql`AND b."shopId" = ${q.shopId}` : Prisma.empty;
+
+    const [posReturns, ecomReturns] = await Promise.all([
+      prisma.$queryRaw<
+        Array<{ bucket: Date; shopId: string; cnt: bigint; amountPaise: bigint }>
+      >`
+        SELECT
+          date_trunc(${truncSql}, r."refundedAt") AS bucket,
+          b."shopId",
+          COUNT(*)::bigint AS cnt,
+          COALESCE(SUM(r."amountPaise"), 0)::bigint AS "amountPaise"
+        FROM "Refund" r
+        JOIN "Bill" b ON b."id" = r."billId"
+        WHERE b."tenantId" = ${tenantId}
+          AND r."refundedAt" BETWEEN ${q.from} AND ${q.to}
+          ${shopSql}
+        GROUP BY 1, 2
+        ORDER BY 1 ASC
+      `,
+      prisma.$queryRaw<
+        Array<{ bucket: Date; status: string; cnt: bigint; amountPaise: bigint }>
+      >`
+        SELECT
+          date_trunc(${truncSql}, o."createdAt") AS bucket,
+          o."status",
+          COUNT(*)::bigint AS cnt,
+          COALESCE(SUM(o."totalPaise"), 0)::bigint AS "amountPaise"
+        FROM "Order" o
+        WHERE o."tenantId" = ${tenantId}
+          AND o."status" IN ('RETURNED', 'CANCELLED')
+          AND o."createdAt" BETWEEN ${q.from} AND ${q.to}
+        GROUP BY 1, 2
+        ORDER BY 1 ASC
+      `,
+    ]);
+
+    const shopIds = [...new Set(posReturns.map((r) => r.shopId))];
+    const shops = shopIds.length
+      ? await prisma.shop.findMany({ where: { id: { in: shopIds } }, select: { id: true, name: true } })
+      : [];
+    const shopNameById = new Map(shops.map((s) => [s.id, s.name]));
+
+    type ReturnBucket = {
+      bucket: string;
+      posCount: number;
+      posAmountPaise: number;
+      ecomReturnCount: number;
+      ecomCancelCount: number;
+      ecomAmountPaise: number;
+      totalCount: number;
+    };
+    const bucketMap = new Map<string, ReturnBucket>();
+
+    const ensureBucket = (key: string): ReturnBucket => {
+      if (!bucketMap.has(key)) {
+        bucketMap.set(key, {
+          bucket: key,
+          posCount: 0,
+          posAmountPaise: 0,
+          ecomReturnCount: 0,
+          ecomCancelCount: 0,
+          ecomAmountPaise: 0,
+          totalCount: 0,
+        });
+      }
+      return bucketMap.get(key)!;
+    };
+
+    for (const r of posReturns) {
+      const b = ensureBucket(new Date(r.bucket).toISOString().slice(0, 10));
+      b.posCount += Number(r.cnt);
+      b.posAmountPaise += Number(r.amountPaise);
+      b.totalCount += Number(r.cnt);
+    }
+    for (const r of ecomReturns) {
+      const b = ensureBucket(new Date(r.bucket).toISOString().slice(0, 10));
+      if (r.status === 'RETURNED') {
+        b.ecomReturnCount += Number(r.cnt);
+      } else {
+        b.ecomCancelCount += Number(r.cnt);
+      }
+      b.ecomAmountPaise += Number(r.amountPaise);
+      b.totalCount += Number(r.cnt);
+    }
+
+    const series = Array.from(bucketMap.values()).sort((a, c) => a.bucket.localeCompare(c.bucket));
+
+    const byShop = new Map<string, { shopId: string; shopName: string; cnt: number; amountPaise: number }>();
+    for (const r of posReturns) {
+      const entry = byShop.get(r.shopId) ?? {
+        shopId: r.shopId,
+        shopName: shopNameById.get(r.shopId) ?? r.shopId.slice(-6),
+        cnt: 0,
+        amountPaise: 0,
+      };
+      entry.cnt += Number(r.cnt);
+      entry.amountPaise += Number(r.amountPaise);
+      byShop.set(r.shopId, entry);
+    }
+
+    const totalPosCount = posReturns.reduce((a, r) => a + Number(r.cnt), 0);
+    const totalPosAmount = posReturns.reduce((a, r) => a + Number(r.amountPaise), 0);
+    const ecomReturnedRows = ecomReturns.filter((r) => r.status === 'RETURNED');
+    const ecomCancelledRows = ecomReturns.filter((r) => r.status === 'CANCELLED');
+
+    res.json({
+      data: {
+        from: q.from.toISOString(),
+        to: q.to.toISOString(),
+        granularity: q.granularity,
+        series,
+        byShop: Array.from(byShop.values())
+          .map((s) => ({ shopId: s.shopId, shopName: s.shopName, count: s.cnt, amountPaise: s.amountPaise }))
+          .sort((a, b) => b.count - a.count),
+        totals: {
+          posCount: totalPosCount,
+          posAmountPaise: totalPosAmount,
+          ecomReturnCount: ecomReturnedRows.reduce((a, r) => a + Number(r.cnt), 0),
+          ecomCancelCount: ecomCancelledRows.reduce((a, r) => a + Number(r.cnt), 0),
+          ecomAmountPaise: ecomReturns.reduce((a, r) => a + Number(r.amountPaise), 0),
+          totalCount:
+            totalPosCount +
+            ecomReturnedRows.reduce((a, r) => a + Number(r.cnt), 0) +
+            ecomCancelledRows.reduce((a, r) => a + Number(r.cnt), 0),
+        },
+      },
+    });
+  } catch (err) {
+    next(err);
+  }
+});

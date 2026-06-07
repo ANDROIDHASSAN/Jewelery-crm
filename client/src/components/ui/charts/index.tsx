@@ -297,3 +297,39 @@ export function CurrencyDonutChart({
     </div>
   );
 }
+
+// Count-unit variant of CurrencyBarChart — tooltip formats values as plain
+// numbers (not currency), suitable for repeat-orders and returns charts.
+export function CountBarChart({ data, series, height = 240 }: RevenueExpenseBarChartProps): JSX.Element {
+  return (
+    <ResponsiveContainer width="100%" height={height}>
+      <BarChart data={data} margin={{ top: 8, right: 8, left: -10, bottom: 0 }}>
+        <XAxis
+          dataKey="label"
+          tick={{ fill: BRAND.ink500, fontSize: 11 }}
+          tickLine={false}
+          axisLine={{ stroke: BRAND.ink100 }}
+        />
+        <YAxis
+          tickFormatter={(v) => v.toLocaleString('en-IN')}
+          tick={{ fill: BRAND.ink500, fontSize: 11 }}
+          tickLine={false}
+          axisLine={false}
+          width={40}
+        />
+        <Tooltip content={<NumberTooltip />} cursor={{ fill: '#F4F2EE' }} />
+        <Legend wrapperStyle={{ fontSize: 11, color: BRAND.ink500 }} iconType="circle" />
+        {series.map((s, i) => (
+          <Bar
+            key={s.key}
+            dataKey={s.key}
+            name={s.name}
+            fill={s.color ?? PALETTE[i % PALETTE.length]}
+            radius={[3, 3, 0, 0]}
+            maxBarSize={42}
+          />
+        ))}
+      </BarChart>
+    </ResponsiveContainer>
+  );
+}

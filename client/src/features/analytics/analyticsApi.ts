@@ -230,6 +230,68 @@ export interface ScheduledReport {
   createdAt: string;
 }
 
+export interface RepeatOrderSeriesPoint {
+  bucket: string;
+  posRepeatOrders: number;
+  posRepeatCustomers: number;
+  ecomRepeatOrders: number;
+  ecomRepeatCustomers: number;
+  totalRepeatOrders: number;
+}
+
+export interface RepeatOrderByShop {
+  shopId: string;
+  shopName: string;
+  repeatOrders: number;
+  repeatCustomers: number;
+}
+
+export interface RepeatOrdersReport {
+  from: string;
+  to: string;
+  granularity: 'month' | 'quarter' | 'year';
+  series: RepeatOrderSeriesPoint[];
+  byShop: RepeatOrderByShop[];
+  totals: {
+    posRepeatOrders: number;
+    ecomRepeatOrders: number;
+    totalRepeatOrders: number;
+  };
+}
+
+export interface ReturnsSeriesPoint {
+  bucket: string;
+  posCount: number;
+  posAmountPaise: number;
+  ecomReturnCount: number;
+  ecomCancelCount: number;
+  ecomAmountPaise: number;
+  totalCount: number;
+}
+
+export interface ReturnsByShop {
+  shopId: string;
+  shopName: string;
+  count: number;
+  amountPaise: number;
+}
+
+export interface ReturnsReport {
+  from: string;
+  to: string;
+  granularity: 'month' | 'quarter' | 'year';
+  series: ReturnsSeriesPoint[];
+  byShop: ReturnsByShop[];
+  totals: {
+    posCount: number;
+    posAmountPaise: number;
+    ecomReturnCount: number;
+    ecomCancelCount: number;
+    ecomAmountPaise: number;
+    totalCount: number;
+  };
+}
+
 // ---------------------------------------------------------------------
 // Endpoints
 // ---------------------------------------------------------------------
@@ -335,6 +397,20 @@ export const analyticsApi = baseApi.injectEndpoints({
       query: (id) => ({ url: `/analytics/scheduled-reports/${id}`, method: 'DELETE' }),
       invalidatesTags: ['SalesReport'],
     }),
+    getRepeatOrders: b.query<
+      ApiOne<RepeatOrdersReport>,
+      { from: string; to: string; granularity: 'month' | 'quarter' | 'year'; shopId?: string }
+    >({
+      query: (params) => ({ url: '/analytics/repeat-orders', params }),
+      providesTags: ['Bill', 'SalesReport'],
+    }),
+    getReturns: b.query<
+      ApiOne<ReturnsReport>,
+      { from: string; to: string; granularity: 'month' | 'quarter' | 'year'; shopId?: string }
+    >({
+      query: (params) => ({ url: '/analytics/returns', params }),
+      providesTags: ['Bill', 'SalesReport'],
+    }),
   }),
 });
 
@@ -355,4 +431,6 @@ export const {
   useGetScheduledReportsQuery,
   useCreateScheduledReportMutation,
   useDeleteScheduledReportMutation,
+  useGetRepeatOrdersQuery,
+  useGetReturnsQuery,
 } = analyticsApi;

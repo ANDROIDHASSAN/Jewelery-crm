@@ -21,6 +21,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import {
   ChartCard,
+  CountBarChart,
   CurrencyBarChart,
   CurrencyDonutChart,
   RankedBarChart,
@@ -43,6 +44,8 @@ import {
   useGetScheduledReportsQuery,
   useCreateScheduledReportMutation,
   useDeleteScheduledReportMutation,
+  useGetRepeatOrdersQuery,
+  useGetReturnsQuery,
   type ScheduledReport,
 } from '@/features/analytics/analyticsApi';
 import { useGetDashboardSummaryQuery } from '@/features/dashboard/dashboardApi';
@@ -68,6 +71,8 @@ type TabKey =
   | 'gst'
   | 'adroi'
   | 'goldimpact'
+  | 'repeatorders'
+  | 'returns'
   | 'scheduled';
 
 const TAB_DEFS: Array<{ key: TabKey; label: string; eyebrow: string; title: string }> = [
@@ -83,6 +88,8 @@ const TAB_DEFS: Array<{ key: TabKey; label: string; eyebrow: string; title: stri
   { key: 'gst', label: 'GST filing', eyebrow: 'Tax', title: 'GST filing summary' },
   { key: 'adroi', label: 'Ad ROI', eyebrow: 'Marketing', title: 'Ad ROI report' },
   { key: 'goldimpact', label: 'Gold rate impact', eyebrow: 'Macro', title: 'Gold rate impact on revenue' },
+  { key: 'repeatorders', label: 'Repeat orders', eyebrow: 'Retention', title: 'Repeat orders · shop-wise & ecommerce' },
+  { key: 'returns', label: 'Returns / RTO', eyebrow: 'Returns', title: 'Returns & RTO · POS vs ecommerce' },
   { key: 'scheduled', label: 'Email reports', eyebrow: 'Automation', title: 'Scheduled email reports' },
 ];
 
@@ -146,6 +153,8 @@ export function AnalyticsPage(): JSX.Element {
         {activeTab === 'gst' && <GstFilingSection />}
         {activeTab === 'adroi' && <AdRoiSection />}
         {activeTab === 'goldimpact' && <GoldRateImpactSection />}
+        {activeTab === 'repeatorders' && <RepeatOrdersSection />}
+        {activeTab === 'returns' && <ReturnsSection />}
         {activeTab === 'scheduled' && <ScheduledReportsSection />}
       </div>
     </div>
@@ -1729,6 +1738,370 @@ function GoldRateImpactSection(): JSX.Element {
           </table>
         </section>
       )}
+    </div>
+  );
+}
+
+// =====================================================================
+// 14. Repeat orders — shop-wise + ecommerce, by granularity
+// =====================================================================
+
+function RepeatOrdersSection(): JSX.Element {
+  type Granularity = 'month' | 'quarter' | 'year';
+  const [granularity, setGranularity] = useState<Granularity>('month');
+  const [from, setFrom] = useState(daysAgo(365));
+  const [to, setTo] = useState(today());
+  const [shopId, setShopId] = useState<string | undefined>(undefined);
+
+  const { data, isLoading } = useGetRepeatOrdersQuery({
+    granularity,
+    from: new Date(from).toISOString(),
+    to: new Date(`${to}T23:59:59.999Z`).toISOString(),
+    shopId,
+  });
+  const rep = data?.data;
+  const series = rep?.series ?? [];
+
+  function bucketLabel(b: string): string {
+    const d = new Date(b);
+    if (granularity === 'year') return d.toLocaleDateString('en-IN', { year: 'numeric' });
+    if (granularity === 'quarter') {
+      const q = Math.floor(d.getUTCMonth() / 3) + 1;
+      return `Q${q} ${d.getUTCFullYear()}`;
+    }
+    return d.toLocaleDateString('en-IN', { month: 'short', year: '2-digit' });
+  }
+
+  const chartData = series.map((s) => ({
+    label: bucketLabel(s.bucket),
+    pos: s.posRepeatOrders,
+    ecom: s.ecomRepeatOrders,
+  }));
+
+  const shopData = (rep?.byShop ?? []).map((s) => ({
+    label: s.shopName,
+    value: s.repeatOrders,
+    sub: `${s.repeatCustomers} repeat customers`,
+  }));
+
+  function handleCsv(): void {
+    const out: (string | number)[][] = [
+      ['Repeat Orders', `${from} → ${to}`, `Granularity: ${granularity}`],
+      [],
+      ['Period', 'POS Repeat Orders', 'POS Repeat Customers', 'Ecom Repeat Orders', 'Ecom Repeat Customers', 'Total'],
+      ...series.map((s) => [
+        bucketLabel(s.bucket),
+        s.posRepeatOrders,
+        s.posRepeatCustomers,
+        s.ecomRepeatOrders,
+        s.ecomRepeatCustomers,
+        s.totalRepeatOrders,
+      ]),
+    ];
+    downloadCsv(`repeat-orders-${granularity}-${from}-to-${to}.csv`, out);
+  }
+
+  return (
+    <div className="space-y-4 sm:space-y-6">
+      <FilterRow>
+        <label className="block text-sm">
+          <span className="text-[11px] uppercase tracking-wider text-ink-500">Granularity</span>
+          <select
+            value={granularity}
+            onChange={(e) => setGranularity(e.target.value as Granularity)}
+            className="mt-1 w-full h-10 px-3 rounded-md border border-ink-200 text-sm"
+          >
+            <option value="month">Monthly</option>
+            <option value="quarter">Quarterly</option>
+            <option value="year">Yearly</option>
+          </select>
+        </label>
+        <DateInput label="From" value={from} onChange={setFrom} />
+        <DateInput label="To" value={to} onChange={setTo} />
+        <ShopPicker value={shopId} onChange={setShopId} />
+      </FilterRow>
+
+      {rep && (
+        <section className="grid grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4">
+          <MetricCard
+            label="Total repeat orders"
+            value={String(rep.totals?.totalRepeatOrders ?? 0)}
+            tone="success"
+            delta={{ value: 'POS + Ecommerce', direction: 'flat' }}
+          />
+          <MetricCard
+            label="POS repeat orders"
+            value={String(rep.totals?.posRepeatOrders ?? 0)}
+            delta={{ value: 'In-store returning', direction: 'flat' }}
+          />
+          <MetricCard
+            label="Ecom repeat orders"
+            value={String(rep.totals?.ecomRepeatOrders ?? 0)}
+            tone={(rep.totals?.ecomRepeatOrders ?? 0) > 0 ? 'success' : undefined}
+            delta={{ value: 'Online returning', direction: 'flat' }}
+          />
+        </section>
+      )}
+
+      <div className="flex justify-end">
+        <Button variant="outline" size="sm" onClick={handleCsv} disabled={series.length === 0}>
+          <Download className="h-4 w-4" /> CSV
+        </Button>
+      </div>
+
+      <section className="grid grid-cols-1 lg:grid-cols-2 gap-3 sm:gap-4">
+        <ChartCard title={`Repeat orders · POS vs Ecommerce · by ${granularity}`} eyebrow="Retention">
+          {isLoading ? (
+            <p className="text-sm text-ink-500">Loading…</p>
+          ) : chartData.length === 0 ? (
+            <p className="text-sm text-ink-500">No repeat orders in this range.</p>
+          ) : (
+            <CountBarChart
+              data={chartData}
+              series={[
+                { key: 'pos', name: 'POS (in-store)', color: '#C99B2A' },
+                { key: 'ecom', name: 'Ecommerce', color: '#604910' },
+              ]}
+              height={300}
+            />
+          )}
+        </ChartCard>
+
+        <ChartCard title="Repeat orders by shop" eyebrow="Shop-wise">
+          {isLoading ? (
+            <p className="text-sm text-ink-500">Loading…</p>
+          ) : shopData.length === 0 ? (
+            <p className="text-sm text-ink-500">No shop data available.</p>
+          ) : (
+            <RankedBarChart data={shopData} unit="count" name="Repeat orders" height={300} />
+          )}
+        </ChartCard>
+      </section>
+
+      <section className="rounded-md border border-ink-100 bg-ink-0 overflow-x-auto">
+        <header className="px-4 py-3 border-b border-ink-100">
+          <h2 className="text-md font-medium text-ink-900">Period breakdown</h2>
+        </header>
+        <table className="w-full text-sm min-w-[640px]">
+          <thead className="text-eyebrow uppercase text-ink-500 bg-ink-25">
+            <tr>
+              <th className="text-left px-4 py-2.5">Period</th>
+              <th className="text-right px-4 py-2.5">POS orders</th>
+              <th className="text-right px-4 py-2.5">POS customers</th>
+              <th className="text-right px-4 py-2.5">Ecom orders</th>
+              <th className="text-right px-4 py-2.5">Ecom customers</th>
+              <th className="text-right px-4 py-2.5">Total</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-ink-100">
+            {series.length === 0 && !isLoading && (
+              <tr>
+                <td colSpan={6} className="px-4 py-6 text-center text-ink-500">
+                  No repeat orders found.
+                </td>
+              </tr>
+            )}
+            {series.map((s) => (
+              <tr key={s.bucket} className="hover:bg-ink-25/50">
+                <td className="px-4 py-2 font-medium text-ink-900">{bucketLabel(s.bucket)}</td>
+                <td className="px-4 py-2 text-right tabular-nums">{s.posRepeatOrders.toLocaleString('en-IN')}</td>
+                <td className="px-4 py-2 text-right tabular-nums text-ink-600">{s.posRepeatCustomers.toLocaleString('en-IN')}</td>
+                <td className="px-4 py-2 text-right tabular-nums">{s.ecomRepeatOrders.toLocaleString('en-IN')}</td>
+                <td className="px-4 py-2 text-right tabular-nums text-ink-600">{s.ecomRepeatCustomers.toLocaleString('en-IN')}</td>
+                <td className="px-4 py-2 text-right tabular-nums font-medium text-ink-900">{s.totalRepeatOrders.toLocaleString('en-IN')}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </section>
+    </div>
+  );
+}
+
+// =====================================================================
+// 15. Returns / RTO — POS refunds + ecommerce returns by granularity
+// =====================================================================
+
+function ReturnsSection(): JSX.Element {
+  type Granularity = 'month' | 'quarter' | 'year';
+  const [granularity, setGranularity] = useState<Granularity>('month');
+  const [from, setFrom] = useState(daysAgo(365));
+  const [to, setTo] = useState(today());
+  const [shopId, setShopId] = useState<string | undefined>(undefined);
+
+  const { data, isLoading } = useGetReturnsQuery({
+    granularity,
+    from: new Date(from).toISOString(),
+    to: new Date(`${to}T23:59:59.999Z`).toISOString(),
+    shopId,
+  });
+  const rep = data?.data;
+  const series = rep?.series ?? [];
+
+  function bucketLabel(b: string): string {
+    const d = new Date(b);
+    if (granularity === 'year') return d.toLocaleDateString('en-IN', { year: 'numeric' });
+    if (granularity === 'quarter') {
+      const q = Math.floor(d.getUTCMonth() / 3) + 1;
+      return `Q${q} ${d.getUTCFullYear()}`;
+    }
+    return d.toLocaleDateString('en-IN', { month: 'short', year: '2-digit' });
+  }
+
+  const chartData = series.map((s) => ({
+    label: bucketLabel(s.bucket),
+    pos: s.posCount,
+    ecomReturn: s.ecomReturnCount,
+    ecomCancel: s.ecomCancelCount,
+  }));
+
+  const shopData = (rep?.byShop ?? []).map((s) => ({
+    label: s.shopName,
+    value: s.count,
+    sub: `Refund: ${s.count}`,
+  }));
+
+  function handleCsv(): void {
+    const out: (string | number)[][] = [
+      ['Returns / RTO', `${from} → ${to}`, `Granularity: ${granularity}`],
+      [],
+      ['Period', 'POS Returns', 'POS Amount (₹)', 'Ecom Returned', 'Ecom Cancelled', 'Total Count'],
+      ...series.map((s) => [
+        bucketLabel(s.bucket),
+        s.posCount,
+        paiseToRupeeString(s.posAmountPaise),
+        s.ecomReturnCount,
+        s.ecomCancelCount,
+        s.totalCount,
+      ]),
+    ];
+    downloadCsv(`returns-${granularity}-${from}-to-${to}.csv`, out);
+  }
+
+  return (
+    <div className="space-y-4 sm:space-y-6">
+      <FilterRow>
+        <label className="block text-sm">
+          <span className="text-[11px] uppercase tracking-wider text-ink-500">Granularity</span>
+          <select
+            value={granularity}
+            onChange={(e) => setGranularity(e.target.value as Granularity)}
+            className="mt-1 w-full h-10 px-3 rounded-md border border-ink-200 text-sm"
+          >
+            <option value="month">Monthly</option>
+            <option value="quarter">Quarterly</option>
+            <option value="year">Yearly</option>
+          </select>
+        </label>
+        <DateInput label="From" value={from} onChange={setFrom} />
+        <DateInput label="To" value={to} onChange={setTo} />
+        <ShopPicker value={shopId} onChange={setShopId} />
+      </FilterRow>
+
+      {rep && (
+        <section className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
+          <MetricCard
+            label="Total returns"
+            value={String(rep.totals?.totalCount ?? 0)}
+            tone={(rep.totals?.totalCount ?? 0) > 0 ? 'warning' : undefined}
+          />
+          <MetricCard
+            label="POS refunds"
+            value={String(rep.totals?.posCount ?? 0)}
+            delta={{ value: `₹${((rep.totals?.posAmountPaise ?? 0) / 100).toLocaleString('en-IN')}`, direction: 'flat' }}
+          />
+          <MetricCard
+            label="Ecom returned"
+            value={String(rep.totals?.ecomReturnCount ?? 0)}
+            tone={(rep.totals?.ecomReturnCount ?? 0) > 0 ? 'warning' : undefined}
+          />
+          <MetricCard
+            label="Ecom cancelled"
+            value={String(rep.totals?.ecomCancelCount ?? 0)}
+          />
+        </section>
+      )}
+
+      <div className="flex justify-end">
+        <Button variant="outline" size="sm" onClick={handleCsv} disabled={series.length === 0}>
+          <Download className="h-4 w-4" /> CSV
+        </Button>
+      </div>
+
+      <section className="grid grid-cols-1 lg:grid-cols-2 gap-3 sm:gap-4">
+        <ChartCard title={`Returns by channel · by ${granularity}`} eyebrow="RTO">
+          {isLoading ? (
+            <p className="text-sm text-ink-500">Loading…</p>
+          ) : chartData.length === 0 ? (
+            <p className="text-sm text-ink-500">No returns in this range.</p>
+          ) : (
+            <CountBarChart
+              data={chartData}
+              series={[
+                { key: 'pos', name: 'POS refunds', color: '#C99B2A' },
+                { key: 'ecomReturn', name: 'Ecom returned', color: '#B91C1C' },
+                { key: 'ecomCancel', name: 'Ecom cancelled', color: '#6E695F' },
+              ]}
+              height={300}
+            />
+          )}
+        </ChartCard>
+
+        <ChartCard title="POS returns by shop" eyebrow="Shop-wise">
+          {isLoading ? (
+            <p className="text-sm text-ink-500">Loading…</p>
+          ) : shopData.length === 0 ? (
+            <p className="text-sm text-ink-500">No POS return data available.</p>
+          ) : (
+            <RankedBarChart data={shopData} unit="count" name="Returns" height={300} />
+          )}
+        </ChartCard>
+      </section>
+
+      <section className="rounded-md border border-ink-100 bg-ink-0 overflow-x-auto">
+        <header className="px-4 py-3 border-b border-ink-100">
+          <h2 className="text-md font-medium text-ink-900">Period breakdown</h2>
+        </header>
+        <table className="w-full text-sm min-w-[680px]">
+          <thead className="text-eyebrow uppercase text-ink-500 bg-ink-25">
+            <tr>
+              <th className="text-left px-4 py-2.5">Period</th>
+              <th className="text-right px-4 py-2.5">POS refunds</th>
+              <th className="text-right px-4 py-2.5">POS amount</th>
+              <th className="text-right px-4 py-2.5">Ecom returned</th>
+              <th className="text-right px-4 py-2.5">Ecom cancelled</th>
+              <th className="text-right px-4 py-2.5">Total</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-ink-100">
+            {series.length === 0 && !isLoading && (
+              <tr>
+                <td colSpan={6} className="px-4 py-6 text-center text-ink-500">
+                  No returns found.
+                </td>
+              </tr>
+            )}
+            {series.map((s) => (
+              <tr key={s.bucket} className="hover:bg-ink-25/50">
+                <td className="px-4 py-2 font-medium text-ink-900">{bucketLabel(s.bucket)}</td>
+                <td className="px-4 py-2 text-right tabular-nums">{s.posCount.toLocaleString('en-IN')}</td>
+                <td className="px-4 py-2 text-right">
+                  {s.posAmountPaise > 0 ? <Money paise={s.posAmountPaise} /> : '—'}
+                </td>
+                <td className={cn('px-4 py-2 text-right tabular-nums', s.ecomReturnCount > 0 ? 'text-danger-700' : '')}>
+                  {s.ecomReturnCount.toLocaleString('en-IN')}
+                </td>
+                <td className="px-4 py-2 text-right tabular-nums text-ink-600">
+                  {s.ecomCancelCount.toLocaleString('en-IN')}
+                </td>
+                <td className="px-4 py-2 text-right tabular-nums font-medium text-ink-900">
+                  {s.totalCount.toLocaleString('en-IN')}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </section>
     </div>
   );
 }
