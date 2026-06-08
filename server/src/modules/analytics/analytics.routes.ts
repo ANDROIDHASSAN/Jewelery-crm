@@ -508,9 +508,15 @@ analyticsRouter.get('/inventory-valuation', async (req, res, next) => {
 
     for (const it of items) {
       const rate = rateByPurity.get(it.purityCaratX100) ?? 642_000;
+      // Non-precious metals (gold-tone stainless steel, etc.) have no spot-metal
+      // basis, so market value equals cost — unrealized P&L stays zero for them.
+      const itemMetalType = it.category.metalType;
+      const isNonPreciousMetal = itemMetalType === 'STAINLESS_STEEL' || itemMetalType === 'OTHER';
       // Per-piece market value at today's rate; we scale by `units` below so
       // a lot row of 23 gold bars contributes 23× the value, not 1×.
-      const marketPerPiece = computeGoldValuePaise(it.weightMg, it.purityCaratX100, rate);
+      const marketPerPiece = isNonPreciousMetal
+        ? it.costPricePaise
+        : computeGoldValuePaise(it.weightMg, it.purityCaratX100, rate);
       const units = it.isSerialized ? 1 : it.quantityOnHand;
       const weightTotal = it.weightMg * units;
       const costTotal = it.costPricePaise * units;
