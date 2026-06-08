@@ -1073,18 +1073,33 @@ financeRouter.get('/gst-summary', async (req, res, next) => {
     const [year, monthStr] = q.month.split('-');
     const from = new Date(Date.UTC(Number(year), Number(monthStr) - 1, 1));
     const to = new Date(Date.UTC(Number(year), Number(monthStr), 1));
-    const bills = await prisma.bill.findMany({
-      where: { createdAt: { gte: from, lt: to }, ...shopWhere(q.shopId) },
-      select: { cgstPaise: true, sgstPaise: true, igstPaise: true, totalPaise: true },
-    });
+    const [bills, ecomOrders] = await Promise.all([
+      prisma.bill.findMany({
+        where: { createdAt: { gte: from, lt: to }, ...shopWhere(q.shopId) },
+        select: { cgstPaise: true, sgstPaise: true, igstPaise: true, totalPaise: true },
+      }),
+      // E-commerce orders: tax recorded as a single field (treated as IGST for inter-state sales)
+      prisma.order.findMany({
+        where: {
+          paidAt: { gte: from, lt: to },
+          paymentStatus: PaymentStatus.PAID,
+          status: { notIn: [OrderStatus.CANCELLED, OrderStatus.RETURNED] },
+        },
+        select: { totalPaise: true, taxPaise: true },
+      }),
+    ]);
+    const posIgstPaise = sumPaise(bills.map((b) => b.igstPaise));
+    const ecomIgstPaise = sumPaise(ecomOrders.map((o) => o.taxPaise));
     res.json({
       data: {
         month: q.month,
         cgstPaise: sumPaise(bills.map((b) => b.cgstPaise)),
         sgstPaise: sumPaise(bills.map((b) => b.sgstPaise)),
-        igstPaise: sumPaise(bills.map((b) => b.igstPaise)),
-        taxableRevenuePaise: sumPaise(bills.map((b) => b.totalPaise)),
-        billCount: bills.length,
+        igstPaise: posIgstPaise + ecomIgstPaise,
+        ecomIgstPaise,
+        taxableRevenuePaise:
+          sumPaise(bills.map((b) => b.totalPaise)) + sumPaise(ecomOrders.map((o) => o.totalPaise)),
+        billCount: bills.length + ecomOrders.length,
       },
     });
   } catch (err) {
@@ -1104,24 +1119,60 @@ financeRouter.get('/gst-bills', async (req, res, next) => {
     const [year, monthStr] = q.month.split('-');
     const from = new Date(Date.UTC(Number(year), Number(monthStr) - 1, 1));
     const to = new Date(Date.UTC(Number(year), Number(monthStr), 1));
-    const bills = await prisma.bill.findMany({
-      where: { createdAt: { gte: from, lt: to }, ...shopWhere(q.shopId) },
-      orderBy: { createdAt: 'asc' },
-      take: q.limit,
-      select: {
-        id: true,
-        billNumber: true,
-        createdAt: true,
-        subtotalPaise: true,
-        cgstPaise: true,
-        sgstPaise: true,
-        igstPaise: true,
-        totalPaise: true,
-        shop: { select: { name: true, gstStateCode: true } },
-        customer: { select: { name: true } },
-      },
-    });
-    res.json({ data: bills });
+    const [bills, ecomOrders] = await Promise.all([
+      prisma.bill.findMany({
+        where: { createdAt: { gte: from, lt: to }, ...shopWhere(q.shopId) },
+        orderBy: { createdAt: 'asc' },
+        take: q.limit,
+        select: {
+          id: true,
+          billNumber: true,
+          createdAt: true,
+          subtotalPaise: true,
+          cgstPaise: true,
+          sgstPaise: true,
+          igstPaise: true,
+          totalPaise: true,
+          shop: { select: { name: true, gstStateCode: true } },
+          customer: { select: { name: true } },
+        },
+      }),
+      prisma.order.findMany({
+        where: {
+          paidAt: { gte: from, lt: to },
+          paymentStatus: PaymentStatus.PAID,
+          status: { notIn: [OrderStatus.CANCELLED, OrderStatus.RETURNED] },
+        },
+        orderBy: { paidAt: 'asc' },
+        take: q.limit,
+        select: {
+          id: true,
+          paidAt: true,
+          subtotalPaise: true,
+          taxPaise: true,
+          totalPaise: true,
+          customer: { select: { name: true } },
+        },
+      }),
+    ]);
+
+    // Normalise e-commerce orders into the same shape as POS bills so the
+    // frontend can render them in the same table (tax stored as IGST).
+    const ecomRows = ecomOrders.map((o) => ({
+      id: o.id,
+      billNumber: `ORD-${o.id.slice(-8).toUpperCase()}`,
+      createdAt: o.paidAt,
+      subtotalPaise: o.subtotalPaise,
+      cgstPaise: 0,
+      sgstPaise: 0,
+      igstPaise: o.taxPaise,
+      totalPaise: o.totalPaise,
+      shop: { name: 'E-commerce', gstStateCode: null },
+      customer: o.customer,
+      isEcom: true,
+    }));
+
+    res.json({ data: [...bills, ...ecomRows].sort((a, b) => new Date(a.createdAt!).getTime() - new Date(b.createdAt!).getTime()) });
   } catch (err) {
     next(err);
   }

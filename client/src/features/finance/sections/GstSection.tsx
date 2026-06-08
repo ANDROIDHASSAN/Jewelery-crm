@@ -114,7 +114,7 @@ export function GstSection(): JSX.Element {
               <table className="w-full text-sm min-w-[760px]">
                 <thead className="text-eyebrow uppercase text-ink-500 bg-ink-25">
                   <tr>
-                    <th className="text-left px-4 py-2.5">Bill</th>
+                    <th className="text-left px-4 py-2.5">Invoice No.</th>
                     <th className="text-left px-4 py-2.5">Date</th>
                     <th className="text-left px-4 py-2.5">Shop</th>
                     <th className="text-left px-4 py-2.5">Customer</th>
@@ -135,8 +135,13 @@ export function GstSection(): JSX.Element {
                   ) : (
                     bills.map((b) => (
                       <tr key={b.id}>
-                        <td className="px-4 py-2 font-mono text-xs text-ink-900">
-                          {b.billNumber}
+                        <td className="px-4 py-2 text-xs text-ink-900">
+                          <span className="font-mono">{b.billNumber ?? '—'}</span>
+                          {b.isEcom && (
+                            <span className="ml-1.5 inline-block rounded bg-blue-50 px-1.5 py-0.5 text-[10px] font-medium text-blue-600 leading-none">
+                              Online
+                            </span>
+                          )}
                         </td>
                         <td className="px-4 py-2 font-mono text-xs text-ink-600">
                           {new Date(b.createdAt).toLocaleDateString('en-IN')}

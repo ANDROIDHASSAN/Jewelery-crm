@@ -26,8 +26,11 @@ export interface ReceiptLine {
   // they render in dedicated columns; when omitted, the renderer falls
   // back to packing them into `details`.
   weightG?: number;
-  ratePerGPaise?: number;
-  makingPct?: number;
+  ratePerGPaise?: number;      // per-gram metal rate (gold/silver items)
+  makingPct?: number;          // PERCENTAGE mode: displayed as X.XX%
+  makingPerGramPaise?: number; // PER_GRAM mode: displayed as Rs.X/g
+  isQtyPriced?: boolean;       // true for fixed-price items (steel/gold-tone)
+  perQtyPricePaise?: number;   // unit price for fixed-price items
 }
 
 export interface InvoiceLayout {
@@ -100,6 +103,8 @@ export interface ReceiptInput {
 // ── helpers ──────────────────────────────────────────────────────────────
 
 const rupees = (paise: number): string => `Rs. ${(paise / 100).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+// Compact rate without trailing zeros — "Rs.1,000" not "Rs.1,000.00".
+const compactRs = (paise: number): string => `Rs.${(paise / 100).toLocaleString('en-IN', { minimumFractionDigits: 0, maximumFractionDigits: 2 })}`;
 const istDate = (date: Date): string => date.toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'Asia/Kolkata' });
 
 // Brand palette derived from the reference design. accentColor (peach/copper)
@@ -302,26 +307,29 @@ export async function renderReceiptPdf(input: ReceiptInput, out: NodeJS.Writable
     y = cardTop + cardH + 18;
 
     // ── 4. Line items table ──────────────────────────────────────────────
+    // Column X positions are set so the AMOUNT column gets ≥75 pt —
+    // enough for "Rs. 16,608.75" at Helvetica-Bold 11 pt without wrapping.
     const cols = {
       num: M + 12,
       desc: M + 36,
-      weight: M + 260,
-      rate: M + 320,
-      making: M + 392,
-      qty: M + 452,
-      amount: M + 488,
+      weight: M + 226,   // shifted left vs the old 260 to reclaim space for amount
+      rate: M + 286,
+      making: M + 354,
+      qty: M + 408,
+      amount: M + 436,   // gives tableRight-cols.amount ≈ 75 pt
     };
     const tableRight = M + CONTENT_W - 12;
+    const descColW = cols.weight - cols.desc - 8;  // 182 pt, keeps desc from bleeding into weight
 
     // Table header band.
     doc.roundedRect(M, y, CONTENT_W, 26, 4).fill(PALETTE.band);
     doc.fillColor(PALETTE.ink).font('Helvetica-Bold').fontSize(9);
     doc.text('#', cols.num, y + 9, { width: 18 });
-    doc.text('DESCRIPTION', cols.desc, y + 9);
-    doc.text('WEIGHT', cols.weight, y + 9, { width: 54, align: 'left' });
-    doc.text('RATE (per g)', cols.rate, y + 9, { width: 64, align: 'left' });
-    doc.text('MAKING', cols.making, y + 9, { width: 54, align: 'left' });
-    doc.text('QTY', cols.qty, y + 9, { width: 28, align: 'left' });
+    doc.text('DESCRIPTION', cols.desc, y + 9, { width: descColW });
+    doc.text('WEIGHT', cols.weight, y + 9, { width: 56, align: 'left' });
+    doc.text('RATE', cols.rate, y + 9, { width: 62, align: 'left' });
+    doc.text('MAKING', cols.making, y + 9, { width: 48, align: 'left' });
+    doc.text('QTY', cols.qty, y + 9, { width: 24, align: 'left' });
     doc.text('AMOUNT (Rs.)', cols.amount, y + 9, { width: tableRight - cols.amount, align: 'right' });
     y += 30;
 
@@ -331,19 +339,33 @@ export async function renderReceiptPdf(input: ReceiptInput, out: NodeJS.Writable
       // Row number
       doc.font('Helvetica').fontSize(10).fillColor(PALETTE.inkSoft).text(String(idx + 1), cols.num, rowTop, { width: 18 });
       // Description (name + details)
-      doc.font('Helvetica-Bold').fontSize(11).fillColor(PALETTE.ink).text(line.description, cols.desc, rowTop, { width: 200 });
+      doc.font('Helvetica-Bold').fontSize(11).fillColor(PALETTE.ink).text(line.description, cols.desc, rowTop, { width: descColW });
       if (line.details) {
-        doc.font('Helvetica').fontSize(9).fillColor(PALETTE.inkSoft).text(line.details, cols.desc, doc.y + 1, { width: 200 });
+        doc.font('Helvetica').fontSize(9).fillColor(PALETTE.inkSoft).text(line.details, cols.desc, doc.y + 1, { width: descColW });
       }
       const descBottom = doc.y;
 
       // Numeric columns — render anchored at rowTop so they sit next to the
       // first line of the description rather than the bottom of details.
       doc.font('Helvetica').fontSize(10).fillColor(PALETTE.ink);
-      doc.text(line.weightG != null ? `${line.weightG.toFixed(3)} g` : '—', cols.weight, rowTop, { width: 54 });
-      doc.text(line.ratePerGPaise != null ? rupees(line.ratePerGPaise) : '—', cols.rate, rowTop, { width: 64 });
-      doc.text(line.makingPct != null ? `${line.makingPct.toFixed(2)}%` : '—', cols.making, rowTop, { width: 54 });
-      doc.text(String(line.qty), cols.qty, rowTop, { width: 28 });
+      doc.text(line.weightG != null ? `${line.weightG.toFixed(3)} g` : '—', cols.weight, rowTop, { width: 56 });
+
+      // Rate column: per-gram for gold/silver, per-piece for fixed-price items.
+      const rateText = line.isQtyPriced && line.perQtyPricePaise != null
+        ? `${compactRs(line.perQtyPricePaise)}/pc`
+        : line.ratePerGPaise != null
+        ? `${compactRs(line.ratePerGPaise)}/g`
+        : '—';
+      doc.text(rateText, cols.rate, rowTop, { width: 62 });
+
+      // Making column: Rs.X/g for PER_GRAM mode, X.XX% for PERCENTAGE mode.
+      const makingText = line.makingPerGramPaise != null
+        ? `${compactRs(line.makingPerGramPaise)}/g`
+        : line.makingPct != null
+        ? `${line.makingPct.toFixed(2)}%`
+        : '—';
+      doc.text(makingText, cols.making, rowTop, { width: 48 });
+      doc.text(String(line.qty), cols.qty, rowTop, { width: 24 });
       doc.font('Helvetica-Bold').fontSize(11).fillColor(PALETTE.ink)
         .text(rupees(line.amountPaise), cols.amount, rowTop, { width: tableRight - cols.amount, align: 'right' });
 
@@ -394,60 +416,71 @@ export async function renderReceiptPdf(input: ReceiptInput, out: NodeJS.Writable
 
     y = Math.max(summaryTop + 92, ty) + 18;
 
-    // ── 6. Thank-you / Payment / QR / Terms / Stamp ─────────────────────
-    // Thank-you (left column, half of CONTENT_W)
-    doc.font('Helvetica-Oblique').fontSize(11).fillColor(accent)
-      .text(L.thankYouTitle ?? '', M, y, { width: LEFT_COL_W });
-    doc.font('Helvetica').fontSize(9).fillColor(PALETTE.inkSoft)
-      .text(L.thankYouBody ?? '', M, doc.y + 2, { width: LEFT_COL_W });
+    // ── 6. Footer block (thank-you → payment | QR | terms | stamp) ──────
+    // All four horizontal columns share a single top anchor (footerTop) so
+    // the QR image (footerTop+14 … footerTop+90) and stamp circle
+    // (bottom = footerTop+94) always clear the ribbon at page.height-86.
+    //
+    // The left column stacks the thank-you message directly above the
+    // payment details so neither can overlap the other or any adjacent column.
+    // 202 = 86 (ribbon) + 116 (block height including left-column text).
+    const footerTop = Math.min(y, doc.page.height - 202);
 
-    y = doc.y + 18;
-
-    // Payment details (left), QR (centre-left), Terms (centre-right), Stamp (right).
     const payX = M;
-    const qrX = M + 180;
-    const termsX = M + 280;
+    const qrX = M + 176;
+    const termsX = M + 278;
     const stampX = M + CONTENT_W - 100;
+    const payColW = qrX - payX - 10;        // ≈166 pt
+    const qrSectionW = termsX - qrX - 8;    // ≈94 pt
+    const termsColW = stampX - termsX - 12; // ≈133 pt
 
-    // Payment details
-    let py = y;
-    doc.font('Helvetica-Bold').fontSize(9).fillColor(accent).text('PAYMENT DETAILS', payX, py, { characterSpacing: 1.6 });
+    // ── Left column: thank-you → gap → payment details (top-to-bottom) ──
+    let py = footerTop;
+    doc.font('Helvetica-Oblique').fontSize(11).fillColor(accent)
+      .text(L.thankYouTitle ?? '', payX, py, { width: payColW });
+    py = doc.y + 2;
+    doc.font('Helvetica').fontSize(9).fillColor(PALETTE.inkSoft)
+      .text(L.thankYouBody ?? '', payX, py, { width: payColW, lineGap: 2 });
+    py = doc.y + 10;
+
+    doc.font('Helvetica-Bold').fontSize(9).fillColor(accent)
+      .text('PAYMENT DETAILS', payX, py, { characterSpacing: 1.6, width: payColW });
     py = doc.y + 4;
     doc.font('Helvetica').fontSize(9).fillColor(PALETTE.inkSoft);
-    if (L.bankName) { doc.text(`Bank: ${L.bankName}`, payX, py); py = doc.y + 1; }
-    if (L.bankAccountNumber) { doc.text(`A/C: ${L.bankAccountNumber}`, payX, py); py = doc.y + 1; }
-    if (L.bankIfsc) { doc.text(`IFSC: ${L.bankIfsc}`, payX, py); py = doc.y + 1; }
-    if (L.upiId) { doc.text(`UPI: ${L.upiId}`, payX, py); py = doc.y + 1; }
+    if (L.bankName) { doc.text(`Bank: ${L.bankName}`, payX, py, { width: payColW }); py = doc.y + 1; }
+    if (L.bankAccountNumber) { doc.text(`A/C: ${L.bankAccountNumber}`, payX, py, { width: payColW }); py = doc.y + 1; }
+    if (L.bankIfsc) { doc.text(`IFSC: ${L.bankIfsc}`, payX, py, { width: payColW }); py = doc.y + 1; }
+    if (L.upiId) { doc.text(`UPI: ${L.upiId}`, payX, py, { width: payColW }); py = doc.y + 1; }
 
-    // QR
+    // ── QR — anchored to footerTop, same row as PAYMENT DETAILS header ──
     if (qrBuf) {
       try {
         doc.font('Helvetica-Bold').fontSize(9).fillColor(accent)
-          .text('SCAN TO PAY', qrX, y, { characterSpacing: 1.6 });
-        doc.image(qrBuf, qrX, y + 14, { fit: [78, 78] });
+          .text('SCAN TO PAY', qrX, footerTop, { characterSpacing: 1.6, width: qrSectionW });
+        doc.image(qrBuf, qrX, footerTop + 14, { fit: [76, 76] });
       } catch {
         // ignore
       }
     }
 
-    // Terms
-    let ty2 = y;
-    doc.font('Helvetica-Bold').fontSize(9).fillColor(accent).text('TERMS & NOTES', termsX, ty2, { characterSpacing: 1.6 });
+    // ── Terms ─────────────────────────────────────────────────────────────
+    let ty2 = footerTop;
+    doc.font('Helvetica-Bold').fontSize(9).fillColor(accent)
+      .text('TERMS & NOTES', termsX, ty2, { characterSpacing: 1.6, width: termsColW });
     ty2 = doc.y + 4;
     if (L.termsAndConditions) {
       doc.font('Helvetica').fontSize(8.5).fillColor(PALETTE.inkSoft);
       const items = L.termsAndConditions.split('\n').map((s) => s.trim()).filter(Boolean);
       for (const it of items) {
-        doc.text(`•  ${it}`, termsX, ty2, { width: stampX - termsX - 12, lineGap: 1 });
+        doc.text(`•  ${it}`, termsX, ty2, { width: termsColW, lineGap: 1 });
         ty2 = doc.y + 1;
       }
     }
 
-    // Stamp circle — simple circular embossed look. We draw it ourselves so
-    // there's no extra image dependency: outer ring + inner text rings.
+    // ── Stamp circle ───────────────────────────────────────────────────────
     if (L.showStamp !== false) {
       const cx = stampX + 50;
-      const cy = y + 50;
+      const cy = footerTop + 50;
       const r = 44;
       doc.lineWidth(1.2).strokeColor(accent);
       doc.circle(cx, cy, r).stroke();

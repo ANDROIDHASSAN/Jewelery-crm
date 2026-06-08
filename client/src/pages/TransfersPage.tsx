@@ -8,11 +8,12 @@
 //   REJECTED  -> read-only
 
 import { useMemo, useState } from 'react';
-import { Check, X, PackageCheck, Plus } from 'lucide-react';
+import { Check, X, PackageCheck, Plus, ArrowRight } from 'lucide-react';
 import { toast } from 'sonner';
 import type { TransferStatus } from '@goldos/shared/constants';
 import {
   useGetTransfersQuery,
+  useGetTransferQuery,
   useGetTransferableItemsQuery,
   useCreateTransferMutation,
   useApproveTransferMutation,
@@ -92,6 +93,7 @@ function TransferList({ status }: { status?: TransferStatus }): JSX.Element {
   const { data, isLoading } = useGetTransfersQuery(status ? { status } : undefined);
   const { data: shopsRes } = useGetShopsQuery();
   const [search, setSearch] = useState('');
+  const [detailId, setDetailId] = useState<string | null>(null);
   const shopName = useMemo(() => {
     const m = new Map<string, string>();
     for (const s of shopsRes?.data ?? []) m.set(s.id, s.name);
@@ -158,12 +160,20 @@ function TransferList({ status }: { status?: TransferStatus }): JSX.Element {
                 row={t}
                 fromName={t.fromShop?.name ?? shopName.get(t.fromShopId) ?? '—'}
                 toName={t.toShop?.name ?? shopName.get(t.toShopId) ?? '—'}
+                onOpenDetail={() => setDetailId(t.id)}
               />
             ))}
           </tbody>
         </table>
       </div>
     </SectionCard>
+    {detailId && (
+      <TransferDetailSheet
+        id={detailId}
+        shopName={shopName}
+        onClose={() => setDetailId(null)}
+      />
+    )}
     </>
   );
 }
@@ -172,10 +182,12 @@ function TransferRowView({
   row,
   fromName,
   toName,
+  onOpenDetail,
 }: {
   row: TransferRow;
   fromName: string;
   toName: string;
+  onOpenDetail: () => void;
 }): JSX.Element {
   const [approve, approveState] = useApproveTransferMutation();
   const [complete, completeState] = useCompleteTransferMutation();
@@ -206,7 +218,10 @@ function TransferRowView({
 
   return (
     <>
-      <tr className="border-t border-ink-100 hover:bg-ink-25">
+      <tr
+        className="border-t border-ink-100 hover:bg-ink-25 cursor-pointer"
+        onClick={onOpenDetail}
+      >
         <td className="px-4 py-3 text-xs text-ink-700 whitespace-nowrap">
           {new Date(row.createdAt).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' })}
         </td>
@@ -220,7 +235,7 @@ function TransferRowView({
         <td className="px-4 py-3 text-right font-mono text-ink-900">{row._count?.lines ?? 0}</td>
         <td className="px-4 py-3 text-ink-700 max-w-[280px] truncate">{row.reason}</td>
         <td className="px-4 py-3">{statusBadge(row.status)}</td>
-        <td className="px-4 py-3 text-right">
+        <td className="px-4 py-3 text-right" onClick={(e) => e.stopPropagation()}>
           <div className="flex items-center justify-end gap-2">
             {row.status === 'PENDING' && (
               <>
@@ -258,6 +273,177 @@ function TransferRowView({
         />
       )}
     </>
+  );
+}
+
+// ----------------------------------------------------------------------------
+// Transfer detail sheet — shows full line-item breakdown on row click.
+
+function TransferDetailSheet({
+  id,
+  shopName,
+  onClose,
+}: {
+  id: string;
+  shopName: Map<string, string>;
+  onClose: () => void;
+}): JSX.Element {
+  const { data, isLoading } = useGetTransferQuery(id);
+  const transfer = data?.data;
+
+  const fromName = transfer?.fromShop?.name ?? shopName.get(transfer?.fromShopId ?? '') ?? '—';
+  const toName   = transfer?.toShop?.name  ?? shopName.get(transfer?.toShopId   ?? '') ?? '—';
+
+  return (
+    <Sheet open onOpenChange={(o) => !o && onClose()}>
+      <SheetContent className="!max-w-3xl">
+        <SheetHeader>
+          <SheetTitle>Transfer details</SheetTitle>
+        </SheetHeader>
+        <SheetBody>
+          {isLoading && (
+            <div className="py-10 text-center text-sm text-ink-500">Loading…</div>
+          )}
+          {transfer && (
+            <div className="space-y-5 text-sm">
+              {/* Route + status */}
+              <div className="flex items-start justify-between gap-4">
+                <div>
+                  <p className="text-eyebrow uppercase text-ink-500 text-[10px] mb-1">Route</p>
+                  <div className="flex items-center gap-2 font-medium text-ink-900 text-base">
+                    <span>{fromName}</span>
+                    <ArrowRight className="h-4 w-4 text-ink-400 shrink-0" />
+                    <span>{toName}</span>
+                  </div>
+                </div>
+                <div className="shrink-0">{statusBadge(transfer.status)}</div>
+              </div>
+
+              {/* Meta grid */}
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-6 gap-y-3 text-xs border border-ink-100 rounded-lg p-4 bg-ink-25">
+                <div>
+                  <p className="text-eyebrow uppercase text-ink-400 mb-0.5">Created</p>
+                  <p className="text-ink-900">
+                    {new Date(transfer.createdAt).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' })}
+                  </p>
+                </div>
+                {transfer.approvedAt && (
+                  <div>
+                    <p className="text-eyebrow uppercase text-ink-400 mb-0.5">Approved</p>
+                    <p className="text-ink-900">
+                      {new Date(transfer.approvedAt).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' })}
+                    </p>
+                  </div>
+                )}
+                {transfer.completedAt && (
+                  <div>
+                    <p className="text-eyebrow uppercase text-ink-400 mb-0.5">Received</p>
+                    <p className="text-ink-900">
+                      {new Date(transfer.completedAt).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' })}
+                    </p>
+                  </div>
+                )}
+                {transfer.rejectedAt && (
+                  <div>
+                    <p className="text-eyebrow uppercase text-ink-400 mb-0.5">Rejected</p>
+                    <p className="text-ink-900">
+                      {new Date(transfer.rejectedAt).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' })}
+                    </p>
+                  </div>
+                )}
+                <div>
+                  <p className="text-eyebrow uppercase text-ink-400 mb-0.5">Reason</p>
+                  <p className="text-ink-900">{transfer.reason}</p>
+                </div>
+                {transfer.rejectionReason && (
+                  <div className="col-span-2 sm:col-span-3">
+                    <p className="text-eyebrow uppercase text-ink-400 mb-0.5">Rejection reason</p>
+                    <p className="text-danger-700">{transfer.rejectionReason}</p>
+                  </div>
+                )}
+                {transfer.notes && (
+                  <div className="col-span-2 sm:col-span-3">
+                    <p className="text-eyebrow uppercase text-ink-400 mb-0.5">Notes</p>
+                    <p className="text-ink-700">{transfer.notes}</p>
+                  </div>
+                )}
+              </div>
+
+              {/* Items table */}
+              <div>
+                <p className="text-eyebrow uppercase text-ink-500 text-[10px] mb-2">
+                  Items transferred ({transfer.lines.length})
+                </p>
+                <div className="border border-ink-100 rounded-lg overflow-hidden">
+                  <table className="w-full text-xs">
+                    <thead className="bg-ink-50 border-b border-ink-100">
+                      <tr className="text-eyebrow uppercase text-ink-500">
+                        <th className="px-3 py-2 w-10" />
+                        <th className="px-3 py-2 text-left">Name / SKU</th>
+                        <th className="px-3 py-2 text-left">Category</th>
+                        <th className="px-3 py-2 text-center">Type</th>
+                        <th className="px-3 py-2 text-right">Qty</th>
+                        <th className="px-3 py-2 text-right">Weight</th>
+                        <th className="px-3 py-2 text-right">Purity</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {transfer.lines.map((line) => {
+                        const img = line.item.images?.[0];
+                        return (
+                          <tr key={line.id} className="border-t border-ink-100 hover:bg-ink-25">
+                            <td className="px-3 py-2">
+                              {img ? (
+                                <img
+                                  src={img}
+                                  alt={line.item.sku}
+                                  className="h-9 w-9 rounded object-cover border border-ink-100"
+                                />
+                              ) : (
+                                <div className="h-9 w-9 rounded bg-ink-100 flex items-center justify-center text-ink-400 text-[10px]">
+                                  —
+                                </div>
+                              )}
+                            </td>
+                            <td className="px-3 py-2">
+                              <p className="font-semibold text-ink-900">{line.item.sku}</p>
+                              {line.item.name && (
+                                <p className="text-[10px] text-ink-500 truncate max-w-[180px]">{line.item.name}</p>
+                              )}
+                            </td>
+                            <td className="px-3 py-2 text-ink-700">
+                              {line.item.category?.name ?? '—'}
+                            </td>
+                            <td className="px-3 py-2 text-center">
+                              {line.item.isSerialized ? (
+                                <Badge tone="neutral">Unique</Badge>
+                              ) : (
+                                <Badge tone="info">Lot</Badge>
+                              )}
+                            </td>
+                            <td className="px-3 py-2 text-right font-mono text-ink-900">
+                              {line.quantity}
+                            </td>
+                            <td className="px-3 py-2 text-right font-mono text-ink-700">
+                              {(line.item.weightMg / 1000).toFixed(3)}g
+                            </td>
+                            <td className="px-3 py-2 text-right text-ink-700">
+                              {line.item.purityCaratX100 === 0
+                                ? '—'
+                                : `${(line.item.purityCaratX100 / 100).toFixed(0)}K`}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+          )}
+        </SheetBody>
+      </SheetContent>
+    </Sheet>
   );
 }
 

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import * as Dialog from '@radix-ui/react-dialog';
 import { Minus, Plus, Trash2, ShoppingBag, ShieldCheck, Truck, RotateCcw, X, BadgeCheck } from 'lucide-react';
@@ -14,15 +14,30 @@ import {
 } from '@/features/storefront/storefrontApi';
 import { useIdentifyCustomerMutation } from '@/features/storefront/customerApi';
 import { openRazorpayCheckout } from '@/lib/razorpay';
+import { useComputeCheckoutPricingMutation } from '@/features/promotions/promotionsApi';
+import type { PricingBreakdown } from '@/features/promotions/promotionsApi';
+import { CouponInput } from '@/features/promotions/CouponInput';
+import { LoyaltyToggle } from '@/features/promotions/LoyaltyToggle';
+import { PriceSummary } from '@/features/promotions/PriceSummary';
 
 export function CartPage(): JSX.Element {
   const cart = useAppSelector((s) => s.shop.cart);
   const shop = useShopActions();
   const [checkoutOpen, setCheckoutOpen] = useState(false);
+  const [couponCode, setCouponCode] = useState<string | null>(null);
+  const [sidebarPricing, setSidebarPricing] = useState<PricingBreakdown | null>(null);
+  const [computeSidebarPricing, { isLoading: isSidebarPricingLoading }] = useComputeCheckoutPricingMutation();
 
   const subtotal = cart.reduce((sum, item) => sum + item.pricePaise * item.qty, 0);
-  const gst = Math.round((subtotal * 300) / 10000);
-  const total = subtotal + gst;
+
+  const refreshSidebarPricing = useCallback(async (code: string | null) => {
+    const items = cart.map((c) => ({ slug: c.slug, qty: c.qty }));
+    if (items.length === 0) { setSidebarPricing(null); return; }
+    try {
+      const result = await computeSidebarPricing({ cart_items: items, coupon_code: code ?? undefined }).unwrap();
+      setSidebarPricing(result);
+    } catch { setSidebarPricing(null); }
+  }, [cart, computeSidebarPricing]);
 
   if (cart.length === 0) {
     return (
@@ -121,19 +136,28 @@ export function CartPage(): JSX.Element {
         </section>
 
         <aside className="lg:sticky lg:top-28 self-start">
-          <div className="rounded-md border border-[#EFE0D2] bg-ink-0 p-5 sm:p-6 space-y-3 text-sm">
+          <div className="rounded-md border border-[#EFE0D2] bg-ink-0 p-5 sm:p-6 space-y-4 text-sm">
             <p className="text-eyebrow uppercase text-brand-700">Order summary</p>
-            <Row label="Subtotal" value={<Money paise={subtotal} />} />
-            <Row label="GST (3%)" value={<Money paise={gst} />} />
-            <Row label="Shipping" value={<span className="text-brand-700">Free</span>} />
-            <div className="border-t border-[#EFE0D2] pt-3 flex items-center justify-between">
-              <span className="text-ink-900 font-medium">Total</span>
-              <Money paise={total} className="text-ink-900 font-medium font-mono tabular-nums text-lg" />
+
+            {/* Coupon code — usable before checkout */}
+            <div className="space-y-1">
+              <p className="text-[11px] uppercase tracking-wider text-ink-500">Have a coupon?</p>
+              <CouponInput
+                onApply={(code) => { setCouponCode(code); void refreshSidebarPricing(code); }}
+                onRemove={() => { setCouponCode(null); void refreshSidebarPricing(null); }}
+                appliedCode={couponCode}
+                discountPaise={sidebarPricing?.couponDiscountPaise ?? 0}
+                error={sidebarPricing?.couponError ?? null}
+                isLoading={isSidebarPricingLoading}
+              />
             </div>
+
+            <PriceSummary pricing={sidebarPricing} fallbackSubtotalPaise={subtotal} />
+
             <button
               type="button"
               onClick={() => setCheckoutOpen(true)}
-              className="w-full h-12 mt-4 rounded-full bg-ink-900 text-ink-0 text-sm font-medium hover:bg-ink-800 transition-colors"
+              className="w-full h-12 rounded-full bg-ink-900 text-ink-0 text-sm font-medium hover:bg-ink-800 transition-colors"
             >
               Place order
             </button>
@@ -159,13 +183,13 @@ export function CartPage(): JSX.Element {
         </aside>
       </div>
 
-      <CheckoutDialog open={checkoutOpen} onClose={() => setCheckoutOpen(false)} />
+      <CheckoutDialog open={checkoutOpen} onClose={() => setCheckoutOpen(false)} initialCouponCode={couponCode} />
     </div>
     </div>
   );
 }
 
-function CheckoutDialog({ open, onClose }: { open: boolean; onClose: () => void }): JSX.Element {
+function CheckoutDialog({ open, onClose, initialCouponCode = null }: { open: boolean; onClose: () => void; initialCouponCode?: string | null }): JSX.Element {
   const cart = useAppSelector((s) => s.shop.cart);
   const account = useAppSelector((s) => s.shop.account);
   const dispatch = useAppDispatch();
@@ -174,18 +198,55 @@ function CheckoutDialog({ open, onClose }: { open: boolean; onClose: () => void 
   const [createOrder, { isLoading }] = useCreatePublicOrderMutation();
   const [verifyRazorpay] = useVerifyRazorpayPaymentMutation();
   const [identifyCustomer] = useIdentifyCustomerMutation();
+  const [computePricing, { isLoading: isPricingLoading }] = useComputeCheckoutPricingMutation();
   const shop = useShopActions();
   const [name, setName] = useState(account.name);
-  // Phone is stored as the local 10-digit portion only; the +91 prefix is a
-  // fixed UI adornment. Strip the +91 from a previously-saved account phone.
   const [phone, setPhone] = useState(() => (account.phone || '').replace(/\D/g, '').replace(/^91/, '').slice(0, 10));
-  // Pay-online vs Cash-on-delivery. Most small jewellers want both surfaces.
-  // Default to online (prepaid) — that's what cart checkout typically means.
   const [paymentMethod, setPaymentMethod] = useState<'razorpay' | 'cod'>('razorpay');
 
-  const total = cart.reduce((s, l) => s + l.pricePaise * l.qty, 0);
-  const gst = Math.round((total * 300) / 10_000);
-  const grand = total + gst;
+  // Promotions state — coupon pre-populated from sidebar if applied before opening
+  const [couponCode, setCouponCode] = useState<string | null>(initialCouponCode);
+  const [useLoyalty, setUseLoyalty] = useState(false);
+  const [pricing, setPricing] = useState<PricingBreakdown | null>(null);
+
+  const subtotal = cart.reduce((s, l) => s + l.pricePaise * l.qty, 0);
+  const gst = Math.round((subtotal * 300) / 10_000);
+  const grand = pricing?.totalPaise ?? (subtotal + gst);
+
+  // Re-compute pricing whenever cart, coupon, or loyalty changes (debounced via useCallback)
+  const refreshPricing = useCallback(async (code: string | null, loyalty: boolean, ph: string) => {
+    const items = cart.map((c) => ({ slug: c.slug, qty: c.qty }));
+    if (items.length === 0) { setPricing(null); return; }
+    try {
+      const customerPhone = ph.length === 10 ? `+91${ph}` : undefined;
+      const result = await computePricing({
+        cart_items: items,
+        coupon_code: code ?? undefined,
+        use_loyalty_points: loyalty,
+        customer_phone: customerPhone,
+      }).unwrap();
+      setPricing(result);
+    } catch {
+      // pricing errors are surfaced per-field; don't block checkout
+    }
+  }, [cart, computePricing]);
+
+  // Sync coupon from sidebar when dialog first opens
+  useEffect(() => {
+    if (open) setCouponCode(initialCouponCode);
+  }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Recompute on open and whenever promo state changes
+  useEffect(() => {
+    if (open) void refreshPricing(couponCode, useLoyalty, phone);
+  }, [open, couponCode, useLoyalty, phone, refreshPricing]);
+
+  const handleApplyCoupon = (code: string): void => {
+    setCouponCode(code);
+  };
+  const handleRemoveCoupon = (): void => {
+    setCouponCode(null);
+  };
 
   const handleSubmit = async (e: React.FormEvent): Promise<void> => {
     e.preventDefault();
@@ -220,6 +281,8 @@ function CheckoutDialog({ open, onClose }: { open: boolean; onClose: () => void 
         customer: { name: name.trim(), phone: normalizedPhone },
         items,
         paymentMethod,
+        couponCode: couponCode ?? undefined,
+        useLoyaltyPoints: useLoyalty,
       }).unwrap();
 
       // Razorpay flow: open the checkout modal immediately, then verify.
@@ -378,6 +441,37 @@ function CheckoutDialog({ open, onClose }: { open: boolean; onClose: () => void 
               </fieldset>
             </div>
 
+            {/* Coupon Code */}
+            <div className="space-y-1">
+              <p className="text-[11px] uppercase tracking-wider text-ink-500">Coupon code</p>
+              <CouponInput
+                onApply={handleApplyCoupon}
+                onRemove={handleRemoveCoupon}
+                appliedCode={couponCode}
+                discountPaise={pricing?.couponDiscountPaise ?? 0}
+                error={pricing?.couponError ?? null}
+                isLoading={isPricingLoading}
+              />
+            </div>
+
+            {/* Loyalty Points — only shown when customer has a phone (signed in) */}
+            {pricing?.loyalty && (
+              <LoyaltyToggle
+                balance={pricing.loyalty.balance}
+                pointsUsed={pricing.loyalty.pointsUsed}
+                discountPaise={pricing.loyaltyDiscountPaise}
+                enabled={useLoyalty}
+                onToggle={(on) => setUseLoyalty(on)}
+                error={pricing.loyaltyError}
+                stackabilityConflict={pricing.stackabilityConflict}
+              />
+            )}
+
+            {/* Price breakdown */}
+            <div className="rounded-lg border border-[#EFE0D2] bg-[#FAFAF8] px-3 py-3 space-y-2">
+              <PriceSummary pricing={pricing} fallbackSubtotalPaise={subtotal} />
+            </div>
+
             <div className="flex gap-2 pt-1">
               <button
                 type="button"
@@ -408,11 +502,3 @@ function CheckoutDialog({ open, onClose }: { open: boolean; onClose: () => void 
   );
 }
 
-function Row({ label, value }: { label: string; value: React.ReactNode }): JSX.Element {
-  return (
-    <div className="flex items-center justify-between">
-      <span className="text-ink-500">{label}</span>
-      <span className="text-ink-800 font-mono tabular-nums">{value}</span>
-    </div>
-  );
-}

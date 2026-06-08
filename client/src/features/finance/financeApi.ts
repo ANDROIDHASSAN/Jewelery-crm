@@ -62,7 +62,8 @@ export interface GstSummary {
 
 export interface GstBill {
   id: string;
-  billNumber: string;
+  billNumber: string | null;
+  isEcom?: boolean;
   createdAt: string;
   subtotalPaise: number;
   cgstPaise: number;

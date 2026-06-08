@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useParams, Link } from 'react-router-dom';
+import { useParams, Link, useNavigate } from 'react-router-dom';
 import { Heart, ShieldCheck, Truck, RotateCcw, ChevronDown, Minus, Plus, X } from 'lucide-react';
 import * as Dialog from '@radix-ui/react-dialog';
 import { toast } from 'sonner';
@@ -38,6 +38,7 @@ export function ProductDetailPage(): JSX.Element {
   const [openSection, setOpenSection] = useState<string | null>('details');
   const [reserveOpen, setReserveOpen] = useState(false);
   const shop = useShopActions();
+  const navigate = useNavigate();
   const wishlisted = useAppSelector((s) => s.shop.wishlist.some((w) => w.slug === slug));
   const { requireAuth } = useAuthGate();
   const { data: products, isLoading } = useGetPublicProductsQuery();
@@ -336,22 +337,17 @@ export function ProductDetailPage(): JSX.Element {
               type="button"
               disabled={product.inStock === false}
               onClick={() => {
-                // Cart pricePaise mirrors what the server uses for order
-                // line items (basePricePaise + stoneChargePaise) so the
-                // checkout total matches what gets stored. Cart adds GST.
-                const unitPaise = product.basePricePaise + product.stoneChargePaise;
+                // pricePaise is the pre-GST live-computed unit price (gold
+                // value + making + stone). Cart sidebar adds GST on top so
+                // the cart total matches what the PDP shows incl. GST.
                 const doAdd = (): void => {
-                  // Goes through useShopActions so signed-in users persist
-                  // the cart row to /website/cart/items in addition to the
-                  // local Redux state. Anonymous shoppers still only get the
-                  // local update — the next sign-in's mergeCart picks them up.
                   shop.addToCart({
                     slug,
                     productId: product.id,
                     name: product.name,
                     weight: `${weightG.toFixed(2)} g · ${purity}`,
-                    priceLabel: `₹${(unitPaise / 100).toLocaleString('en-IN')}`,
-                    pricePaise: unitPaise,
+                    priceLabel: `₹${(total / 100).toLocaleString('en-IN')}`,
+                    pricePaise: subtotal,
                     size,
                     img: product.images[0] ?? '',
                     qty,
@@ -376,10 +372,25 @@ export function ProductDetailPage(): JSX.Element {
               type="button"
               disabled={product.inStock === false}
               onClick={() => {
+                const doAddAndGo = (): void => {
+                  shop.addToCart({
+                    slug,
+                    productId: product.id,
+                    name: product.name,
+                    weight: `${weightG.toFixed(2)} g · ${purity}`,
+                    priceLabel: `₹${(total / 100).toLocaleString('en-IN')}`,
+                    pricePaise: subtotal,
+                    size,
+                    img: product.images[0] ?? '',
+                    qty,
+                  });
+                  navigate('/store/cart');
+                };
                 requireAuth({
                   intent: 'buy-now',
                   interest: `${product.name}${category ? ` (${category.name})` : ''}`,
-                  resume: () => setReserveOpen(true),
+                  mergeCart: [{ productId: product.id, qty }],
+                  resume: doAddAndGo,
                 });
               }}
               className="flex-1 min-w-[140px] h-12 px-5 sm:px-7 rounded-full bg-brand-400 text-ink-900 text-sm font-medium hover:bg-brand-300 transition-colors duration-fast disabled:bg-ink-100 disabled:text-ink-400 disabled:cursor-not-allowed"
@@ -389,18 +400,14 @@ export function ProductDetailPage(): JSX.Element {
             <button
               type="button"
               onClick={() => {
-                const unitPaise = product.basePricePaise + product.stoneChargePaise;
                 const doToggle = (): void => {
-                  // shop.toggleWishlist mirrors to /website/wishlist/items
-                  // when signed in. Server is also a toggle, so add/remove
-                  // direction is resolved server-side from current state.
                   shop.toggleWishlist({
                     slug,
                     productId: product.id,
                     name: product.name,
                     weight: `${weightG.toFixed(2)} g · ${purity}`,
-                    priceLabel: `₹${(unitPaise / 100).toLocaleString('en-IN')}`,
-                    pricePaise: unitPaise,
+                    priceLabel: `₹${(total / 100).toLocaleString('en-IN')}`,
+                    pricePaise: subtotal,
                     img: product.images[0] ?? '',
                   });
                   toast.success(wishlisted ? 'Removed from wishlist' : 'Saved to wishlist');
@@ -560,13 +567,28 @@ export function ProductDetailPage(): JSX.Element {
         </div>
         <button
           type="button"
-          onClick={() =>
+          onClick={() => {
+            const doAddAndGo = (): void => {
+              shop.addToCart({
+                slug,
+                productId: product.id,
+                name: product.name,
+                weight: `${weightG.toFixed(2)} g · ${purity}`,
+                priceLabel: `₹${(total / 100).toLocaleString('en-IN')}`,
+                pricePaise: subtotal,
+                size,
+                img: product.images[0] ?? '',
+                qty,
+              });
+              navigate('/store/cart');
+            };
             requireAuth({
               intent: 'buy-now',
               interest: `${product.name}${category ? ` (${category.name})` : ''}`,
-              resume: () => setReserveOpen(true),
-            })
-          }
+              mergeCart: [{ productId: product.id, qty }],
+              resume: doAddAndGo,
+            });
+          }}
           className="flex-1 max-w-[220px] h-11 px-5 rounded-full bg-brand-400 text-ink-900 text-sm font-medium"
         >
           Buy now

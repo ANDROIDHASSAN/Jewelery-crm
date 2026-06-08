@@ -36,6 +36,12 @@ model Tenant {
   brandPrimary String   @default("#C99B2A")
   logoUrl      String?
   createdAt    DateTime @default(now())
+  // Loyalty programme config — admin-editable via /settings/loyalty
+  loyaltyEarnRatePaise   Int @default(10000)   // paise per order needed to earn 1 pt (10000 = 1pt/Rs.100)
+  loyaltyPointValuePaise Int @default(1)        // paise value of 1 pt (1 = 1 paise = 1/100 rupee)
+  loyaltyMinRedeemPoints Int @default(500)
+  loyaltyMaxRedeemPct    Int @default(20)       // max % of subtotal payable by points
+  loyaltyExpiryDays      Int @default(365)
 
   shops             Shop[]
   users             User[]
@@ -72,10 +78,12 @@ model Tenant {
   bankTransactions  BankTransaction[]
   reconciliations   Reconciliation[]
   invitations       UserInvitation[]
-  collections       Collection[]
-  itemCollections   ItemCollection[]
-  itemDiamonds      ItemDiamond[]
-  productSections   ProductSection[]
+  collections         Collection[]
+  itemCollections     ItemCollection[]
+  itemDiamonds        ItemDiamond[]
+  productSections     ProductSection[]
+  coupons             CouponCode[]
+  loyaltyTransactions LoyaltyTransaction[]
 
   @@index([ownerEmail])
 }
@@ -721,10 +729,12 @@ model Customer {
   estimates     Estimate[]
   repairs       Repair[]
   advances      Advance[]
-  cartItems     CartItem[]
-  wishlistItems WishlistItem[]
-  orderReviews  OrderReview[]
-  addresses     CustomerAddress[]
+  cartItems           CartItem[]
+  wishlistItems       WishlistItem[]
+  orderReviews        OrderReview[]
+  addresses           CustomerAddress[]
+  loyaltyTransactions LoyaltyTransaction[]
+  couponUsages        CouponUsage[]
 
   @@unique([tenantId, phone])
   @@index([tenantId])
@@ -1377,6 +1387,16 @@ model Order {
   // Surfaced verbatim on the customer track page so the customer sees the
   // same explanation the cashier wrote.
   cancelReason          String?
+  // Coupon applied at checkout. Code is snapshotted so changes to the
+  // CouponCode row never rewrite order history.
+  couponId              String?
+  couponCode            String?
+  couponDiscountPaise   Int           @default(0)
+  // Loyalty points redeemed at checkout. loyaltyPointsEarned stays 0 until
+  // the order transitions to DELIVERED, when the server credits them.
+  loyaltyPointsUsed     Int           @default(0)
+  loyaltyDiscountPaise  Int           @default(0)
+  loyaltyPointsEarned   Int           @default(0)
   createdAt             DateTime      @default(now())
 
   tenant   Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
@@ -1387,6 +1407,7 @@ model Order {
   // load cleanly with `include: { review: true }`. The UI shows a
   // "Write a review" CTA on delivered orders where this is null.
   review   OrderReview?
+  coupon   CouponCode?  @relation(fields: [couponId], references: [id])
 
   @@index([tenantId])
   @@index([tenantId, status])
@@ -1657,4 +1678,107 @@ model Reconciliation {
 
   @@unique([tenantId, shopId, reconciledDate])
   @@index([tenantId, reconciledDate])
+}
+
+// --------------------------------------------------------------------------
+// Promotions — Coupon Codes
+// --------------------------------------------------------------------------
+
+enum CouponType {
+  PERCENT       // valueBps off subtotal (e.g. 1000 bps = 10%)
+  FIXED         // valuePaise off subtotal
+  FREE_SHIPPING // shipping set to 0
+  BXGY          // buy-X-get-Y; config in bxgyJson
+  FIRST_ORDER   // discount for first-time buyers; valueBps or valuePaise
+}
+
+// Coupon code definitions. One row per code per tenant; a code can only
+// be used up to usageLimitTotal times in total and usageLimitPerCustomer
+// times per customer. stackable controls whether a customer can also
+// redeem loyalty points when this coupon is applied.
+model CouponCode {
+  id                    String     @id @default(cuid())
+  tenantId              String
+  code                  String     // stored uppercase; unique per tenant
+  type                  CouponType
+  // PERCENT/FIRST_ORDER: discount as basis points (1000 = 10%).
+  // Zero for FIXED, FREE_SHIPPING, BXGY.
+  valueBps              Int        @default(0)
+  // FIXED/FIRST_ORDER (when flat): discount in paise.
+  // Zero for PERCENT, FREE_SHIPPING, BXGY.
+  valuePaise            Int        @default(0)
+  // Optional upper bound on how much a PERCENT coupon can discount.
+  maxDiscountPaise      Int?
+  // Minimum subtotal (before coupon) for the coupon to activate.
+  minCartPaise          Int        @default(0)
+  // null = unlimited total uses
+  usageLimitTotal       Int?
+  // default 1 = each customer can use once; null = unlimited per customer
+  usageLimitPerCustomer Int?       @default(1)
+  usageCount            Int        @default(0)
+  // Validity window. validFrom defaults to now; validUntil=null = no expiry.
+  validFrom             DateTime   @default(now())
+  validUntil            DateTime?
+  // Optional product/category scope. Empty array = applies to entire cart.
+  productIds            String[]   @default([])
+  categoryIds           String[]   @default([])
+  // BXGY: { buyQty: number, getQty: number, productId?: string }
+  bxgyJson              Json?
+  // When true, the customer may also redeem loyalty points on the same order.
+  stackable             Boolean    @default(false)
+  isActive              Boolean    @default(true)
+  createdAt             DateTime   @default(now())
+
+  tenant Tenant        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  usages CouponUsage[]
+  orders Order[]
+
+  @@unique([tenantId, code])
+  @@index([tenantId])
+  @@index([tenantId, isActive])
+}
+
+// One row per order per coupon. Tracks which orders consumed which coupon
+// so we can enforce usageLimitTotal and usageLimitPerCustomer, and reverse
+// a slot when an order is cancelled or returned.
+model CouponUsage {
+  id            String   @id @default(cuid())
+  tenantId      String
+  couponId      String
+  orderId       String   @unique
+  customerId    String
+  discountPaise Int
+  createdAt     DateTime @default(now())
+
+  coupon   CouponCode @relation(fields: [couponId], references: [id], onDelete: Cascade)
+  customer Customer   @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  @@index([couponId])
+  @@index([customerId, couponId])
+  @@index([tenantId])
+}
+
+// --------------------------------------------------------------------------
+// Promotions — Loyalty Points
+// --------------------------------------------------------------------------
+
+// Append-only ledger for every points event. The running balance lives on
+// Customer.loyaltyPoints (Int) and is kept in sync atomically. This table
+// is the audit trail and the source for expiry-check queries.
+// type values: EARN | REDEEM | EXPIRE | REFUND | ADMIN_ADJUST
+model LoyaltyTransaction {
+  id         String   @id @default(cuid())
+  tenantId   String
+  customerId String
+  orderId    String?  // null for EXPIRE / ADMIN_ADJUST
+  type       String   // 'EARN' | 'REDEEM' | 'EXPIRE' | 'REFUND' | 'ADMIN_ADJUST'
+  points     Int      // positive = credit (EARN/REFUND), negative = debit (REDEEM/EXPIRE)
+  note       String?
+  createdAt  DateTime @default(now())
+
+  tenant   Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  customer Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, customerId])
+  @@index([customerId, createdAt(sort: Desc)])
 }

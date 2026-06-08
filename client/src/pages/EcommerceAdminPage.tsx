@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+﻿import { useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { Plus, X, Pencil, Trash2, ChevronRight, List, Kanban as KanbanIcon, Upload, Link2, Clock, CheckCircle2, Package, Truck, XCircle, RotateCcw, MapPin, FileDown } from 'lucide-react';
 import * as Dialog from '@radix-ui/react-dialog';
@@ -219,7 +219,7 @@ export function EcommerceAdminPage(): JSX.Element {
 
       {tab === 'orders' && (
         <div className="space-y-3">
-          {/* List ↔ Board view toggle. Both render the same `orders` array;
+          {/* List ↓ Board view toggle. Both render the same `orders` array;
               the board groups by status and supports drag-to-transition. */}
           <div className="flex items-center justify-end">
             <div className="inline-flex rounded-md border border-ink-200 overflow-hidden text-sm">
@@ -1982,3 +1982,4 @@ function ReservationsTable({
     </>
   );
 }
+

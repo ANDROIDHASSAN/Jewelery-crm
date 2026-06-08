@@ -105,6 +105,18 @@ export function PrintLabelsPage(): JSX.Element {
     return (id: string): string => map.get(id) ?? '';
   }, [categoriesRes]);
 
+  // metalType lives on the main (parent) category; sub-categories inherit it.
+  const categoryMetalType = useMemo(() => {
+    const cats = categoriesRes?.data ?? [];
+    const byId = new Map(cats.map((c) => [c.id, c]));
+    const map = new Map<string, string>();
+    for (const c of cats) {
+      const main = c.parentId ? byId.get(c.parentId) : c;
+      map.set(c.id, (main ?? c).metalType ?? '');
+    }
+    return (id: string): string => map.get(id) ?? '';
+  }, [categoriesRes]);
+
   function handlePrint(): void {
     window.print();
   }
@@ -160,6 +172,7 @@ export function PrintLabelsPage(): JSX.Element {
             size={size}
             shopName={shopName}
             categoryName={categoryName}
+            categoryMetalType={categoryMetalType}
           />
         )}
       </main>
@@ -187,11 +200,13 @@ function LabelSheet({
   size,
   shopName,
   categoryName,
+  categoryMetalType,
 }: {
   items: Item[];
   size: LabelSize;
   shopName: (id: string) => string;
   categoryName: (id: string) => string;
+  categoryMetalType: (id: string) => string;
 }): JSX.Element {
   return (
     <div
@@ -212,10 +227,24 @@ function LabelSheet({
           size={size}
           shopName={shopName(item.shopId)}
           category={categoryName(item.categoryId)}
+          metalType={categoryMetalType(item.categoryId)}
         />
       ))}
     </div>
   );
+}
+
+function purityCodeForLabel(purityCaratX100: number, metalType: string): string {
+  if (metalType === 'STAINLESS_STEEL') return 'ST';
+  if (metalType === 'OTHER') return 'N/P';
+  if (purityCaratX100 === 0) return '925';      // silver
+  if (purityCaratX100 === 9500) return 'PT950';
+  if (purityCaratX100 === 2400) return '24K';
+  if (purityCaratX100 === 2200) return '22K';
+  if (purityCaratX100 === 1800) return '18K';
+  if (purityCaratX100 === 1400) return '14K';
+  const k = purityCaratX100 / 100;
+  return `${Number.isInteger(k) ? k.toFixed(0) : k.toFixed(1)}K`;
 }
 
 function LabelCell({
@@ -223,18 +252,15 @@ function LabelCell({
   size,
   shopName,
   category,
+  metalType,
 }: {
   item: Item;
   size: LabelSize;
   shopName: string;
   category: string;
+  metalType: string;
 }): JSX.Element {
-  const purityLabel =
-    item.purityCaratX100 === 0
-      ? '925'
-      : item.purityCaratX100 === 9500
-        ? 'PT'
-        : `${item.purityCaratX100 / 100}K`;
+  const purityLabel = purityCodeForLabel(item.purityCaratX100, metalType);
   const weightG = (item.weightMg / 1000).toFixed(2);
 
   // Compact-mode tag (40×20) drops the QR + category to keep the SKU

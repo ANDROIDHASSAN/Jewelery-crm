@@ -112,6 +112,9 @@ posRouter.get('/bills/:id/receipt.pdf', async (req, res, next) => {
                 weightMg: true,
                 hallmarkRef: true,
                 hallmarkStatus: true,
+                category: {
+                  select: { metalType: true },
+                },
               },
             },
           },
@@ -173,26 +176,56 @@ posRouter.get('/bills/:id/receipt.pdf', async (req, res, next) => {
         },
         lines: bill.lines.map((l) => {
           const purity = l.purityCaratX100 ?? l.item?.purityCaratX100 ?? null;
-          const weightMg = l.weightMg ?? l.item?.weightMg ?? null;
+          const weightMg = l.weightMg;
           const huid = l.item?.hallmarkStatus === 'CERTIFIED' ? l.item?.hallmarkRef : null;
-          // Net per-gram metal rate snapshotted on the bill. Falls back to
-          // null when the legacy column is absent — the renderer prints a
-          // dash in that case.
-          const ratePerGPaise = weightMg && weightMg > 0
-            ? Math.round(((l.linePaise - (l.stoneChargePaise ?? 0)) * 1000) / (weightMg * (1 + (l.makingChargeBps ?? 0) / 10000)))
+
+          // Fixed-price items (steel, gold-tone) display a per-piece rate
+          // rather than weight × rate-per-gram breakdown.
+          const metalType = l.item?.category?.metalType;
+          const isQtyPriced = metalType === 'STAINLESS_STEEL' || metalType === 'OTHER';
+
+          // For weight-based items (gold/silver), use the rate snapshotted at
+          // sale time — avoids back-calculating through a combined linePaise.
+          const ratePerGPaise = !isQtyPriced && weightMg > 0
+            ? l.ratePerGramPaise
             : undefined;
+
+          // Derive the making-charge breakdown from the stored snapshot.
+          // PER_GRAM items are stored with makingChargeBps=0 (the rupee
+          // making is baked into linePaise). We detect them by computing the
+          // residual after subtracting the metal value and stone charge.
+          let makingPct: number | undefined;
+          let makingPerGramPaise: number | undefined;
+
+          if (!isQtyPriced && weightMg > 0 && l.ratePerGramPaise > 0) {
+            if ((l.makingChargeBps ?? 0) > 0) {
+              makingPct = l.makingChargeBps / 100;
+            } else {
+              const metalValue = Math.round(l.ratePerGramPaise * weightMg / 1000);
+              const residual = l.linePaise - (l.stoneChargePaise ?? 0) - metalValue;
+              if (residual > 0) {
+                makingPerGramPaise = Math.round(residual * 1000 / weightMg);
+              }
+            }
+          }
+
           return {
             description: l.item?.name ?? 'Jewellery piece',
-            details: [
-              purity ? `${(purity / 100).toFixed(0)}K Gold` : null,
-              huid ? `HUID ${huid}` : 'BIS Hallmarked',
-            ].filter(Boolean).join(' · ') || undefined,
+            details: isQtyPriced
+              ? undefined
+              : [
+                  purity ? `${(purity / 100).toFixed(0)}K Gold` : null,
+                  huid ? `HUID ${huid}` : null,
+                ].filter(Boolean).join(' · ') || undefined,
             qty: 1,
             unitPaise: l.linePaise,
             amountPaise: l.linePaise,
-            weightG: weightMg != null ? weightMg / 1000 : undefined,
-            ratePerGPaise: ratePerGPaise,
-            makingPct: l.makingChargeBps != null ? l.makingChargeBps / 100 : undefined,
+            weightG: !isQtyPriced && weightMg > 0 ? weightMg / 1000 : undefined,
+            ratePerGPaise,
+            makingPct,
+            makingPerGramPaise,
+            isQtyPriced,
+            perQtyPricePaise: isQtyPriced ? l.linePaise : undefined,
           };
         }),
         subtotalPaise: bill.subtotalPaise,

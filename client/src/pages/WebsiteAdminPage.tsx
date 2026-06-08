@@ -5,7 +5,8 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
-import { ExternalLink, Plus, Trash2, RotateCcw, CloudUpload, X, Image as ImageIcon, Video as VideoIcon } from 'lucide-react';
+import { ExternalLink, Plus, Trash2, RotateCcw, CloudUpload, X, Image as ImageIcon, Video as VideoIcon, FileText } from 'lucide-react';
+import { downloadPdf } from '@/lib/downloadPdf';
 import { uploadImageToCloudinary, uploadVideoToCloudinary } from '@/lib/cloudinary';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -48,6 +49,11 @@ import {
   useGetAdminStorefrontQuery,
   useUpdateStorefrontMutation,
 } from '@/features/storefront/storefrontApi';
+import {
+  useGetLoyaltyConfigQuery,
+  useUpdateLoyaltyConfigMutation,
+} from '@/features/promotions/promotionsApi';
+import { CouponsAdminTab } from '@/features/promotions/CouponsAdminTab';
 
 type TabKey =
   | 'brand'
@@ -63,7 +69,9 @@ type TabKey =
   | 'homepage'
   | 'labels'
   | 'footer'
-  | 'invoice';
+  | 'invoice'
+  | 'loyalty'
+  | 'coupons';
 
 const TABS: Array<{ key: TabKey; label: string }> = [
   { key: 'brand', label: 'Brand' },
@@ -80,6 +88,8 @@ const TABS: Array<{ key: TabKey; label: string }> = [
   { key: 'labels', label: 'Section labels' },
   { key: 'footer', label: 'Footer' },
   { key: 'invoice', label: 'Invoice layout' },
+  { key: 'loyalty', label: 'Loyalty' },
+  { key: 'coupons', label: 'Coupons' },
 ];
 
 export function WebsiteAdminPage(): JSX.Element {
@@ -1032,8 +1042,25 @@ export function WebsiteAdminPage(): JSX.Element {
           {tab === 'footer' && (
             <FooterSectionsTab content={content} onPatch={(patch) => { dispatch(setContent({ ...content, ...patch })); notify(); }} />
           )}
+          {tab === 'loyalty' && <LoyaltyConfigTab />}
+          {tab === 'coupons' && <CouponsAdminTab />}
           {tab === 'invoice' && (
             <div className="space-y-6">
+              <div className="flex items-center justify-between rounded-md border border-ink-100 bg-ink-0 px-5 py-3">
+                <div>
+                  <p className="text-sm font-medium text-ink-900">Invoice preview</p>
+                  <p className="text-xs text-ink-500 mt-0.5">Opens a sample PDF using your current layout settings. Publish first to include the latest changes.</p>
+                </div>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="gap-2 shrink-0"
+                  onClick={() => downloadPdf('/api/v1/storefront/invoice-preview.pdf', { mode: 'preview' })}
+                >
+                  <FileText className="h-4 w-4" />
+                  Preview PDF
+                </Button>
+              </div>
               <Card title="Brand band (top of invoice)" desc="The branded header strip — wordmark + tagline + established line.">
                 <Field label="Sub-tagline" hint="Small uppercase line under the brand name. e.g. FINE JEWELLERY">
                   <Input
@@ -1291,29 +1318,57 @@ export function WebsiteAdminPage(): JSX.Element {
 
         {/* Live preview panel */}
         <aside className="space-y-4">
-          <div className="rounded-md border border-ink-100 overflow-hidden bg-ink-0 sticky top-6">
-            <div className="px-4 h-10 border-b border-ink-100 flex items-center justify-between bg-ink-25">
-              <span className="text-eyebrow uppercase text-ink-500">Live preview</span>
-              <a
-                href="/store"
-                target="_blank"
-                rel="noreferrer"
-                className="text-xs text-ink-700 hover:text-ink-900 inline-flex items-center gap-1"
-              >
-                Open
-                <ExternalLink className="h-3 w-3" />
-              </a>
+          {tab === 'invoice' ? (
+            <div className="rounded-md border border-ink-100 overflow-hidden bg-ink-0 sticky top-6">
+              <div className="px-4 h-10 border-b border-ink-100 flex items-center justify-between bg-ink-25">
+                <span className="text-eyebrow uppercase text-ink-500">Invoice preview</span>
+              </div>
+              <div className="flex flex-col items-center justify-center gap-4 py-12 px-6 text-center">
+                <div className="rounded-full bg-ink-50 p-4">
+                  <FileText className="h-8 w-8 text-ink-400" />
+                </div>
+                <div>
+                  <p className="text-sm font-medium text-ink-800">Preview your invoice layout</p>
+                  <p className="text-xs text-ink-500 mt-1 max-w-[220px]">
+                    Opens a sample PDF with dummy data using your saved CMS settings.
+                  </p>
+                </div>
+                <Button
+                  variant="outline"
+                  className="gap-2"
+                  onClick={() => downloadPdf('/api/v1/storefront/invoice-preview.pdf', { mode: 'preview' })}
+                >
+                  <FileText className="h-4 w-4" />
+                  Open preview PDF
+                </Button>
+                <p className="text-[11px] text-ink-400">Publish your changes first to see them in the preview.</p>
+              </div>
             </div>
-            <iframe
-              key={JSON.stringify(content).length}
-              src="/store"
-              title="Storefront preview"
-              className="w-full h-[640px] bg-ink-0"
-            />
-            <p className="px-4 py-2 text-[11px] text-ink-500 border-t border-ink-100 bg-ink-25">
-              Preview reloads when you switch tabs. Use the open icon to test interactions.
-            </p>
-          </div>
+          ) : (
+            <div className="rounded-md border border-ink-100 overflow-hidden bg-ink-0 sticky top-6">
+              <div className="px-4 h-10 border-b border-ink-100 flex items-center justify-between bg-ink-25">
+                <span className="text-eyebrow uppercase text-ink-500">Live preview</span>
+                <a
+                  href="/store"
+                  target="_blank"
+                  rel="noreferrer"
+                  className="text-xs text-ink-700 hover:text-ink-900 inline-flex items-center gap-1"
+                >
+                  Open
+                  <ExternalLink className="h-3 w-3" />
+                </a>
+              </div>
+              <iframe
+                key={JSON.stringify(content).length}
+                src="/store"
+                title="Storefront preview"
+                className="w-full h-[640px] bg-ink-0"
+              />
+              <p className="px-4 py-2 text-[11px] text-ink-500 border-t border-ink-100 bg-ink-25">
+                Preview reloads when you switch tabs. Use the open icon to test interactions.
+              </p>
+            </div>
+          )}
         </aside>
       </div>
     </div>
@@ -2006,6 +2061,83 @@ interface FieldDef<T> {
   span?: 1 | 2 | 3;
 }
 
+function ImageFieldCell({
+  value,
+  onChange,
+  placeholder,
+}: {
+  value: string;
+  onChange: (url: string) => void;
+  placeholder?: string;
+}): JSX.Element {
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [uploading, setUploading] = useState(false);
+
+  return (
+    <>
+      <div className="flex gap-1 mt-1">
+        <Input
+          value={value}
+          placeholder={placeholder ?? 'https://...'}
+          onChange={(e) => onChange(e.target.value)}
+          className="h-8 text-xs font-mono"
+        />
+        <button
+          type="button"
+          disabled={uploading}
+          onClick={() => fileInputRef.current?.click()}
+          className="shrink-0 h-8 px-2 inline-flex items-center justify-center rounded-md border border-ink-200 bg-ink-0 text-ink-600 hover:bg-ink-50 hover:text-ink-900 disabled:opacity-50"
+          title="Upload image to Cloudinary"
+        >
+          {uploading ? (
+            <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-current border-t-transparent" />
+          ) : (
+            <CloudUpload className="h-3.5 w-3.5" />
+          )}
+        </button>
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept="image/png,image/jpeg,image/webp"
+          className="sr-only"
+          onChange={async (e) => {
+            const file = e.target.files?.[0];
+            if (!file) return;
+            if (file.size > 5_000 * 1024) {
+              toast.error('Image must be under 5 MB');
+              e.target.value = '';
+              return;
+            }
+            setUploading(true);
+            try {
+              const result = await uploadImageToCloudinary(file, {
+                folder: 'zelora/website',
+              });
+              onChange(result.secureUrl);
+              toast.success('Image uploaded');
+            } catch (err) {
+              toast.error(err instanceof Error ? err.message : 'Upload failed');
+            } finally {
+              setUploading(false);
+              e.target.value = '';
+            }
+          }}
+        />
+      </div>
+      {value ? (
+        <img
+          src={value}
+          alt=""
+          className="mt-1 max-h-20 rounded-md border border-ink-100 object-cover"
+          onError={(e) => {
+            (e.currentTarget as HTMLImageElement).style.display = 'none';
+          }}
+        />
+      ) : null}
+    </>
+  );
+}
+
 function ListItemEditor<T extends Record<string, unknown>>({
   items,
   fields,
@@ -2138,6 +2270,12 @@ function ListItemEditor<T extends Record<string, unknown>>({
                     }
                     className="h-8 mt-1 text-xs"
                   />
+                ) : f.type === 'image' ? (
+                  <ImageFieldCell
+                    value={String((it[f.key] ?? '') as string)}
+                    placeholder={f.placeholder}
+                    onChange={(url) => patchItem(idx, f.key, url)}
+                  />
                 ) : (
                   <Input
                     value={String((it[f.key] ?? '') as string)}
@@ -2145,21 +2283,10 @@ function ListItemEditor<T extends Record<string, unknown>>({
                     onChange={(e) => patchItem(idx, f.key, e.target.value)}
                     className={cn(
                       'h-8 mt-1 text-xs',
-                      (f.type === 'url' || f.type === 'image') && 'font-mono',
+                      f.type === 'url' && 'font-mono',
                     )}
                   />
                 )}
-                {/* Inline preview for image-typed fields */}
-                {f.type === 'image' && it[f.key] ? (
-                  <img
-                    src={String(it[f.key] as string)}
-                    alt=""
-                    className="mt-1 max-h-20 rounded-md border border-ink-100 object-cover"
-                    onError={(e) => {
-                      (e.currentTarget as HTMLImageElement).style.display = 'none';
-                    }}
-                  />
-                ) : null}
               </div>
             ))}
           </div>
@@ -2588,6 +2715,114 @@ function FooterSectionsTab({
           max={10}
         />
       </Card>
+    </div>
+  );
+}
+
+// ─── Loyalty Config Tab ────────────────────────────────────────────────────────
+
+function LoyaltyConfigTab(): JSX.Element {
+  const { data, isLoading } = useGetLoyaltyConfigQuery();
+  const [save, { isLoading: saving }] = useUpdateLoyaltyConfigMutation();
+  const [fields, setFields] = useState({
+    loyaltyEarnRatePaise: 10000,
+    loyaltyPointValuePaise: 1,
+    loyaltyMinRedeemPoints: 500,
+    loyaltyMaxRedeemPct: 20,
+    loyaltyExpiryDays: 365,
+  });
+
+  useEffect(() => {
+    if (data) setFields(data);
+  }, [data]);
+
+  const patch = <K extends keyof typeof fields>(key: K, val: number): void =>
+    setFields((prev) => ({ ...prev, [key]: val }));
+
+  const handleSave = async (): Promise<void> => {
+    try {
+      await save(fields).unwrap();
+      toast.success('Loyalty settings saved');
+    } catch { toast.error('Failed to save loyalty settings'); }
+  };
+
+  if (isLoading) return <div className="py-8 text-center text-ink-400 text-sm">Loading…</div>;
+
+  const earnRateRs = fields.loyaltyEarnRatePaise / 100;
+  const pointValuePaise = fields.loyaltyPointValuePaise;
+
+  return (
+    <div className="space-y-6 max-w-xl">
+      <div>
+        <h3 className="text-base font-medium text-ink-900">Loyalty programme settings</h3>
+        <p className="text-sm text-ink-500 mt-1">
+          Control how customers earn and redeem loyalty points on your storefront.
+        </p>
+      </div>
+
+      <div className="space-y-4 rounded-lg border border-ink-200 p-5">
+        <div>
+          <Label>Earn rate (₹ per 1 point)</Label>
+          <p className="text-xs text-ink-400 mb-1.5">Customer earns 1 point for every ₹{earnRateRs} spent</p>
+          <Input
+            type="number" min={100} max={1000000} step={100}
+            value={earnRateRs}
+            onChange={(e) => patch('loyaltyEarnRatePaise', Math.round(Number(e.target.value) * 100))}
+          />
+        </div>
+
+        <div>
+          <Label>Point value (paise per point)</Label>
+          <p className="text-xs text-ink-400 mb-1.5">
+            Currently: 1 point = {pointValuePaise} paise = ₹{(pointValuePaise / 100).toFixed(2)}.
+            (100 points = ₹{pointValuePaise})
+          </p>
+          <Input
+            type="number" min={1} max={1000}
+            value={pointValuePaise}
+            onChange={(e) => patch('loyaltyPointValuePaise', Number(e.target.value))}
+          />
+        </div>
+
+        <div>
+          <Label>Minimum points to redeem</Label>
+          <p className="text-xs text-ink-400 mb-1.5">Customer needs at least this many points to redeem</p>
+          <Input
+            type="number" min={1} max={100000}
+            value={fields.loyaltyMinRedeemPoints}
+            onChange={(e) => patch('loyaltyMinRedeemPoints', Number(e.target.value))}
+          />
+        </div>
+
+        <div>
+          <Label>Maximum % of cart payable by points</Label>
+          <p className="text-xs text-ink-400 mb-1.5">Points can cover at most this % of the subtotal</p>
+          <Input
+            type="number" min={1} max={100}
+            value={fields.loyaltyMaxRedeemPct}
+            onChange={(e) => patch('loyaltyMaxRedeemPct', Number(e.target.value))}
+          />
+        </div>
+
+        <div>
+          <Label>Points expiry (days of inactivity)</Label>
+          <p className="text-xs text-ink-400 mb-1.5">Points expire after this many days without any transaction</p>
+          <Input
+            type="number" min={30} max={3650}
+            value={fields.loyaltyExpiryDays}
+            onChange={(e) => patch('loyaltyExpiryDays', Number(e.target.value))}
+          />
+        </div>
+      </div>
+
+      <div className="rounded-md bg-amber-50 border border-amber-200 px-4 py-3 text-sm text-amber-800">
+        <strong>Example:</strong> With current settings, a customer spending ₹{earnRateRs.toLocaleString('en-IN')} earns 1 point (= {pointValuePaise} paise).
+        Spending ₹{(earnRateRs * 100).toLocaleString('en-IN')} earns 100 points = ₹{pointValuePaise}.
+      </div>
+
+      <Button onClick={() => void handleSave()} disabled={saving}>
+        {saving ? 'Saving…' : 'Save loyalty settings'}
+      </Button>
     </div>
   );
 }

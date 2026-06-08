@@ -7,8 +7,12 @@ import { readGoldRatePaise } from '../../lib/redis.js';
 import { applyBps, computeGoldValuePaise } from '../../lib/money.js';
 import { getTenantId } from '../../lib/async-context.js';
 import { withCache, bustKey } from '../../lib/cache.js';
+import { bustTenant } from '../finance/finance.cache.js';
 import { requirePermission } from '../../middleware/require-permission.js';
 import { renderReceiptPdf } from '../../lib/receipt-pdf.js';
+import { creditEarnedPoints, refundRedeemedPoints, reverseEarnedPoints } from '../promotions/loyalty.service.js';
+import { reverseCouponUsageInTx } from '../promotions/coupon.service.js';
+import { Prisma } from '@prisma/client';
 
 export const ecommerceRouter: Router = Router();
 
@@ -417,6 +421,9 @@ ecommerceRouter.get('/orders/:id/invoice.pdf', async (req, res, next) => {
         lines: order.items.map((l) => {
           const purity = l.product?.purityCaratX100 ?? null;
           const weightMg = l.product?.weightMg ?? null;
+          // E-commerce products are sold at a fixed storefront price — there
+          // is no live-rate snapshot on the order line, so we always show the
+          // unit price in the RATE column rather than a per-gram rate.
           return {
             description: l.product?.name ?? 'Jewellery piece',
             details: purity ? `${(purity / 100).toFixed(0)}K · BIS Hallmarked` : undefined,
@@ -424,7 +431,10 @@ ecommerceRouter.get('/orders/:id/invoice.pdf', async (req, res, next) => {
             unitPaise: l.pricePaise,
             amountPaise: l.pricePaise * l.qty,
             weightG: weightMg != null ? weightMg / 1000 : undefined,
-            makingPct: l.product?.makingChargeBps != null ? l.product.makingChargeBps / 100 : undefined,
+            isQtyPriced: true,
+            perQtyPricePaise: l.pricePaise,
+            // Only show making % when it is actually non-zero.
+            makingPct: l.product?.makingChargeBps ? l.product.makingChargeBps / 100 : undefined,
           };
         }),
         subtotalPaise: order.subtotalPaise,
@@ -483,6 +493,11 @@ ecommerceRouter.patch('/orders/:id', requirePermission('ecommerce.order_fulfil')
       select: {
         status: true,
         tenantId: true,
+        customerId: true,
+        paymentStatus: true,
+        totalPaise: true,
+        loyaltyPointsUsed: true,
+        loyaltyPointsEarned: true,
         items: {
           select: {
             qty: true,
@@ -526,6 +541,11 @@ ecommerceRouter.patch('/orders/:id', requirePermission('ecommerce.order_fulfil')
     const wasTerminal = before.status === 'CANCELLED' || before.status === 'RETURNED';
     const shouldRestock = isCancelling && !wasTerminal;
 
+    // For reserve-at-store / COD orders, confirming the order is the
+    // point at which payment is received. Set paidAt so finance queries
+    // (which filter on paymentStatus=PAID AND paidAt in range) can see it.
+    const isConfirming = body.status === 'CONFIRMED' && before.paymentStatus === 'PENDING';
+
     const order = await prisma.$transaction(async (tx) => {
       const updated = await tx.order.update({
         where: { id },
@@ -533,6 +553,7 @@ ecommerceRouter.patch('/orders/:id', requirePermission('ecommerce.order_fulfil')
           status: body.status,
           shiprocketAwb: body.shiprocketAwb,
           cancelReason: isCancelling ? body.cancelReason : undefined,
+          ...(isConfirming ? { paymentStatus: 'PAID', paidAt: new Date() } : {}),
         },
         include: {
           customer: { select: { id: true, name: true, phone: true } },
@@ -593,9 +614,26 @@ ecommerceRouter.patch('/orders/:id', requirePermission('ecommerce.order_fulfil')
             },
           });
         }
+        // Reverse coupon usage slot and refund redeemed loyalty points
+        await reverseCouponUsageInTx(tx, id);
+        if (before.loyaltyPointsUsed > 0 && before.customerId) {
+          await refundRedeemedPoints(tx, id, before.customerId, before.tenantId, before.loyaltyPointsUsed);
+        }
+        // Reverse earned points if delivery had already credited them
+        if (before.loyaltyPointsEarned > 0 && before.customerId) {
+          await reverseEarnedPoints(tx, id, before.customerId, before.tenantId, before.loyaltyPointsEarned);
+        }
       }
       return updated;
     });
+
+    // Credit loyalty points when order is delivered (outside the main tx so
+    // a points-credit failure never rolls back the status update).
+    if (body.status === 'DELIVERED' && before.status !== 'DELIVERED' && before.customerId) {
+      setImmediate(() => {
+        void creditEarnedPoints(id, before.customerId!, before.tenantId, before.totalPaise ?? 0).catch(() => undefined);
+      });
+    }
     // Bust the cached aggregates + list page so the next poll sees the new
     // status immediately instead of waiting 8s for the TTL. Fire-and-forget
     // so the HTTP response isn't blocked on Redis round-trips.
@@ -603,6 +641,9 @@ ecommerceRouter.patch('/orders/:id', requirePermission('ecommerce.order_fulfil')
     void bustKey(before.tenantId, 'orders:list:ALL');
     if (body.status) void bustKey(before.tenantId, `orders:list:${body.status}`);
     if (before.status !== body.status) void bustKey(before.tenantId, `orders:list:${before.status}`);
+    // When the order becomes paid, bust the finance summary cache so P&L,
+    // daily-sales, and GST reflect the new revenue immediately.
+    if (isConfirming) bustTenant(before.tenantId);
     res.json({ data: order });
   } catch (err) {
     next(err);
@@ -624,3 +665,105 @@ function defaultEventNote(status: string): string {
     default:          return 'Status updated';
   }
 }
+
+// ============================================================================
+// Coupon Code CRUD (admin)
+// ============================================================================
+
+const COUPON_TYPES = ['PERCENT', 'FIXED', 'FREE_SHIPPING', 'BXGY', 'FIRST_ORDER'] as const;
+
+const CouponCreateSchema = z.object({
+  code: z.string().min(2).max(60).toUpperCase(),
+  type: z.enum(COUPON_TYPES),
+  valueBps: z.number().int().min(0).default(0),
+  valuePaise: z.number().int().min(0).default(0),
+  maxDiscountPaise: z.number().int().positive().optional().nullable(),
+  minCartPaise: z.number().int().min(0).default(0),
+  usageLimitTotal: z.number().int().positive().optional().nullable(),
+  usageLimitPerCustomer: z.number().int().min(0).optional().nullable(),
+  validFrom: z.string().datetime().optional(),
+  validUntil: z.string().datetime().optional().nullable(),
+  productIds: z.array(z.string()).default([]),
+  categoryIds: z.array(z.string()).default([]),
+  bxgyJson: z.record(z.unknown()).optional().nullable(),
+  stackable: z.boolean().default(false),
+  isActive: z.boolean().default(true),
+});
+
+// GET /ecommerce/coupons — list all coupons for this tenant
+ecommerceRouter.get('/coupons', requirePermission('ecommerce.read'), async (_req, res, next) => {
+  try {
+    const tenantId = getTenantId();
+    const coupons = await prisma.couponCode.findMany({
+      where: { tenantId },
+      orderBy: { createdAt: 'desc' },
+      include: { _count: { select: { usages: true } } },
+    });
+    res.json({ data: coupons });
+  } catch (err) { next(err); }
+});
+
+// POST /ecommerce/coupons — create coupon
+ecommerceRouter.post('/coupons', requirePermission('ecommerce.product_write'), async (req, res, next) => {
+  try {
+    const tenantId = getTenantId()!;
+    const body = CouponCreateSchema.parse(req.body);
+    const coupon = await prisma.couponCode.create({
+      data: {
+        tenantId,
+        code: body.code,
+        type: body.type as never,
+        valueBps: body.valueBps,
+        valuePaise: body.valuePaise,
+        maxDiscountPaise: body.maxDiscountPaise ?? null,
+        minCartPaise: body.minCartPaise,
+        usageLimitTotal: body.usageLimitTotal ?? null,
+        usageLimitPerCustomer: body.usageLimitPerCustomer ?? 1,
+        validFrom: body.validFrom ? new Date(body.validFrom) : new Date(),
+        validUntil: body.validUntil ? new Date(body.validUntil) : null,
+        productIds: body.productIds,
+        categoryIds: body.categoryIds,
+        bxgyJson: body.bxgyJson ?? Prisma.DbNull,
+        stackable: body.stackable,
+        isActive: body.isActive,
+      },
+    });
+    res.status(201).json({ data: coupon });
+  } catch (err) { next(err); }
+});
+
+// PATCH /ecommerce/coupons/:id — update coupon
+ecommerceRouter.patch('/coupons/:id', requirePermission('ecommerce.product_write'), async (req, res, next) => {
+  try {
+    const { id } = z.object({ id: z.string().min(1) }).parse(req.params);
+    const tenantId = getTenantId();
+    const body = CouponCreateSchema.partial().parse(req.body);
+    const { bxgyJson: rawBxgy, ...restBody } = body;
+    const coupon = await prisma.couponCode.updateMany({
+      where: { id, tenantId },
+      data: {
+        ...restBody,
+        type: body.type as never | undefined,
+        validFrom: body.validFrom ? new Date(body.validFrom) : undefined,
+        validUntil: body.validUntil !== undefined ? (body.validUntil ? new Date(body.validUntil) : null) : undefined,
+        ...(rawBxgy !== undefined ? { bxgyJson: rawBxgy ?? Prisma.DbNull } : {}),
+      },
+    });
+    if (coupon.count === 0) {
+      res.status(404).json({ error: { code: 'NOT_FOUND', message: 'Coupon not found' } });
+      return;
+    }
+    const updated = await prisma.couponCode.findUnique({ where: { id } });
+    res.json({ data: updated });
+  } catch (err) { next(err); }
+});
+
+// DELETE /ecommerce/coupons/:id — soft-delete (set isActive=false)
+ecommerceRouter.delete('/coupons/:id', requirePermission('ecommerce.product_write'), async (req, res, next) => {
+  try {
+    const { id } = z.object({ id: z.string().min(1) }).parse(req.params);
+    const tenantId = getTenantId();
+    await prisma.couponCode.updateMany({ where: { id, tenantId }, data: { isActive: false } });
+    res.json({ data: { deactivated: true } });
+  } catch (err) { next(err); }
+});

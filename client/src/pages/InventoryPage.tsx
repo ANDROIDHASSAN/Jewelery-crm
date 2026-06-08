@@ -4,7 +4,6 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import type { ColumnDef } from '@tanstack/react-table';
 import {
   Plus,
   Boxes,
@@ -71,7 +70,6 @@ import {
 } from '@/features/inventory/inventoryApi';
 import { useCreateTransferMutation } from '@/features/transfers/transfersApi';
 import { useGetShopsQuery } from '@/features/shops/shopsApi';
-import { DataTable } from '@/components/data/DataTable';
 import { TableToolbar, useTableSearch } from '@/components/data/TableToolbar';
 import { Button } from '@/components/ui/button';
 import { Money, Weight, Purity } from '@/components/ui/money';
@@ -86,6 +84,18 @@ import { Toolbar, StatPill } from '@/components/ui/Toolbar';
 import { TableSkeleton } from '@/components/ui/Skeleton';
 import { cn } from '@/lib/cn';
 import { BulkImportModal } from '@/features/inventory/BulkImportModal';
+import {
+  BarChart,
+  Bar,
+  XAxis,
+  YAxis,
+  Tooltip,
+  Cell,
+  PieChart,
+  Pie,
+  Legend,
+  ResponsiveContainer,
+} from 'recharts';
 
 type Tab =
   | 'shop-inventory'
@@ -229,98 +239,6 @@ function ItemsTab(): JSX.Element {
     return map;
   }, [shopsRes?.data]);
 
-  const columns = useMemo<ColumnDef<Item>[]>(
-    () => [
-      {
-        accessorKey: 'sku',
-        header: 'SKU',
-        cell: (i) => <span className="font-mono text-xs">{String(i.getValue())}</span>,
-      },
-      {
-        accessorKey: 'categoryId',
-        header: 'Category',
-        cell: (i) => categoryNameById.get(String(i.getValue())) ?? '—',
-      },
-      {
-        accessorKey: 'shopId',
-        header: 'Shop',
-        cell: (i) => (
-          <span className="text-xs text-ink-700">{shopNameById.get(String(i.getValue())) ?? '—'}</span>
-        ),
-      },
-      {
-        accessorKey: 'weightMg',
-        header: () => <span className="block text-right">Weight</span>,
-        cell: (i) => (
-          <div className="text-right">
-            <Weight mg={Number(i.getValue())} />
-          </div>
-        ),
-      },
-      {
-        accessorKey: 'purityCaratX100',
-        header: 'Purity',
-        cell: (i) => (
-          <Purity x100={Number(i.getValue())} metalType={categoryMetalById.get(i.row.original.categoryId)} />
-        ),
-      },
-      {
-        accessorKey: 'hallmarkStatus',
-        header: 'Hallmark',
-        cell: (i) => {
-          const v = String(i.getValue());
-          const tone =
-            v === 'CERTIFIED' ? 'success' : v === 'PENDING' ? 'warning' : v === 'SUBMITTED' ? 'info' : 'neutral';
-          return <Badge tone={tone as 'success' | 'warning' | 'info' | 'neutral'}>{v.toLowerCase()}</Badge>;
-        },
-      },
-      {
-        accessorKey: 'status',
-        header: 'Status',
-        cell: (i) => {
-          const v = String(i.getValue());
-          const tone =
-            v === 'IN_STOCK' ? 'success' : v === 'IN_TRANSIT' ? 'info' : v === 'SOLD' ? 'neutral' : 'warning';
-          return <Badge tone={tone as 'success' | 'info' | 'neutral' | 'warning'}>{v.replace('_', ' ').toLowerCase()}</Badge>;
-        },
-      },
-      {
-        accessorKey: 'costPricePaise',
-        header: () => <span className="block text-right">Cost</span>,
-        cell: (i) => (
-          <div className="text-right">
-            <Money paise={Number(i.getValue())} />
-          </div>
-        ),
-      },
-      {
-        // Per-row inline edit. Stops row-click propagation so the detail Sheet
-        // doesn't also open behind the edit dialog. Visible for every row
-        // regardless of status — admins occasionally fix the name / image of
-        // a SOLD piece for historical accuracy.
-        id: 'actions',
-        header: () => <span className="sr-only">Actions</span>,
-        cell: ({ row }) => (
-          <div className="text-right">
-            <button
-              type="button"
-              onClick={(e) => {
-                e.stopPropagation();
-                setEditTarget(row.original);
-              }}
-              className="inline-flex items-center justify-center h-7 w-7 rounded-md text-ink-500 hover:text-ink-900 hover:bg-ink-50"
-              aria-label={`Edit ${row.original.sku}`}
-              title="Edit item"
-            >
-              <Pencil className="h-3.5 w-3.5" />
-            </button>
-          </div>
-        ),
-      },
-    ],
-    [categoryNameById, shopNameById, categoryMetalById],
-  );
-
   return (
     <>
       <Toolbar
@@ -361,8 +279,8 @@ function ItemsTab(): JSX.Element {
       <InventoryItemsTable
         rows={allRows}
         isLoading={isLoading && allRows.length === 0}
-        columns={columns}
         onRowSelect={setSelected}
+        onEditItem={setEditTarget}
         onAddFirst={() => setAddOpen(true)}
         search={search}
         onSearch={setSearch}
@@ -376,6 +294,9 @@ function ItemsTab(): JSX.Element {
         onHallmarkFilter={setHallmarkFilter}
         shops={shopsRes?.data ?? []}
         categories={catRes?.data ?? []}
+        shopNameById={shopNameById}
+        categoryNameById={categoryNameById}
+        categoryMetalById={categoryMetalById}
         hasMore={hasMore}
         isFetchingMore={isFetching && allRows.length > 0}
         onLoadMore={loadMore}
@@ -473,13 +394,208 @@ function ItemsTab(): JSX.Element {
   );
 }
 
+// ---- Shared style constants for the grouped table ----
+const _TH = 'px-3 py-2.5 text-left text-[10px] font-semibold tracking-[0.14em] text-ink-500 uppercase';
+const _TD = 'px-3 py-2 text-ink-800 align-middle';
+
+interface SkuGroup {
+  key: string;
+  representative: Item;
+  shops: Array<{ item: Item; shopName: string }>;
+}
+
+function GroupedItemsTable({
+  rows,
+  shopNameById,
+  categoryNameById,
+  categoryMetalById,
+  onRowClick,
+  onEditItem,
+}: {
+  rows: Item[];
+  shopNameById: Map<string, string>;
+  categoryNameById: Map<string, string>;
+  categoryMetalById: Map<string, string>;
+  onRowClick: (item: Item) => void;
+  onEditItem: (item: Item) => void;
+}): JSX.Element {
+  const [expandedSkus, setExpandedSkus] = useState<Set<string>>(new Set());
+
+  // Reset expansion when the row set changes (filter / search applied).
+  const rowsKey = rows.map((r) => r.id).join(',');
+  useEffect(() => { setExpandedSkus(new Set()); }, [rowsKey]);
+
+  const groups = useMemo<SkuGroup[]>(() => {
+    const map = new Map<string, Item[]>();
+    for (const item of rows) {
+      const bucket = map.get(item.sku) ?? [];
+      bucket.push(item);
+      map.set(item.sku, bucket);
+    }
+    return Array.from(map.entries()).map(([sku, items]) => ({
+      key: sku,
+      representative: items[0]!,
+      shops: items.map((item) => ({ item, shopName: shopNameById.get(item.shopId) ?? '—' })),
+    }));
+  }, [rows, shopNameById]);
+
+  const toggle = (sku: string) => {
+    setExpandedSkus((prev) => {
+      const next = new Set(prev);
+      next.has(sku) ? next.delete(sku) : next.add(sku);
+      return next;
+    });
+  };
+
+  if (groups.length === 0) {
+    return (
+      <div className="rounded-md border border-ink-100 bg-ink-0 overflow-hidden">
+        <p className="px-3 py-10 text-center text-ink-400 text-sm">No items match the current filters.</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="rounded-md border border-ink-100 bg-ink-0 overflow-hidden">
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm border-collapse">
+          <thead className="sticky top-0 bg-ink-25/95 backdrop-blur z-10 border-b border-ink-100">
+            <tr>
+              <th className={_TH}>SKU</th>
+              <th className={_TH}>Category</th>
+              <th className={_TH}>Shop</th>
+              <th className={cn(_TH, 'text-right')}>Weight</th>
+              <th className={_TH}>Purity</th>
+              <th className={_TH}>Hallmark</th>
+              <th className={_TH}>Status</th>
+              <th className={cn(_TH, 'text-right')}>Cost</th>
+              <th className={_TH}><span className="sr-only">Actions</span></th>
+            </tr>
+          </thead>
+          <tbody>
+            {groups.flatMap((group) => {
+              const { representative: rep, shops } = group;
+              const isMulti = shops.length > 1;
+              const isExpanded = expandedSkus.has(group.key);
+              const metal = categoryMetalById.get(rep.categoryId);
+              const catName = categoryNameById.get(rep.categoryId) ?? '—';
+              const hTone = (s: string) =>
+                s === 'CERTIFIED' ? 'success' : s === 'PENDING' ? 'warning' : s === 'SUBMITTED' ? 'info' : 'neutral';
+              const sTone = (s: string) =>
+                s === 'IN_STOCK' ? 'success' : s === 'IN_TRANSIT' ? 'info' : s === 'SOLD' ? 'neutral' : 'warning';
+
+              const mainRow = (
+                <tr
+                  key={group.key}
+                  onClick={() => onRowClick(rep)}
+                  className="h-10 border-b border-ink-50 last:border-b-0 transition-colors cursor-pointer hover:bg-ink-25 active:bg-ink-50"
+                >
+                  <td className={_TD}><span className="font-mono text-xs">{rep.sku}</span></td>
+                  <td className={_TD}>{catName}</td>
+                  <td className={_TD}>
+                    {isMulti ? (
+                      <button
+                        type="button"
+                        onClick={(e) => { e.stopPropagation(); toggle(group.key); }}
+                        className="inline-flex items-center gap-1 text-xs font-medium text-blue-600 hover:text-blue-700 transition-colors"
+                        title={shops.map((s) => s.shopName).join(', ')}
+                      >
+                        {isExpanded
+                          ? <ChevronDown className="h-3 w-3 shrink-0" />
+                          : <ChevronRight className="h-3 w-3 shrink-0" />}
+                        {shops.length} Shop{shops.length > 1 ? 's' : ''}
+                      </button>
+                    ) : (
+                      <span className="text-xs text-ink-700">{shops[0]!.shopName}</span>
+                    )}
+                  </td>
+                  <td className={cn(_TD, 'text-right')}><Weight mg={rep.weightMg} /></td>
+                  <td className={_TD}><Purity x100={rep.purityCaratX100} metalType={metal} /></td>
+                  <td className={_TD}>
+                    <Badge tone={hTone(rep.hallmarkStatus) as 'success' | 'warning' | 'info' | 'neutral'}>
+                      {rep.hallmarkStatus.toLowerCase()}
+                    </Badge>
+                  </td>
+                  <td className={_TD}>
+                    <Badge tone={sTone(rep.status) as 'success' | 'info' | 'neutral' | 'warning'}>
+                      {rep.status.replace('_', ' ').toLowerCase()}
+                    </Badge>
+                  </td>
+                  <td className={cn(_TD, 'text-right')}><Money paise={rep.costPricePaise} /></td>
+                  <td className={_TD}>
+                    <div className="text-right">
+                      <button
+                        type="button"
+                        onClick={(e) => { e.stopPropagation(); onEditItem(rep); }}
+                        className="inline-flex items-center justify-center h-7 w-7 rounded-md text-ink-500 hover:text-ink-900 hover:bg-ink-50"
+                        aria-label={`Edit ${rep.sku}`}
+                      >
+                        <Pencil className="h-3.5 w-3.5" />
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              );
+
+              const subRows = isMulti && isExpanded
+                ? shops.map(({ item, shopName }) => (
+                    <tr
+                      key={item.id}
+                      onClick={(e) => { e.stopPropagation(); onRowClick(item); }}
+                      className="h-9 border-b border-ink-50 bg-blue-50/40 hover:bg-blue-50/70 cursor-pointer transition-colors"
+                    >
+                      <td className={_TD} colSpan={2} />
+                      <td className={_TD}>
+                        <span className="ml-2 flex items-center gap-1.5 text-xs text-ink-600">
+                          <span className="text-ink-300 select-none">└</span>
+                          {shopName}
+                        </span>
+                      </td>
+                      <td className={cn(_TD, 'text-right')}><Weight mg={item.weightMg} /></td>
+                      <td className={_TD}><Purity x100={item.purityCaratX100} metalType={categoryMetalById.get(item.categoryId)} /></td>
+                      <td className={_TD}>
+                        <Badge tone={hTone(item.hallmarkStatus) as 'success' | 'warning' | 'info' | 'neutral'}>
+                          {item.hallmarkStatus.toLowerCase()}
+                        </Badge>
+                      </td>
+                      <td className={_TD}>
+                        <Badge tone={sTone(item.status) as 'success' | 'info' | 'neutral' | 'warning'}>
+                          {item.status.replace('_', ' ').toLowerCase()}
+                        </Badge>
+                      </td>
+                      <td className={cn(_TD, 'text-right')}><Money paise={item.costPricePaise} /></td>
+                      <td className={_TD}>
+                        <div className="text-right">
+                          <button
+                            type="button"
+                            onClick={(e) => { e.stopPropagation(); onEditItem(item); }}
+                            className="inline-flex items-center justify-center h-7 w-7 rounded-md text-ink-500 hover:text-ink-900 hover:bg-ink-50"
+                            aria-label={`Edit ${item.sku} — ${shopName}`}
+                          >
+                            <Pencil className="h-3.5 w-3.5" />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))
+                : [];
+
+              return [mainRow, ...subRows];
+            })}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
 // Items table extracted so the search + filter wiring + DataTable render
 // stay co-located. Keeps ItemsTab readable while adding the new toolbar.
 function InventoryItemsTable({
   rows,
   isLoading,
-  columns,
   onRowSelect,
+  onEditItem,
   onAddFirst,
   search,
   onSearch,
@@ -493,14 +609,17 @@ function InventoryItemsTable({
   onHallmarkFilter,
   shops,
   categories,
+  shopNameById,
+  categoryNameById,
+  categoryMetalById,
   hasMore,
   isFetchingMore,
   onLoadMore,
 }: {
   rows: Item[];
   isLoading: boolean;
-  columns: ColumnDef<Item>[];
   onRowSelect: (row: Item) => void;
+  onEditItem: (item: Item) => void;
   onAddFirst: () => void;
   search: string;
   onSearch: (next: string) => void;
@@ -514,6 +633,9 @@ function InventoryItemsTable({
   onHallmarkFilter: (next: string) => void;
   shops: Array<{ id: string; name: string }>;
   categories: Array<{ id: string; name: string; parentId?: string | null }>;
+  shopNameById: Map<string, string>;
+  categoryNameById: Map<string, string>;
+  categoryMetalById: Map<string, string>;
   /** True when the server reports a next cursor for the most recent page. */
   hasMore: boolean;
   /** True while a Load-more fetch is in flight (rows are already showing). */
@@ -614,7 +736,14 @@ function InventoryItemsTable({
         count={filtered.length}
         countLabel={filtered.length === 1 ? 'item' : 'items'}
       />
-      <DataTable columns={columns} data={filtered} onRowClick={onRowSelect} />
+      <GroupedItemsTable
+        rows={filtered}
+        shopNameById={shopNameById}
+        categoryNameById={categoryNameById}
+        categoryMetalById={categoryMetalById}
+        onRowClick={onRowSelect}
+        onEditItem={onEditItem}
+      />
       {/* Pagination footer — visible when the server reports more pages.
           Browser-side filters narrow the loaded subset; if the user has
           filtered everything out but there are more pages on the server,
@@ -2515,6 +2644,7 @@ function AuditTab(): JSX.Element {
 // Add-item dialog.
 
 function AddItemDialog({ open, onClose }: { open: boolean; onClose: () => void }): JSX.Element {
+  const navigate = useNavigate();
   const { data: cats } = useGetCategoriesQuery();
   const { data: shops } = useGetShopsQuery();
   const { data: existingItemsRes } = useGetItemsQuery({});
@@ -2695,11 +2825,19 @@ function AddItemDialog({ open, onClose }: { open: boolean; onClose: () => void }
         collectionIds,
         diamonds: diamondRowsToInput(diamonds),
       }).unwrap();
+      const newSku = form.sku.trim();
       const stockLabel = isSerialized ? '' : ` (${quantityOnHand} in stock)`;
       toast.success(
         publishToWebsite
           ? `Added ${form.name.trim()}${stockLabel} and published to storefront`
           : `Added ${form.name.trim()}${stockLabel}`,
+        {
+          action: {
+            label: 'Print label',
+            onClick: () => navigate('/admin/inventory/print-labels', { state: { skus: [newSku] } }),
+          },
+          duration: 8000,
+        },
       );
       onClose();
     } catch (err) {
@@ -5134,14 +5272,26 @@ function DistributeStockDialog({
 // ----------------------------------------------------------------------------
 // Shop-wise inventory tab — hierarchical view by Shop → Main Category → Sub Category → Items.
 
+const SW_CAT_COLORS = ['#d97706', '#b45309', '#92400e', '#78350f', '#f59e0b', '#fbbf24', '#a16207', '#854d0e'];
+const SW_STATUS_COLORS: Record<string, string> = {
+  IN_STOCK: '#22c55e',
+  IN_TRANSIT: '#3b82f6',
+  SOLD: '#94a3b8',
+  MELTED: '#f97316',
+};
+
+type ItemWithCollections = Item & { collectionIds?: string[] };
+
 function ShopWiseInventoryTab(): JSX.Element {
   const { data: itemsRes, isLoading: itemsLoading } = useGetItemsQuery({ cursor: undefined, limit: 500 });
   const { data: shopsRes } = useGetShopsQuery();
   const { data: catRes } = useGetCategoriesQuery();
+  const { data: collectionsRes } = useGetCollectionsQuery();
 
   const shops = shopsRes?.data ?? [];
-  const allItems = (itemsRes?.data ?? []) as Item[];
+  const allItems = (itemsRes?.data ?? []) as ItemWithCollections[];
   const cats = (catRes?.data ?? []) as CategoryRow[];
+  const collections = collectionsRes?.data ?? [];
 
   const [selectedShopId, setSelectedShopId] = useState<string>('');
   const [expandedMainCats, setExpandedMainCats] = useState<Set<string>>(new Set());
@@ -5170,6 +5320,103 @@ function ShopWiseInventoryTab(): JSX.Element {
     [allItems, selectedShopId],
   );
 
+  // --- Summary stats ---
+  const totalWeightMg = useMemo(() => shopItems.reduce((s, i) => s + i.weightMg, 0), [shopItems]);
+  const totalValuePaise = useMemo(() => shopItems.reduce((s, i) => s + i.costPricePaise, 0), [shopItems]);
+  const inStockCount = useMemo(() => shopItems.filter((i) => i.status === 'IN_STOCK').length, [shopItems]);
+  const inTransitCount = useMemo(() => shopItems.filter((i) => i.status === 'IN_TRANSIT').length, [shopItems]);
+
+  // --- Chart: items per main category ---
+  const categoryChartData = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const item of shopItems) {
+      const itemCat = byId.get(item.categoryId);
+      const mainCatId = itemCat?.parentId ?? item.categoryId;
+      const name = byId.get(mainCatId)?.name ?? mainCatId.slice(-6);
+      m.set(name, (m.get(name) ?? 0) + 1);
+    }
+    return Array.from(m.entries())
+      .map(([name, count]) => ({ name, count }))
+      .sort((a, b) => b.count - a.count)
+      .slice(0, 8);
+  }, [shopItems, byId]);
+
+  // --- Chart: status distribution ---
+  const statusChartData = useMemo(() => {
+    const m: Record<string, number> = {};
+    for (const i of shopItems) m[i.status] = (m[i.status] ?? 0) + 1;
+    const labels: Record<string, string> = { IN_STOCK: 'In Stock', IN_TRANSIT: 'In Transit', SOLD: 'Sold', MELTED: 'Melted' };
+    return Object.entries(m).map(([status, value]) => ({ name: labels[status] ?? status, value, status }));
+  }, [shopItems]);
+
+  // --- Chart: purity distribution ---
+  const purityChartData = useMemo(() => {
+    const m = new Map<number, number>();
+    for (const i of shopItems) m.set(i.purityCaratX100, (m.get(i.purityCaratX100) ?? 0) + 1);
+    const label = (x100: number) => {
+      if (x100 === 2400) return '24K';
+      if (x100 === 2200) return '22K';
+      if (x100 === 1800) return '18K';
+      if (x100 === 1400) return '14K';
+      if (x100 === 0) return 'Silver';
+      if (x100 >= 9000) return `Pt ${x100 / 10}`;
+      return `${(x100 / 100).toFixed(1)}K`;
+    };
+    return Array.from(m.entries())
+      .map(([purity, count]) => ({ name: label(purity), count, purity }))
+      .sort((a, b) => b.purity - a.purity)
+      .slice(0, 6);
+  }, [shopItems]);
+
+  // --- Chart: weight per main category ---
+  const weightChartData = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const item of shopItems) {
+      const itemCat = byId.get(item.categoryId);
+      const mainCatId = itemCat?.parentId ?? item.categoryId;
+      const name = byId.get(mainCatId)?.name ?? mainCatId.slice(-6);
+      m.set(name, (m.get(name) ?? 0) + item.weightMg);
+    }
+    return Array.from(m.entries())
+      .map(([name, weightMg]) => ({ name, weight: parseFloat((weightMg / 1000).toFixed(3)) }))
+      .sort((a, b) => b.weight - a.weight)
+      .slice(0, 8);
+  }, [shopItems, byId]);
+
+  // --- Chart: qty in stock per main category ---
+  const qtyByCategoryData = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const item of shopItems) {
+      if (item.status !== 'IN_STOCK') continue;
+      const itemCat = byId.get(item.categoryId);
+      const mainCatId = itemCat?.parentId ?? item.categoryId;
+      const name = byId.get(mainCatId)?.name ?? mainCatId.slice(-6);
+      const qty = item.isSerialized ? 1 : item.quantityOnHand;
+      m.set(name, (m.get(name) ?? 0) + qty);
+    }
+    return Array.from(m.entries())
+      .map(([name, qty]) => ({ name, qty }))
+      .sort((a, b) => b.qty - a.qty)
+      .slice(0, 8);
+  }, [shopItems, byId]);
+
+  // --- Chart: items per collection (for this shop) ---
+  const collectionById = useMemo(() => new Map(collections.map((c) => [c.id, c])), [collections]);
+  const collectionChartData = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const item of shopItems) {
+      const ids = item.collectionIds ?? [];
+      for (const cid of ids) {
+        const name = collectionById.get(cid)?.name ?? cid.slice(-6);
+        m.set(name, (m.get(name) ?? 0) + 1);
+      }
+    }
+    return Array.from(m.entries())
+      .map(([name, count]) => ({ name, count }))
+      .sort((a, b) => b.count - a.count)
+      .slice(0, 10);
+  }, [shopItems, collectionById]);
+
   // Group by Main Category → Sub Category
   const grouped = useMemo(() => {
     const map = new Map<string, Map<string, Item[]>>();
@@ -5183,8 +5430,6 @@ function ShopWiseInventoryTab(): JSX.Element {
     }
     return map;
   }, [shopItems, byId]);
-
-  const totalWeightMg = useMemo(() => shopItems.reduce((s, i) => s + i.weightMg, 0), [shopItems]);
 
   const toggleMainCat = (id: string) =>
     setExpandedMainCats((prev) => {
@@ -5250,6 +5495,209 @@ function ShopWiseInventoryTab(): JSX.Element {
           title="No inventory in this shop"
           body="Items added or transferred to this shop will appear here."
         />
+      )}
+
+      {shopItems.length > 0 && (
+        <>
+          {/* Stats cards */}
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+            <div className="border border-ink-100 rounded-lg p-4 bg-white">
+              <p className="text-xs text-ink-400 uppercase tracking-wide font-medium mb-1">Total Items</p>
+              <p className="text-2xl font-bold text-ink-900">{shopItems.length}</p>
+              <p className="text-xs text-ink-400 mt-0.5">{grouped.size} categor{grouped.size === 1 ? 'y' : 'ies'}</p>
+            </div>
+            <div className="border border-ink-100 rounded-lg p-4 bg-white">
+              <p className="text-xs text-ink-400 uppercase tracking-wide font-medium mb-1">Total Weight</p>
+              <p className="text-2xl font-bold text-ink-900"><Weight mg={totalWeightMg} /></p>
+              <p className="text-xs text-ink-400 mt-0.5">gross weight</p>
+            </div>
+            <div className="border border-ink-100 rounded-lg p-4 bg-white">
+              <p className="text-xs text-ink-400 uppercase tracking-wide font-medium mb-1">Inventory Value</p>
+              <p className="text-2xl font-bold text-ink-900"><Money paise={totalValuePaise} /></p>
+              <p className="text-xs text-ink-400 mt-0.5">at cost price</p>
+            </div>
+            <div className="border border-ink-100 rounded-lg p-4 bg-white">
+              <p className="text-xs text-ink-400 uppercase tracking-wide font-medium mb-1">In Stock</p>
+              <p className="text-2xl font-bold text-green-600">{inStockCount}</p>
+              {inTransitCount > 0 && (
+                <p className="text-xs text-blue-500 mt-0.5">{inTransitCount} in transit</p>
+              )}
+            </div>
+          </div>
+
+          {/* Charts row 1: category items + status pie */}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            {categoryChartData.length > 0 && (
+              <div className="border border-ink-100 rounded-lg p-4 bg-white md:col-span-2">
+                <p className="text-xs text-ink-500 uppercase tracking-wide font-semibold mb-3">Items by Category</p>
+                <ResponsiveContainer width="100%" height={Math.max(160, categoryChartData.length * 32)}>
+                  <BarChart data={categoryChartData} layout="vertical" margin={{ left: 8, right: 24, top: 0, bottom: 0 }}>
+                    <XAxis type="number" tick={{ fontSize: 11 }} axisLine={false} tickLine={false} allowDecimals={false} />
+                    <YAxis
+                      dataKey="name"
+                      type="category"
+                      width={110}
+                      tick={{ fontSize: 11 }}
+                      axisLine={false}
+                      tickLine={false}
+                    />
+                    <Tooltip
+                      contentStyle={{ fontSize: 12, borderRadius: 6, border: '1px solid #e5e7eb', boxShadow: '0 1px 4px rgba(0,0,0,0.08)' }}
+                      formatter={(value: number) => [value, 'Items']}
+                    />
+                    <Bar dataKey="count" radius={[0, 4, 4, 0]} maxBarSize={20}>
+                      {categoryChartData.map((_, idx) => (
+                        <Cell key={idx} fill={SW_CAT_COLORS[idx % SW_CAT_COLORS.length]} />
+                      ))}
+                    </Bar>
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            )}
+
+            {statusChartData.length > 0 && (
+              <div className="border border-ink-100 rounded-lg p-4 bg-white">
+                <p className="text-xs text-ink-500 uppercase tracking-wide font-semibold mb-3">Status Breakdown</p>
+                <ResponsiveContainer width="100%" height={200}>
+                  <PieChart>
+                    <Pie
+                      data={statusChartData}
+                      cx="50%"
+                      cy="44%"
+                      innerRadius={48}
+                      outerRadius={74}
+                      dataKey="value"
+                      nameKey="name"
+                      paddingAngle={2}
+                    >
+                      {statusChartData.map((entry, idx) => (
+                        <Cell key={idx} fill={SW_STATUS_COLORS[entry.status] ?? '#94a3b8'} />
+                      ))}
+                    </Pie>
+                    <Tooltip contentStyle={{ fontSize: 12, borderRadius: 6, border: '1px solid #e5e7eb' }} />
+                    <Legend iconSize={9} iconType="circle" wrapperStyle={{ fontSize: 11, paddingTop: 4 }} />
+                  </PieChart>
+                </ResponsiveContainer>
+              </div>
+            )}
+          </div>
+
+          {/* Charts row 2: purity + weight by category */}
+          {(purityChartData.length > 1 || weightChartData.length > 1) && (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {purityChartData.length > 1 && (
+                <div className="border border-ink-100 rounded-lg p-4 bg-white">
+                  <p className="text-xs text-ink-500 uppercase tracking-wide font-semibold mb-3">Items by Purity</p>
+                  <ResponsiveContainer width="100%" height={140}>
+                    <BarChart data={purityChartData} margin={{ left: 0, right: 16, top: 0, bottom: 0 }}>
+                      <XAxis dataKey="name" tick={{ fontSize: 11 }} axisLine={false} tickLine={false} />
+                      <YAxis tick={{ fontSize: 11 }} axisLine={false} tickLine={false} allowDecimals={false} />
+                      <Tooltip
+                        contentStyle={{ fontSize: 12, borderRadius: 6, border: '1px solid #e5e7eb' }}
+                        formatter={(v: number) => [v, 'Items']}
+                      />
+                      <Bar dataKey="count" radius={[4, 4, 0, 0]} maxBarSize={36}>
+                        {purityChartData.map((_, idx) => (
+                          <Cell key={idx} fill={SW_CAT_COLORS[idx % SW_CAT_COLORS.length]} />
+                        ))}
+                      </Bar>
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+              )}
+
+              {weightChartData.length > 1 && (
+                <div className="border border-ink-100 rounded-lg p-4 bg-white">
+                  <p className="text-xs text-ink-500 uppercase tracking-wide font-semibold mb-3">Weight by Category (g)</p>
+                  <ResponsiveContainer width="100%" height={140}>
+                    <BarChart data={weightChartData} margin={{ left: 0, right: 16, top: 0, bottom: 0 }}>
+                      <XAxis dataKey="name" tick={{ fontSize: 11 }} axisLine={false} tickLine={false} />
+                      <YAxis tick={{ fontSize: 11 }} axisLine={false} tickLine={false} />
+                      <Tooltip
+                        contentStyle={{ fontSize: 12, borderRadius: 6, border: '1px solid #e5e7eb' }}
+                        formatter={(v: number) => [`${v} g`, 'Weight']}
+                      />
+                      <Bar dataKey="weight" radius={[4, 4, 0, 0]} fill="#b45309" maxBarSize={36}>
+                        {weightChartData.map((_, idx) => (
+                          <Cell key={idx} fill={SW_CAT_COLORS[(idx + 2) % SW_CAT_COLORS.length]} />
+                        ))}
+                      </Bar>
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Charts row 3: qty in stock + collections */}
+          {(qtyByCategoryData.length > 0 || collectionChartData.length > 0) && (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {qtyByCategoryData.length > 0 && (
+                <div className="border border-ink-100 rounded-lg p-4 bg-white">
+                  <p className="text-xs text-ink-500 uppercase tracking-wide font-semibold mb-1">Qty in Stock by Category</p>
+                  <p className="text-[11px] text-ink-400 mb-3">Pieces available · serialized = 1 each, lots = stock count</p>
+                  <ResponsiveContainer width="100%" height={Math.max(140, qtyByCategoryData.length * 30)}>
+                    <BarChart data={qtyByCategoryData} layout="vertical" margin={{ left: 8, right: 24, top: 0, bottom: 0 }}>
+                      <XAxis type="number" tick={{ fontSize: 11 }} axisLine={false} tickLine={false} allowDecimals={false} />
+                      <YAxis
+                        dataKey="name"
+                        type="category"
+                        width={110}
+                        tick={{ fontSize: 11 }}
+                        axisLine={false}
+                        tickLine={false}
+                      />
+                      <Tooltip
+                        contentStyle={{ fontSize: 12, borderRadius: 6, border: '1px solid #e5e7eb' }}
+                        formatter={(v: number) => [v, 'Qty in Stock']}
+                      />
+                      <Bar dataKey="qty" radius={[0, 4, 4, 0]} maxBarSize={20}>
+                        {qtyByCategoryData.map((_, idx) => (
+                          <Cell key={idx} fill={SW_STATUS_COLORS.IN_STOCK} opacity={0.75 + (idx % 3) * 0.08} />
+                        ))}
+                      </Bar>
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+              )}
+
+              {collectionChartData.length > 0 ? (
+                <div className="border border-ink-100 rounded-lg p-4 bg-white">
+                  <p className="text-xs text-ink-500 uppercase tracking-wide font-semibold mb-1">Items by Collection</p>
+                  <p className="text-[11px] text-ink-400 mb-3">How many pieces in each collection are stocked here</p>
+                  <ResponsiveContainer width="100%" height={Math.max(140, collectionChartData.length * 30)}>
+                    <BarChart data={collectionChartData} layout="vertical" margin={{ left: 8, right: 24, top: 0, bottom: 0 }}>
+                      <XAxis type="number" tick={{ fontSize: 11 }} axisLine={false} tickLine={false} allowDecimals={false} />
+                      <YAxis
+                        dataKey="name"
+                        type="category"
+                        width={110}
+                        tick={{ fontSize: 11 }}
+                        axisLine={false}
+                        tickLine={false}
+                      />
+                      <Tooltip
+                        contentStyle={{ fontSize: 12, borderRadius: 6, border: '1px solid #e5e7eb' }}
+                        formatter={(v: number) => [v, 'Items']}
+                      />
+                      <Bar dataKey="count" radius={[0, 4, 4, 0]} maxBarSize={20}>
+                        {collectionChartData.map((_, idx) => (
+                          <Cell key={idx} fill={SW_CAT_COLORS[idx % SW_CAT_COLORS.length]} />
+                        ))}
+                      </Bar>
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+              ) : (
+                qtyByCategoryData.length > 0 && (
+                  <div className="border border-ink-100 rounded-lg p-4 bg-white flex items-center justify-center">
+                    <p className="text-sm text-ink-400">No collections assigned to items in this shop</p>
+                  </div>
+                )
+              )}
+            </div>
+          )}
+        </>
       )}
 
       {/* Main Category → Sub Category → Items table */}

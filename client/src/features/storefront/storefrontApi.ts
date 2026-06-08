@@ -323,6 +323,9 @@ export const storefrontApi = baseApi.injectEndpoints({
         };
         notes?: string;
         saveAddress?: boolean;
+        couponCode?: string;
+        useLoyaltyPoints?: boolean;
+        loyaltyPointsAmount?: number;
       }
     >({
       query: (body) => ({ url: '/website/orders', method: 'POST', body }),

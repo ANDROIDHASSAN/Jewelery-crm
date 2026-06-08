@@ -49,13 +49,17 @@ export function AdminShell(): JSX.Element {
 
   return (
     <div className="min-h-screen flex">
-      <Sidebar mobileOpen={mobileNavOpen} onMobileClose={() => setMobileNavOpen(false)} />
+      <div className="print:hidden">
+        <Sidebar mobileOpen={mobileNavOpen} onMobileClose={() => setMobileNavOpen(false)} />
+      </div>
       <div className="flex-1 min-w-0 flex flex-col">
-        <TopBar
-          onOpenCmdK={() => setCmdOpen(true)}
-          onOpenMobileNav={() => setMobileNavOpen(true)}
-        />
-        <main className="flex-1 px-3 sm:px-4 lg:px-6 py-4 sm:py-6">
+        <div className="print:hidden">
+          <TopBar
+            onOpenCmdK={() => setCmdOpen(true)}
+            onOpenMobileNav={() => setMobileNavOpen(true)}
+          />
+        </div>
+        <main className="flex-1 px-3 sm:px-4 lg:px-6 py-4 sm:py-6 print:p-0">
           <Outlet />
         </main>
       </div>

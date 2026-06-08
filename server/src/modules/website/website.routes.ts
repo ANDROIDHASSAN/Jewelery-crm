@@ -18,6 +18,14 @@ import { enqueueWhatsApp } from '../../lib/queue.js';
 import { createShiprocketAwb, isShiprocketConfigured } from '../../lib/shiprocket.js';
 import { sendEmail, getCustomerWelcomeEmailHTML } from '../../lib/mailer.js';
 import { logger } from '../../lib/logger.js';
+import { validateAndComputeCoupon, recordCouponUsageInTx } from '../promotions/coupon.service.js';
+import {
+  validateRedemption,
+  redeemPointsInTx,
+  getBalance,
+  computeEarnable,
+  fetchLoyaltyConfig,
+} from '../promotions/loyalty.service.js';
 
 export const websiteRouter: Router = Router();
 
@@ -373,6 +381,215 @@ websiteRouter.get('/products/:slug/reviews', async (req, res, next) => {
   }
 });
 
+// ============================================================================
+// Checkout pricing — unified price breakdown with coupon + loyalty
+// ============================================================================
+
+const PricingRequestSchema = z.object({
+  cart_items: z.array(
+    z.object({
+      productId: z.string().min(1).optional(),
+      slug: z.string().min(1).optional(),
+      qty: z.number().int().positive().max(99),
+    }).refine((v) => v.productId || v.slug, { message: 'productId or slug required' }),
+  ).min(1).max(50),
+  coupon_code: z.string().max(60).optional(),
+  use_loyalty_points: z.boolean().default(false),
+  loyalty_points_amount: z.number().int().positive().optional(),
+  customer_phone: IndianPhoneSchema.optional(),
+  shipping_paise: z.number().int().min(0).default(0),
+});
+
+// POST /website/checkout/pricing
+// Computes a full price breakdown for the cart with optional coupon and loyalty.
+// Safe to call repeatedly (no mutations). Returns the breakdown for the checkout UI.
+websiteRouter.post('/checkout/pricing', async (req, res, next) => {
+  res.setHeader('Cache-Control', 'private, no-store');
+  try {
+    const tenantId = await tenantFromQueryOrFirst(req);
+    const body = PricingRequestSchema.parse(req.body);
+
+    // Resolve products
+    const candidateIds = body.cart_items.map((i) => i.productId).filter((v): v is string => !!v);
+    const candidateSlugs = body.cart_items.map((i) => i.slug).filter((v): v is string => !!v);
+    const products = await rawPrisma.product.findMany({
+      where: {
+        tenantId,
+        isPublished: true,
+        OR: [
+          candidateIds.length > 0 ? { id: { in: candidateIds } } : undefined,
+          candidateSlugs.length > 0 ? { slug: { in: candidateSlugs } } : undefined,
+        ].filter((c): c is NonNullable<typeof c> => c !== undefined),
+      },
+      select: {
+        id: true,
+        slug: true,
+        name: true,
+        basePricePaise: true,
+        stoneChargePaise: true,
+        weightMg: true,
+        purityCaratX100: true,
+        makingChargeBps: true,
+        categoryId: true,
+        linkedItem: {
+          select: {
+            makingChargeMode: true,
+            makingChargePerGramPaise: true,
+            category: { select: { metalType: true } },
+          },
+        },
+      },
+    });
+
+    const byId = new Map(products.map((p) => [p.id, p]));
+    const bySlug = new Map(products.map((p) => [p.slug, p]));
+
+    // Live rates
+    const purities = [2400, 2200, 1800, 1400, 0] as const;
+    const ratesArray = await Promise.all(purities.map((p) => readGoldRatePaise(p)));
+    const findRate = (p: number) => ratesArray[purities.indexOf(p as typeof purities[number])]?.paise ?? 0;
+    const live22 = findRate(2200);
+    const liveSilver = findRate(0);
+
+    // Compute per-product price
+    const priceByProductId = new Map<string, number>();
+    for (const p of products) {
+      const metalType = p.linkedItem?.category?.metalType;
+      const isGold = metalType === 'GOLD' || metalType === 'DIAMOND' || metalType == null;
+      const isSilver = metalType === 'SILVER';
+      const exactRate = findRate(p.purityCaratX100);
+
+      let metalValuePaise = 0;
+      if (isGold) {
+        const ratePerGramPaise = exactRate || live22 || 642000;
+        metalValuePaise = exactRate
+          ? Math.round((p.weightMg * exactRate) / 1000)
+          : Math.round((p.weightMg * ratePerGramPaise * p.purityCaratX100) / (1000 * 2200));
+      } else if (isSilver) {
+        metalValuePaise = Math.round((p.weightMg * (liveSilver || 0)) / 1000);
+      } else {
+        metalValuePaise = p.basePricePaise;
+      }
+
+      let making = 0;
+      if (p.linkedItem?.makingChargeMode === 'PER_GRAM' && p.linkedItem.makingChargePerGramPaise != null) {
+        making = Math.round((p.linkedItem.makingChargePerGramPaise * p.weightMg) / 1000);
+      } else if (p.makingChargeBps > 0 && metalValuePaise > 0) {
+        making = Math.round((metalValuePaise * p.makingChargeBps) / 10000);
+      }
+      priceByProductId.set(p.id, metalValuePaise + making + p.stoneChargePaise);
+    }
+
+    // Build resolved lines for coupon service
+    const cartLines: Array<{ productId: string; qty: number; pricePaise: number; categoryId?: string }> = [];
+    for (const ci of body.cart_items) {
+      const product = (ci.slug && bySlug.get(ci.slug)) || (ci.productId && byId.get(ci.productId)) || null;
+      if (!product) continue;
+      cartLines.push({ productId: product.id, qty: ci.qty, pricePaise: priceByProductId.get(product.id) ?? 0, categoryId: product.categoryId });
+    }
+
+    const subtotalPaise = cartLines.reduce((s, l) => s + l.pricePaise * l.qty, 0);
+
+    // Resolve customer
+    let customerId: string | null = null;
+    if (body.customer_phone) {
+      const customer = await rawPrisma.customer.findFirst({
+        where: { tenantId, phone: body.customer_phone },
+        select: { id: true },
+      });
+      customerId = customer?.id ?? null;
+    }
+
+    // Coupon
+    let couponDiscountPaise = 0;
+    let freeShipping = false;
+    let couponMeta: { id: string; code: string; type: string; stackable: boolean } | null = null;
+    let couponError: string | null = null;
+
+    if (body.coupon_code) {
+      const result = await validateAndComputeCoupon(
+        body.coupon_code,
+        customerId,
+        cartLines,
+        subtotalPaise,
+        tenantId,
+      );
+      if (result.valid) {
+        couponDiscountPaise = result.discountPaise;
+        freeShipping = result.freeShipping;
+        couponMeta = result.coupon ?? null;
+      } else {
+        couponError = result.error ?? 'Invalid coupon';
+      }
+    }
+
+    const subtotalAfterCoupon = Math.max(0, subtotalPaise - couponDiscountPaise);
+    const shippingPaise = freeShipping ? 0 : body.shipping_paise;
+
+    // Loyalty — fetch config once, pass to all loyalty functions
+    const loyaltyCfg = await fetchLoyaltyConfig(tenantId);
+    let loyaltyDiscountPaise = 0;
+    let loyaltyPointsUsed = 0;
+    let loyaltyBalance = 0;
+    let loyaltyError: string | null = null;
+    let stackabilityConflict: string | null = null;
+
+    if (customerId) {
+      loyaltyBalance = await getBalance(customerId);
+    }
+
+    if (body.use_loyalty_points && customerId) {
+      // Stackability gate
+      if (couponMeta && !couponMeta.stackable) {
+        stackabilityConflict = 'This coupon cannot be combined with loyalty points';
+      } else {
+        const pointsRequested = body.loyalty_points_amount ?? loyaltyBalance;
+        const validation = await validateRedemption(customerId, tenantId, pointsRequested, subtotalAfterCoupon, loyaltyCfg);
+        if (validation.valid) {
+          loyaltyPointsUsed = validation.pointsToUse;
+          loyaltyDiscountPaise = validation.discountPaise;
+        } else {
+          loyaltyError = validation.error ?? 'Cannot redeem points';
+        }
+      }
+    }
+
+    const discountedSubtotal = Math.max(0, subtotalAfterCoupon - loyaltyDiscountPaise);
+    const taxPaise = Math.round((discountedSubtotal * 300) / 10_000);
+    const totalPaise = discountedSubtotal + taxPaise + shippingPaise;
+    const pointsEarnable = computeEarnable(totalPaise - loyaltyDiscountPaise, loyaltyCfg);
+
+    res.json({
+      data: {
+        subtotalPaise,
+        couponDiscountPaise,
+        loyaltyDiscountPaise,
+        shippingPaise,
+        taxPaise,
+        totalPaise,
+        pointsEarnable,
+        coupon: couponMeta,
+        couponError,
+        loyalty: customerId
+          ? { balance: loyaltyBalance, pointsUsed: loyaltyPointsUsed }
+          : null,
+        loyaltyError,
+        stackabilityConflict,
+        breakdown: {
+          subtotal: subtotalPaise,
+          afterCoupon: subtotalAfterCoupon,
+          afterLoyalty: discountedSubtotal,
+          shipping: shippingPaise,
+          tax: taxPaise,
+          total: totalPaise,
+        },
+      },
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
 // Public storefront checkout. Creates (or reuses by phone) a Customer, then
 // builds an Order with line items. Admin's EcommerceAdminPage picks it up
 // via the protected /ecommerce/orders endpoint.
@@ -423,6 +640,10 @@ const OrderCreatePublicSchema = z.object({
   // If true, the shipping address gets saved to the address book so the next
   // checkout pre-fills it. Defaults to true since that's the expected UX.
   saveAddress: z.boolean().default(true),
+  // Promotions
+  couponCode: z.string().max(60).optional(),
+  useLoyaltyPoints: z.boolean().default(false),
+  loyaltyPointsAmount: z.number().int().positive().optional(),
 });
 
 websiteRouter.post('/orders', async (req, res, next) => {
@@ -576,8 +797,75 @@ websiteRouter.post('/orders', async (req, res, next) => {
       (s, { product, qty }) => s + (priceByProductId.get(product.id) ?? 0) * qty,
       0,
     );
-    const taxPaise = Math.round((subtotalPaise * 300) / 10_000); // 3% GST
-    const totalPaise = subtotalPaise + body.shippingPaise + taxPaise;
+
+    // ── Promotions: coupon then loyalty ──────────────────────────────────────
+
+    // Resolve customer for promotion checks
+    const normPhone = body.customer.phone.startsWith('+')
+      ? body.customer.phone
+      : `+91${body.customer.phone.replace(/\D/g, '').slice(-10)}`;
+    const existingForPromo = await rawPrisma.customer.findFirst({
+      where: { tenantId, phone: normPhone },
+      select: { id: true },
+    });
+    const promoCustomerId = existingForPromo?.id ?? null;
+
+    // Coupon resolution
+    let couponId: string | null = null;
+    let couponCodeSnapshot: string | null = null;
+    let couponDiscountPaise = 0;
+    let effectiveShippingPaise = body.shippingPaise;
+    let useLoyaltyPointsEffective = body.useLoyaltyPoints;
+
+    if (body.couponCode) {
+      const cartLinesForCoupon = resolvedItems.map(({ product, qty }) => ({
+        productId: product.id,
+        qty,
+        pricePaise: priceByProductId.get(product.id) ?? 0,
+      }));
+      const couponResult = await validateAndComputeCoupon(
+        body.couponCode,
+        promoCustomerId,
+        cartLinesForCoupon,
+        subtotalPaise,
+        tenantId,
+      );
+      if (!couponResult.valid) {
+        res.status(400).json({ error: { code: 'INVALID_COUPON', message: couponResult.error ?? 'Invalid coupon' } });
+        return;
+      }
+      couponId = couponResult.coupon?.id ?? null;
+      couponCodeSnapshot = couponResult.coupon?.code ?? null;
+      couponDiscountPaise = couponResult.discountPaise;
+      if (couponResult.freeShipping) effectiveShippingPaise = 0;
+
+      // Stackability: if coupon is not stackable, loyalty redemption is blocked
+      if (!couponResult.stackable) {
+        useLoyaltyPointsEffective = false;
+      }
+    }
+
+    const subtotalAfterCoupon = Math.max(0, subtotalPaise - couponDiscountPaise);
+
+    // Loyalty redemption — use tenant config for configurable rules
+    const loyaltyCfgForOrder = await fetchLoyaltyConfig(tenantId);
+    let loyaltyPointsUsed = 0;
+    let loyaltyDiscountPaise = 0;
+
+    if (useLoyaltyPointsEffective && promoCustomerId) {
+      const pointsRequested = body.loyaltyPointsAmount ?? 999_999;
+      const validation = await validateRedemption(promoCustomerId, tenantId, pointsRequested, subtotalAfterCoupon, loyaltyCfgForOrder);
+      if (validation.valid) {
+        loyaltyPointsUsed = validation.pointsToUse;
+        loyaltyDiscountPaise = validation.discountPaise;
+      }
+      // Validation failure at order time is silent — we just skip points rather
+      // than blocking the order. The pricing endpoint showed the warning earlier.
+    }
+
+    const discountedSubtotal = Math.max(0, subtotalAfterCoupon - loyaltyDiscountPaise);
+    const taxPaise = Math.round((discountedSubtotal * 300) / 10_000); // 3% GST on net
+    const totalPaise = discountedSubtotal + taxPaise + effectiveShippingPaise;
 
     // Human-readable interest string for the admin Reservations tab.
     const piecesLabel = resolvedItems
@@ -687,10 +975,16 @@ websiteRouter.post('/orders', async (req, res, next) => {
             customerId: customer.id,
             status: 'PENDING',
             subtotalPaise,
-            shippingPaise: body.shippingPaise,
+            shippingPaise: effectiveShippingPaise,
             taxPaise,
             totalPaise,
             paymentMethod: body.paymentMethod,
+            // Promotions — snapshot at order time
+            couponId,
+            couponCode: couponCodeSnapshot,
+            couponDiscountPaise,
+            loyaltyPointsUsed,
+            loyaltyDiscountPaise,
             // Reserve-at-store and COD start unpaid; Razorpay flows through the
             // verify endpoint to transition to PAID.
             paymentStatus: 'PENDING',
@@ -732,6 +1026,14 @@ websiteRouter.post('/orders', async (req, res, next) => {
             shippingPincode: true,
           },
         });
+
+        // Atomically record coupon usage and deduct loyalty points
+        if (couponId) {
+          await recordCouponUsageInTx(tx, couponId, created.id, customer.id, tenantId, couponDiscountPaise);
+        }
+        if (loyaltyPointsUsed > 0) {
+          await redeemPointsInTx(tx, customer.id, tenantId, created.id, loyaltyPointsUsed);
+        }
 
         // Decrement the linked inventory rows. Mirrors pos.service.createBill:
         //   serialized: flip status IN_STOCK -> SOLD (one shot per piece)

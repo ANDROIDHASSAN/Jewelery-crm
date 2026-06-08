@@ -20,6 +20,9 @@ export interface TransferItemRef {
   status: 'IN_STOCK' | 'IN_TRANSIT' | 'SOLD' | 'MELTED';
   shopId: string;
   images: string[];
+  isSerialized: boolean;
+  quantityOnHand: number;
+  category: { id: string; name: string };
 }
 
 export interface TransferLineRow {

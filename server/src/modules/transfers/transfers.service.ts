@@ -80,7 +80,8 @@ export async function getTransfer(id: string) {
             select: {
               id: true, sku: true, name: true, weightMg: true,
               purityCaratX100: true, status: true, shopId: true,
-              images: true,
+              images: true, isSerialized: true, quantityOnHand: true,
+              category: { select: { id: true, name: true } },
             },
           },
         },

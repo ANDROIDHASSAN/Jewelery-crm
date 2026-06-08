@@ -99,6 +99,55 @@ settingsRouter.patch('/tenant', requirePermission('settings.write'), async (req,
   }
 });
 
+// GET /settings/loyalty — read current loyalty programme config
+settingsRouter.get('/loyalty', requirePermission('settings.read'), async (_req, res, next) => {
+  try {
+    const tenantId = getTenantId();
+    if (!tenantId) { res.status(401).json({ error: { code: 'NO_TENANT', message: 'Tenant context missing' } }); return; }
+    const tenant = await prisma.tenant.findUnique({
+      where: { id: tenantId },
+      select: {
+        loyaltyEarnRatePaise: true,
+        loyaltyPointValuePaise: true,
+        loyaltyMinRedeemPoints: true,
+        loyaltyMaxRedeemPct: true,
+        loyaltyExpiryDays: true,
+      },
+    });
+    if (!tenant) { res.status(404).json({ error: { code: 'NOT_FOUND', message: 'Tenant not found' } }); return; }
+    res.json({ data: tenant });
+  } catch (err) { next(err); }
+});
+
+const LoyaltyConfigPatchSchema = z.object({
+  loyaltyEarnRatePaise: z.number().int().min(1).max(1_000_000).optional(),
+  loyaltyPointValuePaise: z.number().int().min(1).max(1000).optional(),
+  loyaltyMinRedeemPoints: z.number().int().min(1).max(100_000).optional(),
+  loyaltyMaxRedeemPct: z.number().int().min(1).max(100).optional(),
+  loyaltyExpiryDays: z.number().int().min(1).max(3650).optional(),
+});
+
+// PATCH /settings/loyalty — update loyalty programme config
+settingsRouter.patch('/loyalty', requirePermission('settings.write'), async (req, res, next) => {
+  try {
+    const tenantId = getTenantId();
+    if (!tenantId) { res.status(401).json({ error: { code: 'NO_TENANT', message: 'Tenant context missing' } }); return; }
+    const body = LoyaltyConfigPatchSchema.parse(req.body);
+    const tenant = await prisma.tenant.update({
+      where: { id: tenantId },
+      data: body,
+      select: {
+        loyaltyEarnRatePaise: true,
+        loyaltyPointValuePaise: true,
+        loyaltyMinRedeemPoints: true,
+        loyaltyMaxRedeemPct: true,
+        loyaltyExpiryDays: true,
+      },
+    });
+    res.json({ data: tenant });
+  } catch (err) { next(err); }
+});
+
 // One-shot, idempotent backfill: any tenant-scoped Bill that has no Payment
 // rows gets one synthesized from its total. Used to repair demo data seeded
 // before the seed script was patched to emit Payment rows — without this,
