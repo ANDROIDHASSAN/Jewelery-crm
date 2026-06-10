@@ -680,6 +680,10 @@ model PurchaseOrderItem {
   weightMg  Int
   purity    Int
   costPaise Int
+  // Optional making-charge override in basis points (e.g. 600 = 6%). Captured
+  // when building the PO and applied to the Item created on receive; null =
+  // inherit the category's default making charge at bill time.
+  makingChargeBps Int?
   // qty > 1 → lot item (isSerialized=false, quantityOnHand=quantity) on receive.
   quantity  Int     @default(1)
 

@@ -408,6 +408,44 @@ function ItemsTab(): JSX.Element {
 const _TH = 'px-3 py-2.5 text-left text-[10px] font-semibold tracking-[0.14em] text-ink-500 uppercase';
 const _TD = 'px-3 py-2 text-ink-800 align-middle';
 
+// Inline storefront publish/unpublish toggle shown in the items table. Reuses
+// the same `publishToWebsite` patch the Edit dialog sends — the server creates,
+// publishes, or unpublishes the linked storefront Product. Publishing needs at
+// least one image, so we guard before firing.
+function PublishToggle({ item }: { item: Item }): JSX.Element {
+  const [update, { isLoading }] = useUpdateItemMutation();
+  const ext = item as Item & { isPublished?: boolean; images?: string[] };
+  const published = ext.isPublished ?? false;
+  const onToggle = async (e: React.ChangeEvent<HTMLInputElement>): Promise<void> => {
+    const next = e.target.checked;
+    if (next && (ext.images?.length ?? 0) === 0) {
+      toast.error('Add at least one image before publishing on the storefront');
+      return;
+    }
+    try {
+      await update({ id: item.id, patch: { publishToWebsite: next } }).unwrap();
+      toast.success(next ? `Published ${item.sku} to storefront` : `Unpublished ${item.sku}`);
+    } catch (err) {
+      const msg =
+        (err as { data?: { error?: { message?: string } } }).data?.error?.message ??
+        'Could not update storefront status.';
+      toast.error(msg);
+    }
+  };
+  return (
+    <input
+      type="checkbox"
+      checked={published}
+      disabled={isLoading}
+      onChange={onToggle}
+      onClick={(e) => e.stopPropagation()}
+      title={published ? 'Published on storefront — click to unpublish' : 'Not on storefront — click to publish'}
+      aria-label={published ? `Unpublish ${item.sku}` : `Publish ${item.sku}`}
+      className="h-4 w-4 rounded border-ink-300 text-brand-500 focus:ring-brand-400 cursor-pointer disabled:opacity-50"
+    />
+  );
+}
+
 interface SkuGroup {
   key: string;
   representative: Item;
@@ -479,6 +517,7 @@ function GroupedItemsTable({
               <th className={_TH}>Hallmark</th>
               <th className={_TH}>Status</th>
               <th className={cn(_TH, 'text-right')}>Cost</th>
+              <th className={cn(_TH, 'text-center')}>Live</th>
               <th className={_TH}><span className="sr-only">Actions</span></th>
             </tr>
           </thead>
@@ -532,6 +571,9 @@ function GroupedItemsTable({
                     </Badge>
                   </td>
                   <td className={cn(_TD, 'text-right')}><Money paise={rep.costPricePaise} /></td>
+                  <td className={cn(_TD, 'text-center')} onClick={(e) => e.stopPropagation()}>
+                    <PublishToggle item={rep} />
+                  </td>
                   <td className={_TD}>
                     <div className="text-right">
                       <button
@@ -574,6 +616,9 @@ function GroupedItemsTable({
                         </Badge>
                       </td>
                       <td className={cn(_TD, 'text-right')}><Money paise={item.costPricePaise} /></td>
+                      <td className={cn(_TD, 'text-center')} onClick={(e) => e.stopPropagation()}>
+                        <PublishToggle item={item} />
+                      </td>
                       <td className={_TD}>
                         <div className="text-right">
                           <button
@@ -4157,6 +4202,8 @@ interface POLine {
   weightG: string;
   purityCarat: string;
   costRupees: string;
+  /** Making-charge override as a percentage (e.g. "6" → 600 bps). Optional. */
+  makingPct?: string;
   qty: string;
 }
 
@@ -4228,6 +4275,7 @@ function ItemPickerSheet({
       weightG: (it.weightMg / 1000).toFixed(3),
       purityCarat: (it.purityCaratX100 / 100).toString(),
       costRupees: '',
+      makingPct: it.makingChargeBps ? String(it.makingChargeBps / 100) : '',
       qty: '1',
     }));
     onAdd(lines);
@@ -4446,6 +4494,8 @@ function CreatePODialog({ open, onClose }: { open: boolean; onClose: () => void 
       weightMg: Math.round(parseFloat(l.weightG) * 1000),
       purity: Math.round(parseFloat(l.purityCarat) * 100),
       costPaise: Math.round(parseFloat(l.costRupees) * 100),
+      makingChargeBps:
+        l.makingPct && l.makingPct.trim() ? Math.round(parseFloat(l.makingPct) * 100) : undefined,
       quantity: Math.max(1, parseInt(l.qty, 10) || 1),
     }));
     if (items.some((i) => !i.itemSku || !Number.isFinite(i.weightMg) || i.weightMg <= 0 || !Number.isFinite(i.costPaise) || i.costPaise <= 0)) {
@@ -4573,13 +4623,28 @@ function CreatePODialog({ open, onClose }: { open: boolean; onClose: () => void 
                           />
                         </div>
                       </div>
-                      <div>
-                        <span className="text-[11px] uppercase tracking-wider text-ink-500 block mb-1">Purity</span>
-                        <PurityPicker
-                          value={l.purityCarat}
-                          metalType={lineMetal}
-                          onChange={(v) => patchLine(i, { purityCarat: v })}
-                        />
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                        <div>
+                          <span className="text-[11px] uppercase tracking-wider text-ink-500 block mb-1">Purity</span>
+                          <PurityPicker
+                            value={l.purityCarat}
+                            metalType={lineMetal}
+                            onChange={(v) => patchLine(i, { purityCarat: v })}
+                          />
+                        </div>
+                        <div>
+                          <span className="text-[11px] uppercase tracking-wider text-ink-500 block mb-1">Making %</span>
+                          <input
+                            type="number"
+                            step="0.01"
+                            min="0"
+                            value={l.makingPct ?? ''}
+                            onChange={(e) => patchLine(i, { makingPct: e.target.value })}
+                            className={fieldCls}
+                            placeholder="e.g. 6"
+                          />
+                          <span className="text-[10px] text-ink-400 block mt-1">Optional — blank uses the category default.</span>
+                        </div>
                       </div>
                     </div>
                   );

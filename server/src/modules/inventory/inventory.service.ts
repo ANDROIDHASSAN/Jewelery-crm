@@ -1256,6 +1256,7 @@ export async function createPurchaseOrder(input: PurchaseOrderCreate) {
           weightMg: i.weightMg,
           purity: i.purity,
           costPaise: i.costPaise,
+          makingChargeBps: i.makingChargeBps ?? null,
           quantity: i.quantity ?? 1,
         })),
       },
@@ -1338,6 +1339,9 @@ export async function receivePurchaseOrder(
             weightMg: line.weightMg,
             purityCaratX100: line.purity,
             costPricePaise: line.costPaise,
+            // Carry the PO line's making-charge override onto the new item
+            // (null = inherit the category default at bill time).
+            makingChargeBps: line.makingChargeBps ?? null,
             hallmarkStatus: 'PENDING',
             status: 'IN_STOCK',
             isSerialized: !isLot,

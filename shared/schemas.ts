@@ -443,6 +443,9 @@ export const PurchaseOrderItemInputSchema = z.object({
   weightMg: MgSchema,
   purity: PuritySchema,
   costPaise: PaiseSchema,
+  // Optional making-charge override (basis points, e.g. 600 = 6%). Applied to
+  // the Item created when the PO is received; null = inherit category default.
+  makingChargeBps: BpsSchema.optional().nullable(),
   // qty > 1 → lot item on receive (isSerialized=false, quantityOnHand=quantity).
   quantity: z.number().int().min(1).max(10000).default(1),
 });
