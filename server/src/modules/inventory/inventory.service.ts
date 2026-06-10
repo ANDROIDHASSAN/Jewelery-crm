@@ -481,10 +481,13 @@ export async function addStock(
 
   const item = await prisma.item.findUnique({ where: { id: itemId } });
   if (!item) throw new NotFoundError('Item not found');
-  if (item.status !== 'IN_STOCK') {
+  // Allow re-stocking a SOLD piece — the jeweller is restocking the design under
+  // its original SKU. Only block items that are mid-transfer or written off;
+  // those must finish the transfer / be recreated first.
+  if (item.status === 'IN_TRANSIT' || item.status === 'MELTED') {
     throw new BusinessRuleError(
-      'ITEM_NOT_IN_STOCK',
-      `Cannot add stock — item is ${item.status.toLowerCase()}. Restore or recreate the item first.`,
+      'ITEM_NOT_AVAILABLE',
+      `Cannot add stock — item is ${item.status.toLowerCase()}. Complete the transfer or recreate the item first.`,
     );
   }
 
@@ -493,10 +496,35 @@ export async function addStock(
   if (item.isSerialized) {
     // Clone N rows + N PURCHASE movements. Unique SKU suffix per clone via
     // crypto.randomBytes — base32-ish (uppercased base64url) for 6 chars.
+    // If the source piece was already SOLD, restocking first brings its ORIGINAL
+    // row back into stock (a small jeweller re-stocks the design under the same
+    // SKU); only quantity beyond that first unit becomes fresh cloned rows.
     const baseSku = item.sku;
+    const restoreSource = item.status === 'SOLD';
+    const cloneCount = restoreSource ? Math.max(0, input.quantity - 1) : input.quantity;
     const newItems = await prisma.$transaction(async (tx) => {
       const created: { id: string; sku: string }[] = [];
-      for (let i = 0; i < input.quantity; i += 1) {
+      if (restoreSource) {
+        await tx.item.update({
+          where: { id: itemId },
+          data: {
+            status: 'IN_STOCK',
+            ...(input.costPricePaise !== undefined ? { costPricePaise: input.costPricePaise } : {}),
+          },
+        });
+        await tx.itemMovement.create({
+          data: {
+            tenantId,
+            itemId,
+            toShopId: item.shopId,
+            type: 'PURCHASE',
+            qty: 1,
+            reason,
+            performedByUserId: performedByUserId ?? null,
+          },
+        });
+      }
+      for (let i = 0; i < cloneCount; i += 1) {
         // Loop on collision; retries are bounded — 36^6 ≈ 2.1 B suffixes.
         let sku = '';
         for (let attempt = 0; attempt < 5; attempt += 1) {
@@ -554,19 +582,21 @@ export async function addStock(
       return created;
     });
 
+    // Restored source (if any) counts toward the added total.
+    const totalAdded = newItems.length + (restoreSource ? 1 : 0);
     // Audit: one row summarising the bulk add against the source design.
     void writeAudit(
       'Item',
       itemId,
       'ADD_STOCK',
-      { mode: 'serialized', sourceSku: baseSku },
-      { mode: 'serialized', added: newItems.length, newSkus: newItems.map((i) => i.sku) },
+      { mode: 'serialized', sourceSku: baseSku, restoredSource: restoreSource },
+      { mode: 'serialized', added: totalAdded, newSkus: newItems.map((i) => i.sku) },
       performedByUserId,
     );
 
     return {
       mode: 'serialized',
-      added: newItems.length,
+      added: totalAdded,
       newItemIds: newItems.map((i) => i.id),
     };
   }
@@ -577,6 +607,8 @@ export async function addStock(
       where: { id: itemId },
       data: {
         quantityOnHand: { increment: input.quantity },
+        // Restocking flips a drained / sold-out lot back to in-stock.
+        status: 'IN_STOCK',
         ...(input.costPricePaise !== undefined ? { costPricePaise: input.costPricePaise } : {}),
       },
       select: { quantityOnHand: true },

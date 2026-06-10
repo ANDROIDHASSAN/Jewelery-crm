@@ -355,7 +355,7 @@ function ItemsTab(): JSX.Element {
                 <Button variant="outline" onClick={() => setEditTarget(selected)}>
                   <Pencil className="h-4 w-4" /> Edit
                 </Button>
-                <Button variant="outline" disabled={selected.status !== 'IN_STOCK'} onClick={() => setAddStockOpen(true)}>
+                <Button variant="outline" disabled={selected.status === 'IN_TRANSIT' || selected.status === 'MELTED'} onClick={() => setAddStockOpen(true)}>
                   <PackagePlus className="h-4 w-4" /> Add stock
                 </Button>
                 <Button variant="outline" disabled={selected.status !== 'IN_STOCK'} onClick={() => setTransferOpen(true)}>
@@ -3992,6 +3992,8 @@ function AddStockDialog({
 
   const isLot = item.isSerialized === false;
   const currentQty = item.quantityOnHand ?? 1;
+  // Restocking a sold-out piece brings it back into stock (see addStock service).
+  const wasSold = item.status === 'SOLD';
 
   // Reset form when sheet opens against a different item.
   useEffect(() => {
@@ -4025,7 +4027,9 @@ function AddStockDialog({
       }).unwrap();
       if (res.data.mode === 'serialized') {
         toast.success(
-          `Created ${res.data.added} new piece${res.data.added === 1 ? '' : 's'} cloned from ${item.sku}.`,
+          wasSold
+            ? `Restocked ${item.sku} — back in stock${res.data.added > 1 ? ` (+${res.data.added - 1} new)` : ''}.`
+            : `Created ${res.data.added} new piece${res.data.added === 1 ? '' : 's'} cloned from ${item.sku}.`,
         );
       } else {
         toast.success(
@@ -4063,9 +4067,15 @@ function AddStockDialog({
                 ? `This will increase the on-hand count from ${currentQty} to ${
                     currentQty + (Number.isFinite(quantity) ? quantity : 0)
                   }.`
-                : `This will create ${quantity || 0} new piece${
-                    quantity === 1 ? '' : 's'
-                  } with auto-generated SKUs, cloned from this design.`}
+                : wasSold
+                  ? `This sold piece will be brought back into stock${
+                      quantity > 1
+                        ? `, plus ${quantity - 1} new cloned piece${quantity - 1 === 1 ? '' : 's'}`
+                        : ''
+                    }.`
+                  : `This will create ${quantity || 0} new piece${
+                      quantity === 1 ? '' : 's'
+                    } with auto-generated SKUs, cloned from this design.`}
             </p>
             <Field label="Quantity">
               <input
