@@ -463,181 +463,24 @@ export function WebsiteAdminPage(): JSX.Element {
 
             <Card
               title="Hero carousel slides"
-              desc="Full-width rotating banners at the top of the home page. Each slide is an image with a 'Shop Now' button that links to a collection. Add 3–6 for the best effect; the wide banner crop works best."
-              action={
-                <Button
-                  size="sm"
-                  variant="outline"
-                  disabled={(content.heroSlides ?? []).length >= 8}
-                  onClick={() => {
-                    dispatch(
-                      setContent({
-                        ...content,
-                        heroSlides: [
-                          ...(content.heroSlides ?? []),
-                          { image: '', headline: '', ctaLabel: 'Shop Now', ctaHref: '/store/collections/bridal' },
-                        ],
-                      }),
-                    );
-                    notify();
-                  }}
-                >
-                  <Plus className="h-4 w-4" /> Add slide
-                </Button>
-              }
+              desc="Full-width rotating banners at the top of the home page. Each slide is an image with a 'Shop Now' button that links to a collection. Use ↑ / ↓ to reorder. Add 3–6 for the best effect; a wide banner crop works best."
             >
-              <div className="space-y-4">
-                {(content.heroSlides ?? []).length === 0 && (
-                  <p className="text-sm text-ink-500">
-                    No slides yet — the storefront shows default banners. Add a slide to take control.
-                  </p>
-                )}
-                {(content.heroSlides ?? []).map((slide, i) => (
-                  <div key={i} className="rounded-md border border-ink-100 p-4 space-y-3 bg-ink-25">
-                    <div className="flex items-center justify-between">
-                      <span className="text-xs font-medium text-ink-500">Slide {i + 1}</span>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => {
-                          const updated = content.heroSlides?.filter((_, idx) => idx !== i) ?? [];
-                          dispatch(setContent({ ...content, heroSlides: updated }));
-                          notify();
-                        }}
-                        aria-label={`Remove slide ${i + 1}`}
-                      >
-                        <Trash2 className="h-4 w-4 text-danger-500" />
-                      </Button>
-                    </div>
-                    <Field
-                      label="Banner image"
-                      compact
-                      hint="Wide image works best (~16:7). Upload a local file (≤ 2 MB) or paste a URL."
-                    >
-                      <div className="flex items-start gap-3">
-                        <div
-                          className="h-20 w-32 rounded-md bg-ink-50 border border-ink-100 overflow-hidden shrink-0"
-                          aria-hidden="true"
-                        >
-                          {slide.image ? (
-                            <img src={slide.image} alt="" className="h-full w-full object-cover" />
-                          ) : (
-                            <div className="h-full w-full flex items-center justify-center text-xs text-ink-400">
-                              No image
-                            </div>
-                          )}
-                        </div>
-                        <div className="flex-1 space-y-2">
-                          <Input
-                            placeholder="https://… or paste a URL"
-                            value={slide.image}
-                            onChange={(e) => {
-                              const updated = [...(content.heroSlides ?? [])];
-                              updated[i] = { ...slide, image: e.target.value };
-                              dispatch(setContent({ ...content, heroSlides: updated }));
-                            }}
-                            onBlur={notify}
-                          />
-                          <div className="flex items-center gap-2">
-                            <label
-                              htmlFor={`hero-slide-image-${i}`}
-                              className="inline-flex items-center gap-1.5 h-8 px-3 rounded-md border border-ink-200 bg-ink-0 text-xs text-ink-700 hover:bg-ink-50 cursor-pointer"
-                            >
-                              Upload image
-                            </label>
-                            <input
-                              id={`hero-slide-image-${i}`}
-                              type="file"
-                              accept="image/png,image/jpeg,image/webp"
-                              className="sr-only"
-                              onChange={async (e) => {
-                                const file = e.target.files?.[0];
-                                if (!file) return;
-                                if (file.size > 2_000 * 1024) {
-                                  toast.error('Image must be under 2 MB');
-                                  e.target.value = '';
-                                  return;
-                                }
-                                try {
-                                  const result = await uploadImageToCloudinary(file, {
-                                    folder: 'zelora/hero/slides',
-                                  });
-                                  const updated = [...(content.heroSlides ?? [])];
-                                  updated[i] = { ...slide, image: result.secureUrl };
-                                  dispatch(setContent({ ...content, heroSlides: updated }));
-                                  notify();
-                                  toast.success('Image uploaded');
-                                } catch (err) {
-                                  toast.error(
-                                    err instanceof Error ? err.message : 'Failed to upload image',
-                                  );
-                                }
-                                e.target.value = '';
-                              }}
-                            />
-                            {slide.image && (
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  const updated = [...(content.heroSlides ?? [])];
-                                  updated[i] = { ...slide, image: '' };
-                                  dispatch(setContent({ ...content, heroSlides: updated }));
-                                  notify();
-                                }}
-                                className="inline-flex items-center gap-1.5 h-8 px-3 rounded-md text-xs text-ink-600 hover:text-ink-900 hover:bg-ink-50"
-                              >
-                                <Trash2 className="h-3.5 w-3.5" /> Remove
-                              </button>
-                            )}
-                          </div>
-                        </div>
-                      </div>
-                    </Field>
-                    <Field
-                      label="Headline (optional)"
-                      compact
-                      hint="Short overlay text shown on the slide. Leave blank for image only."
-                    >
-                      <Input
-                        value={slide.headline}
-                        placeholder="The 2025 Bridal Edit"
-                        onChange={(e) => {
-                          const updated = [...(content.heroSlides ?? [])];
-                          updated[i] = { ...slide, headline: e.target.value };
-                          dispatch(setContent({ ...content, heroSlides: updated }));
-                        }}
-                        onBlur={notify}
-                      />
-                    </Field>
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                      <Field label="Button label" compact>
-                        <Input
-                          value={slide.ctaLabel}
-                          placeholder="Shop Now"
-                          onChange={(e) => {
-                            const updated = [...(content.heroSlides ?? [])];
-                            updated[i] = { ...slide, ctaLabel: e.target.value };
-                            dispatch(setContent({ ...content, heroSlides: updated }));
-                          }}
-                          onBlur={notify}
-                        />
-                      </Field>
-                      <Field label="Button link" compact hint="e.g. /store/collections/bridal">
-                        <Input
-                          value={slide.ctaHref}
-                          placeholder="/store/collections/bridal"
-                          onChange={(e) => {
-                            const updated = [...(content.heroSlides ?? [])];
-                            updated[i] = { ...slide, ctaHref: e.target.value };
-                            dispatch(setContent({ ...content, heroSlides: updated }));
-                          }}
-                          onBlur={notify}
-                        />
-                      </Field>
-                    </div>
-                  </div>
-                ))}
-              </div>
+              <ListItemEditor
+                items={content.heroSlides ?? []}
+                fields={HERO_SLIDE_FIELDS}
+                newItem={() => ({
+                  image: '',
+                  headline: '',
+                  ctaLabel: 'Shop Now',
+                  ctaHref: '/store/collections/bridal',
+                })}
+                itemLabel={(s, i) => (s.headline?.trim() ? s.headline : `Slide ${i + 1}`)}
+                max={8}
+                onChange={(next) => {
+                  dispatch(setContent({ ...content, heroSlides: next }));
+                  notify();
+                }}
+              />
             </Card>
             </>
           )}
@@ -775,19 +618,47 @@ export function WebsiteAdminPage(): JSX.Element {
                             <p className="text-xs text-ink-500 mt-1">Auto-synced from Inventory</p>
                           </Field>
                         </div>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => {
-                            const updated = content.shopByOccasion?.filter((_, idx) => idx !== i) ?? [];
-                            dispatch(setContent({ ...content, shopByOccasion: updated }));
-                            notify();
-                          }}
-                          aria-label={`Remove ${tile.name}`}
-                          className="mt-6"
-                        >
-                          <Trash2 className="h-4 w-4 text-danger-500" />
-                        </Button>
+                        <div className="flex items-center gap-0.5 mt-6">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              dispatch(setContent({ ...content, shopByOccasion: moveInArray(content.shopByOccasion ?? [], i, -1) }));
+                              notify();
+                            }}
+                            disabled={i === 0}
+                            className="h-8 w-8 inline-flex items-center justify-center rounded text-ink-500 hover:text-ink-900 hover:bg-ink-100 disabled:opacity-30"
+                            aria-label="Move up"
+                            title="Move up"
+                          >
+                            ↑
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              dispatch(setContent({ ...content, shopByOccasion: moveInArray(content.shopByOccasion ?? [], i, 1) }));
+                              notify();
+                            }}
+                            disabled={i === (content.shopByOccasion?.length ?? 0) - 1}
+                            className="h-8 w-8 inline-flex items-center justify-center rounded text-ink-500 hover:text-ink-900 hover:bg-ink-100 disabled:opacity-30"
+                            aria-label="Move down"
+                            title="Move down"
+                          >
+                            ↓
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const updated = content.shopByOccasion?.filter((_, idx) => idx !== i) ?? [];
+                              dispatch(setContent({ ...content, shopByOccasion: updated }));
+                              notify();
+                            }}
+                            aria-label={`Remove ${tile.name}`}
+                            title="Remove"
+                            className="h-8 w-8 inline-flex items-center justify-center rounded text-danger-500 hover:bg-danger-50"
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </button>
+                        </div>
                       </div>
                       <Field
                         label="Image"
@@ -1772,17 +1643,40 @@ function NavigationPanel({
               />
               Exact match
             </label>
-            <button
-              type="button"
-              onClick={() => {
-                dispatch(removeNavItem(idx));
-                notify();
-              }}
-              className="inline-flex items-center gap-1.5 h-9 px-3 rounded-md text-xs text-danger-700 hover:bg-danger-50"
-              aria-label={`Remove ${item.label}`}
-            >
-              <Trash2 className="h-3.5 w-3.5" /> Remove
-            </button>
+            <div className="flex items-center gap-0.5 pb-1">
+              <button
+                type="button"
+                onClick={() => { dispatch(setNavMenu(moveInArray(navMenu, idx, -1))); notify(); }}
+                disabled={idx === 0}
+                className="h-8 w-8 inline-flex items-center justify-center rounded text-ink-500 hover:text-ink-900 hover:bg-ink-100 disabled:opacity-30"
+                aria-label="Move up"
+                title="Move up"
+              >
+                ↑
+              </button>
+              <button
+                type="button"
+                onClick={() => { dispatch(setNavMenu(moveInArray(navMenu, idx, 1))); notify(); }}
+                disabled={idx === navMenu.length - 1}
+                className="h-8 w-8 inline-flex items-center justify-center rounded text-ink-500 hover:text-ink-900 hover:bg-ink-100 disabled:opacity-30"
+                aria-label="Move down"
+                title="Move down"
+              >
+                ↓
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  dispatch(removeNavItem(idx));
+                  notify();
+                }}
+                className="h-8 w-8 inline-flex items-center justify-center rounded text-danger-700 hover:bg-danger-50"
+                aria-label={`Remove ${item.label}`}
+                title="Remove"
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+              </button>
+            </div>
           </div>
         ))}
 
@@ -2319,6 +2213,18 @@ function ImageFieldCell({
   );
 }
 
+// Swap an array element with its neighbour (dir -1 = up, +1 = down). Returns a
+// new array; out-of-range moves are a no-op. Backs the CMS reorder buttons.
+function moveInArray<T>(arr: readonly T[], index: number, dir: -1 | 1): T[] {
+  const next = arr.slice();
+  const target = index + dir;
+  if (target < 0 || target >= next.length) return next;
+  const tmp = next[index]!;
+  next[index] = next[target]!;
+  next[target] = tmp;
+  return next;
+}
+
 function ListItemEditor<T extends Record<string, unknown>>({
   items,
   fields,
@@ -2568,6 +2474,13 @@ function StringListEditor({
 }
 
 // -- Field schemas per section --
+const HERO_SLIDE_FIELDS = [
+  { key: 'image', label: 'Banner image', type: 'image', span: 3 },
+  { key: 'headline', label: 'Headline (optional overlay)', type: 'text', span: 3 },
+  { key: 'ctaLabel', label: 'Button label', type: 'text', placeholder: 'Shop Now', span: 2 },
+  { key: 'ctaHref', label: 'Button link', type: 'url', placeholder: '/store/collections/bridal', span: 2 },
+] as const;
+
 const BROWSE_CATEGORY_FIELDS = [
   { key: 'label', label: 'Tile label', type: 'text', span: 2 },
   { key: 'slug', label: 'Collection slug', type: 'text', placeholder: 'rings', span: 2 },
