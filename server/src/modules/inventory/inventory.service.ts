@@ -324,6 +324,29 @@ export async function updateItem(id: string, patch: Partial<ItemInput>, performe
     }
   }
 
+  // Re-point the storefront mirror to the item's category when it's moved. A
+  // relation FK can't ride along in updateMany, so do it as a single connect.
+  // Without this, recategorising an item left its public listing under the old
+  // category — e.g. a necklace moved into the "Necklaces" sub never showed
+  // there. (The public storefront also falls back to the item's live category,
+  // so this keeps Product.categoryId canonical for the e-commerce admin too.)
+  if (itemPatch.categoryId !== undefined) {
+    try {
+      const linkedProduct = await prisma.product.findFirst({
+        where: { linkedItemId: id },
+        select: { id: true },
+      });
+      if (linkedProduct) {
+        await prisma.product.update({
+          where: { id: linkedProduct.id },
+          data: { category: { connect: { id: itemPatch.categoryId } } },
+        });
+      }
+    } catch (err) {
+      console.error('[inventory.updateItem] Product category sync failed', err);
+    }
+  }
+
   // Storefront publish toggle. The Edit dialog sends `publishToWebsite` on every
   // save; honour it by creating, publishing, or unpublishing the linked Product.
   // Previously this field was dropped on update, so ticking the box never stuck.

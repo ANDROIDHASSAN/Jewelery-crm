@@ -170,6 +170,7 @@ websiteRouter.get('/collections/:slug/items', async (req, res, next) => {
         linkedItem: {
           select: {
             sku: true,
+            categoryId: true,
             status: true,
             isSerialized: true,
             quantityOnHand: true,
@@ -192,6 +193,10 @@ websiteRouter.get('/collections/:slug/items', async (req, res, next) => {
       }
       return {
         ...rest,
+        // Use the linked item's current category (the back-office source of
+        // truth) so recategorising an item moves it on the storefront
+        // immediately, even if the Product mirror's own categoryId is stale.
+        categoryId: linkedItem?.categoryId ?? rest.categoryId,
         inStock,
         sku: linkedItem?.sku ?? null,
         metalType: linkedItem?.category?.metalType ?? null,
@@ -232,6 +237,7 @@ websiteRouter.get('/products', async (req, res, next) => {
         linkedItem: {
           select: {
             sku: true,
+            categoryId: true,
             status: true,
             isSerialized: true,
             quantityOnHand: true,
@@ -255,6 +261,10 @@ websiteRouter.get('/products', async (req, res, next) => {
       }
       return {
         ...rest,
+        // Use the linked item's current category (the back-office source of
+        // truth) so recategorising an item moves it on the storefront
+        // immediately, even if the Product mirror's own categoryId is stale.
+        categoryId: linkedItem?.categoryId ?? rest.categoryId,
         inStock,
         // SKU from the linked inventory item (null for legacy products)
         sku: linkedItem?.sku ?? null,
