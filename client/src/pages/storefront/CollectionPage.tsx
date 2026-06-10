@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { useParams, Link } from 'react-router-dom';
+import { useParams, Link, useSearchParams } from 'react-router-dom';
 import { ChevronDown, Search, SlidersHorizontal, X } from 'lucide-react';
 import { cn } from '@/lib/cn';
 import { useAppSelector } from '@/app/hooks';
@@ -158,6 +158,11 @@ function filterBySlug(
 
 export function CollectionPage(): JSX.Element {
   const { slug } = useParams();
+  // Optional ?sub=<categoryId> deep-link — narrows a collection to one specific
+  // sub-category (e.g. 18K Gold Tone → Rings). Keyed by id, not slug, because
+  // sub-category slugs collide across metals ("bracelets" exists under each).
+  const [searchParams] = useSearchParams();
+  const subId = searchParams.get('sub');
 
   const [sort, setSort] = useState<Sort>('Featured');
   const [sortOpen, setSortOpen] = useState(false);
@@ -181,12 +186,18 @@ export function CollectionPage(): JSX.Element {
   //   2. Live category name from /website/collections — picks up admin-
   //      added main categories like "9kt Fine Gold" automatically.
   //   3. The raw slug as a last resort so the header never renders blank.
-  const meta = !slug
+  const baseMeta = !slug
     ? { title: 'All collections', subtitle: 'Every piece in our catalogue, ready to view.' }
     : TITLES[slug] ?? {
         title: categories.find((c) => c.slug === slug)?.name ?? slug,
         subtitle: '',
       };
+  // When deep-linked to a sub-category, lead with its name and keep the parent
+  // collection as the sub-heading (e.g. "Rings" under "18K GOLD TONE").
+  const subCategory = subId ? categories.find((c) => c.id === subId) : undefined;
+  const meta = subCategory
+    ? { title: subCategory.name, subtitle: baseMeta.title }
+    : baseMeta;
 
   // Pull filter config from the CMS. Per-collection override > defaults.
   const filtersConfig = useAppSelector((s) => s.storefrontContent.filters);
@@ -292,10 +303,13 @@ export function CollectionPage(): JSX.Element {
         return !pred && !catSet && optStem.length < 3;
       });
     };
-    return baseProducts.filter(
+    // Sub-category deep-link narrows the base set to one category id before the
+    // search / sidebar filters apply.
+    const scoped = subId ? baseProducts.filter((p) => p.categoryId === subId) : baseProducts;
+    return scoped.filter(
       (p) => passQ(p) && visibleGroups.every((g) => passGroup(p, g)),
     );
-  }, [products, categories, slug, q, selections, visibleGroups, collectionItems, collectionItemsError]);
+  }, [products, categories, slug, subId, q, selections, visibleGroups, collectionItems, collectionItemsError]);
 
   function toggleOption(groupKey: string, value: string): void {
     setSelections((curr) => {

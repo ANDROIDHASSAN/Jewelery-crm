@@ -4,8 +4,13 @@ import { Link } from 'react-router-dom';
 import { ArrowRight, Award, ShieldCheck, Sparkles, Star } from 'lucide-react';
 import { cn } from '@/lib/cn';
 import { useAppSelector } from '@/app/hooks';
-import { useGetPublicGoldRateQuery } from '@/features/storefront/storefrontApi';
+import {
+  useGetPublicGoldRateQuery,
+  useGetPublicProductsQuery,
+  useGetPublicCollectionsQuery,
+} from '@/features/storefront/storefrontApi';
 import type { DoorCard, TestimonialCard, TrustBadge } from '@/features/storefront/storefrontContentSlice';
+import { storefrontTotalPaise, productMetaLabel } from '@/features/storefront/pricing';
 import { HeroCarousel } from './HeroCarousel';
 
 function formatLiveRate(paise: number | undefined, fallback: string): string {
@@ -70,6 +75,32 @@ export function StorefrontHome(): JSX.Element {
       ? `${new Date(liveRate.asOf).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Kolkata' })} IST`
       : cmsRates.updatedAt,
   };
+
+  // Top Styles — featured 18K Gold Tone pieces with sub-category tabs. Pulls
+  // live published products + categories; the gold-tone set is everything in
+  // the "18k-gold-tone" main category and its sub-categories (same resolution
+  // the collection page uses). Each tab is a sub-category; "View all" deep-links
+  // to that collection (by sub-category id, since sub slugs collide per metal).
+  const { data: allProducts = [] } = useGetPublicProductsQuery();
+  const { data: allCategories = [] } = useGetPublicCollectionsQuery();
+  const [topStyleTab, setTopStyleTab] = useState<string>('ALL');
+  const goldToneMain = allCategories.find((c) => c.slug === '18k-gold-tone');
+  const goldToneSubs = goldToneMain
+    ? allCategories.filter((c) => c.parentId === goldToneMain.id)
+    : [];
+  const goldToneCatIds = new Set<string>(
+    goldToneMain ? [goldToneMain.id, ...goldToneSubs.map((s) => s.id)] : [],
+  );
+  const goldToneProducts = allProducts.filter((p) => goldToneCatIds.has(p.categoryId));
+  const topStyleTabs = [{ id: 'ALL', label: 'All' }, ...goldToneSubs.map((s) => ({ id: s.id, label: s.name }))];
+  const topStyleVisible = (
+    topStyleTab === 'ALL' ? goldToneProducts : goldToneProducts.filter((p) => p.categoryId === topStyleTab)
+  ).slice(0, 4);
+  const topStyleViewAll =
+    topStyleTab === 'ALL'
+      ? '/store/collections/18k-gold-tone'
+      : `/store/collections/18k-gold-tone?sub=${topStyleTab}`;
+
   return (
     <>
       {/* Hero — full-bleed auto-rotating banner carousel (CMS-managed slides,
@@ -170,6 +201,90 @@ export function StorefrontHome(): JSX.Element {
           </div>
         </div>
       </section>
+
+      {/* Top Styles — featured 18K Gold Tone pieces, filterable by sub-category,
+          with a "View all" deep-link to the (optionally sub-filtered) collection. */}
+      {goldToneProducts.length > 0 && (
+        <section className="bg-[#FDF8F4] border-b border-[#EFE0D2]/60">
+          <div className="max-w-[1280px] mx-auto px-4 sm:px-6 py-14 sm:py-20">
+            <div className="text-center mb-7 sm:mb-9">
+              <p className="text-eyebrow uppercase text-brand-700">Top Styles</p>
+              <h2 className="font-display text-3xl sm:text-[40px] md:text-[48px] leading-tight text-ink-900 mt-2">
+                18K Gold Tone
+              </h2>
+            </div>
+            {topStyleTabs.length > 1 && (
+              <div className="flex flex-wrap items-center justify-center gap-2 sm:gap-3 mb-8 sm:mb-10">
+                {topStyleTabs.map((t) => (
+                  <button
+                    key={t.id}
+                    type="button"
+                    onClick={() => setTopStyleTab(t.id)}
+                    className={cn(
+                      'h-9 px-4 rounded-md border text-sm transition-colors duration-fast',
+                      topStyleTab === t.id
+                        ? 'border-ink-900 bg-ink-900 text-ink-0'
+                        : 'border-ink-200 text-ink-700 hover:border-ink-400 hover:text-ink-900',
+                    )}
+                  >
+                    {t.label}
+                  </button>
+                ))}
+              </div>
+            )}
+            {topStyleVisible.length > 0 ? (
+              <div className="grid grid-cols-2 lg:grid-cols-4 gap-x-3 gap-y-8 sm:gap-x-5 sm:gap-y-10">
+                {topStyleVisible.map((p) => {
+                  const meta = productMetaLabel(p);
+                  const soldOut = p.inStock === false;
+                  return (
+                    <Link to={`/store/products/${p.slug}`} key={p.id} className="group block">
+                      <div className="relative aspect-[4/5] overflow-hidden bg-[#FAF3EE] rounded-sm">
+                        <img
+                          src={p.images[0] ?? ''}
+                          alt={p.name}
+                          className={cn(
+                            'absolute inset-0 h-full w-full object-cover transition-transform duration-slow group-hover:scale-[1.03]',
+                            soldOut && 'grayscale opacity-70',
+                          )}
+                          loading="lazy"
+                        />
+                        {soldOut && (
+                          <span className="absolute top-2 left-2 z-10 bg-ink-900 text-ink-0 text-[10px] uppercase tracking-[0.18em] px-2 py-1 rounded-sm">
+                            Sold out
+                          </span>
+                        )}
+                      </div>
+                      <div className="mt-3 sm:mt-4 space-y-1 px-0.5">
+                        <h3 className="font-display text-base sm:text-[18px] leading-tight text-ink-900 group-hover:text-brand-700 transition-colors">
+                          {p.name}
+                        </h3>
+                        <p className="text-[11px] sm:text-xs text-ink-500">
+                          {(p.weightMg / 1000).toFixed(2)} g{meta ? ` · ${meta}` : ''}
+                        </p>
+                        <p className="text-sm text-ink-900 font-mono tabular-nums pt-0.5">
+                          ₹{(storefrontTotalPaise(p, liveRate?.rates) / 100).toLocaleString('en-IN')}
+                        </p>
+                      </div>
+                    </Link>
+                  );
+                })}
+              </div>
+            ) : (
+              <p className="text-center text-sm text-ink-500 py-8">No pieces in this style yet.</p>
+            )}
+            <div className="text-center mt-9 sm:mt-12">
+              <Link
+                to={topStyleViewAll}
+                className="inline-flex items-center gap-2 h-11 px-7 rounded-full border border-ink-300 text-ink-900 text-sm font-medium hover:bg-ink-900 hover:text-ink-0 transition-colors duration-fast"
+              >
+                View all
+                <ArrowRight className="h-4 w-4" />
+              </Link>
+            </div>
+          </div>
+        </section>
+      )}
 
       {/* Shop by occasion — 6 tall body-shot tiles with dark gradient overlay
           showing category name + product count. Replaces the older 4-card TOC. */}
