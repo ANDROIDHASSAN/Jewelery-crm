@@ -350,19 +350,22 @@ export function StorefrontHome(): JSX.Element {
             <div className="absolute inset-0 bg-gradient-to-br from-ink-900/85 via-ink-900/60 to-ink-900/85" aria-hidden />
             <div className="relative z-10 flex-1 flex flex-col justify-between p-7 sm:p-8 lg:p-10">
               <div>
+                {/* This section now showcases live 9 KT Gold products, so the
+                    heading is fixed to "9 KT Fine Gold" (the CMS deals labels
+                    on the saved blob are stale and would otherwise override). */}
                 <p className="text-eyebrow uppercase text-brand-300">{L.dealsEyebrow}</p>
                 <h2 className="font-display text-3xl sm:text-[36px] md:text-[40px] leading-[1.1] mt-3 max-w-[14ch]">
-                  {L.dealsTitle}
+                  9 KT Fine Gold
                 </h2>
                 <p className="mt-4 text-sm text-ink-200/85 leading-relaxed max-w-[28ch]">
-                  {L.dealsSub}
+                  Our 9 KT fine-gold edit, hallmarked and priced at the live gold rate.
                 </p>
               </div>
               <Link
-                to={L.dealsCtaHref || '/store/collections/9-k-fine-gold'}
+                to="/store/collections/9-k-fine-gold"
                 className="mt-8 inline-flex items-center gap-2 self-start h-11 sm:h-12 px-5 sm:px-7 rounded-full bg-brand-400 text-ink-900 text-sm font-medium hover:bg-brand-300 transition-colors duration-fast"
               >
-                {L.dealsCtaLabel}
+                Shop 9 KT gold
                 <ArrowRight className="h-4 w-4" />
               </Link>
             </div>
