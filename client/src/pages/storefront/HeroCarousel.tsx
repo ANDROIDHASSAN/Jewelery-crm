@@ -44,11 +44,12 @@ export function HeroCarousel({ slides }: { slides: HeroSlide[] }): JSX.Element |
     >
       {/* Tall-ish on mobile, wide cinematic banner on desktop. */}
       <div className="relative h-[460px] sm:h-[520px] lg:h-[600px]">
-        {/* Slide track — all slides sit side-by-side; translateX slides between
-            them. The % shift is index/count because the track is count× wide. */}
+        {/* Slide track — all slides sit side-by-side, each exactly one viewport
+            wide (w-full + shrink-0). The track box stays one viewport wide, so
+            translateX(-index * 100%) snaps left by exactly one full slide. */}
         <div
           className="flex h-full transition-transform duration-700 ease-out"
-          style={{ transform: `translateX(-${(index * 100) / count}%)` }}
+          style={{ transform: `translateX(-${index * 100}%)` }}
         >
           {slides.map((slide, i) => (
             <div key={i} className="relative h-full w-full shrink-0" aria-hidden={i !== index}>
