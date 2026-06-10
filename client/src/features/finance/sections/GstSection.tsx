@@ -47,7 +47,7 @@ export function GstSection(): JSX.Element {
       [],
       ['Bill no', 'Date', 'Shop', 'State', 'Customer', 'Taxable', 'CGST', 'SGST', 'IGST', 'Total'],
       ...bills.map((b) => [
-        b.billNumber,
+        b.billNumber ?? '—',
         new Date(b.createdAt).toISOString().slice(0, 10),
         b.shop.name,
         b.shop.gstStateCode,
