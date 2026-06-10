@@ -47,6 +47,7 @@ export function StorefrontHome(): JSX.Element {
   const {
     hero,
     heroSlides,
+    story,
     rates: cmsRates,
     shopByOccasion,
     browseCategories,
@@ -111,6 +112,13 @@ export function StorefrontHome(): JSX.Element {
   const dealSlots = deals.length || 8;
   const nineKtProducts = allProducts.filter((p) => nineKtCatIds.has(p.categoryId)).slice(0, dealSlots);
   const categoryNameById = new Map(allCategories.map((c) => [c.id, c.name]));
+
+  // Fine Silver edit — same treatment as the 9 KT Gold block, for the
+  // "925-sterling-silver" main category + its sub-categories.
+  const silverMain = allCategories.find((c) => c.slug === '925-sterling-silver');
+  const silverSubs = silverMain ? allCategories.filter((c) => c.parentId === silverMain.id) : [];
+  const silverCatIds = new Set<string>(silverMain ? [silverMain.id, ...silverSubs.map((s) => s.id)] : []);
+  const silverProducts = allProducts.filter((p) => silverCatIds.has(p.categoryId)).slice(0, dealSlots);
 
   return (
     <>
@@ -421,6 +429,84 @@ export function StorefrontHome(): JSX.Element {
         </div>
       </section>
 
+      {/* Fine Silver — same layout as the 9 KT Gold block above, for the
+          925 Sterling Silver category + its sub-categories. */}
+      <section className="bg-[#FDF8F4] border-b border-[#EFE0D2]/60">
+        <div className="max-w-[1280px] mx-auto px-4 sm:px-6 py-14 sm:py-20 md:py-24 grid grid-cols-1 lg:grid-cols-[320px_1fr] gap-6 sm:gap-8 lg:gap-10 items-stretch">
+          <aside className="relative overflow-hidden rounded-md bg-ink-900 text-ink-0 min-h-[420px] lg:min-h-full flex flex-col">
+            <img
+              src="/categories/jew3.jpg"
+              alt=""
+              aria-hidden
+              className="absolute inset-0 h-full w-full object-cover opacity-50"
+            />
+            <div className="absolute inset-0 bg-gradient-to-br from-ink-900/85 via-ink-900/60 to-ink-900/85" aria-hidden />
+            <div className="relative z-10 flex-1 flex flex-col justify-between p-7 sm:p-8 lg:p-10">
+              <div>
+                <p className="text-eyebrow uppercase text-brand-300">Sterling silver</p>
+                <h2 className="font-display text-3xl sm:text-[36px] md:text-[40px] leading-[1.1] mt-3 max-w-[14ch]">
+                  Fine Silver
+                </h2>
+                <p className="mt-4 text-sm text-ink-200/85 leading-relaxed max-w-[28ch]">
+                  925 sterling silver, hallmarked — for gifting and daily wear.
+                </p>
+              </div>
+              <Link
+                to="/store/collections/925-sterling-silver"
+                className="mt-8 inline-flex items-center gap-2 self-start h-11 sm:h-12 px-5 sm:px-7 rounded-full bg-brand-400 text-ink-900 text-sm font-medium hover:bg-brand-300 transition-colors duration-fast"
+              >
+                Shop silver
+                <ArrowRight className="h-4 w-4" />
+              </Link>
+            </div>
+          </aside>
+          <div className="-mx-4 sm:-mx-6 lg:mx-0">
+            <div className="px-4 sm:px-6 lg:px-0 grid grid-flow-col auto-cols-[68%] sm:auto-cols-[40%] md:auto-cols-[30%] lg:grid-flow-row lg:auto-cols-auto lg:grid-cols-4 lg:grid-rows-2 gap-3 sm:gap-4 lg:gap-5 overflow-x-auto lg:overflow-visible snap-x snap-mandatory lg:snap-none pb-2 lg:pb-0">
+              {silverProducts.length === 0 && (
+                <p className="text-sm text-ink-600 py-6">New 925 sterling silver pieces coming soon.</p>
+              )}
+              {silverProducts.map((p, i) => {
+                const soldOut = p.inStock === false;
+                const catLabel = categoryNameById.get(p.categoryId) ?? productMetaLabel(p);
+                return (
+                  <Link
+                    key={p.id}
+                    to={`/store/products/${p.slug}`}
+                    className={`group relative flex flex-col bg-ink-0 rounded-md border border-[#EFE0D2]/80 overflow-hidden snap-start lg:snap-align-none animate-fade-in-up-${(i % 6) + 1}`}
+                  >
+                    <div className="relative aspect-square bg-[#FAF3EE] overflow-hidden gold-shine-target">
+                      <img
+                        src={p.images[0] ?? ''}
+                        alt={p.name}
+                        className="absolute inset-0 h-full w-full object-cover group-hover:scale-[1.06] transition-transform duration-slow"
+                        loading="lazy"
+                      />
+                      {soldOut && (
+                        <span className="absolute top-2.5 left-2.5 text-[10px] font-semibold uppercase tracking-[0.14em] px-2 py-1 rounded-sm bg-ink-800 text-ink-0">
+                          OUT-OF-STOCK
+                        </span>
+                      )}
+                    </div>
+                    <div className="flex flex-col gap-1 p-3 sm:p-4">
+                      <p className="text-[10px] uppercase tracking-[0.16em] text-ink-500 truncate">{catLabel}</p>
+                      <h3 className="font-display text-[15px] sm:text-base leading-tight text-ink-900 group-hover:text-brand-700 transition-colors truncate">{p.name}</h3>
+                      <div className="flex items-center gap-0.5 text-brand-500 mt-0.5">
+                        {Array.from({ length: 5 }).map((_, k) => (
+                          <Star key={k} className="h-3 w-3 fill-current" aria-hidden />
+                        ))}
+                      </div>
+                      <p className="text-sm text-ink-900 font-mono tabular-nums mt-0.5">
+                        ₹{(storefrontTotalPaise(p, liveRate?.rates) / 100).toLocaleString('en-IN')}
+                      </p>
+                    </div>
+                  </Link>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      </section>
+
       {/* Featured lookbook — 1 big editorial + up to 2 stacked, CMS-managed
           (Website CMS → Homepage sections → Featured lookbook). The first card
           renders large with its body + CTA; the rest are compact image tiles.
@@ -436,8 +522,9 @@ export function StorefrontHome(): JSX.Element {
                   className="absolute inset-0 h-full w-full object-cover group-hover:scale-[1.03] transition-transform duration-slow"
                   loading="lazy"
                 />
-                {/* Lighter, sheer overlay — photography wins */}
-                <div className="absolute inset-0 bg-gradient-to-t from-ink-900/55 via-ink-900/5 to-transparent" aria-hidden />
+                {/* Legibility scrim — strong at the bottom so the white title
+                    stays readable over light photography. */}
+                <div className="absolute inset-0 bg-gradient-to-t from-ink-900/80 via-ink-900/25 to-transparent" aria-hidden />
                 <div className="absolute bottom-0 left-0 right-0 p-6 sm:p-8 md:p-10 text-ink-0">
                   {lookbookCards[0].eyebrow && (
                     <p className="text-eyebrow uppercase text-brand-200">{lookbookCards[0].eyebrow}</p>
@@ -460,7 +547,7 @@ export function StorefrontHome(): JSX.Element {
                 {lookbookCards.slice(1, 3).map((f, idx) => (
                   <Link key={idx} to={f.href || '#'} className="group relative block overflow-hidden bg-ink-100 aspect-[4/3] lg:aspect-auto rounded-sm">
                     <img src={f.img} alt={f.title} className="absolute inset-0 h-full w-full object-cover group-hover:scale-[1.03] transition-transform duration-slow" loading="lazy" />
-                    <div className="absolute inset-0 bg-gradient-to-r from-ink-900/45 via-ink-900/5 to-transparent" aria-hidden />
+                    <div className="absolute inset-0 bg-gradient-to-t from-ink-900/80 via-ink-900/25 to-transparent" aria-hidden />
                     <div className="absolute inset-0 p-5 sm:p-6 md:p-7 flex flex-col justify-end text-ink-0">
                       {f.eyebrow && <p className="text-eyebrow uppercase text-brand-200">{f.eyebrow}</p>}
                       <h3 className="font-display text-xl sm:text-[24px] md:text-[28px] leading-tight mt-2">{f.title}</h3>
@@ -469,6 +556,36 @@ export function StorefrontHome(): JSX.Element {
                 ))}
               </div>
             )}
+          </div>
+        </section>
+      )}
+
+      {/* Business story — CMS-editable (Website CMS → Story). Image + editorial
+          copy on who we are. Hidden when no title/body is set. */}
+      {(story.title || story.body) && (
+        <section className="bg-ink-0">
+          <div className="max-w-[1280px] mx-auto px-4 sm:px-6 py-14 sm:py-20 md:py-24 grid grid-cols-1 lg:grid-cols-2 gap-8 md:gap-12 items-center">
+            {story.image && (
+              <div className="relative aspect-[4/3] lg:aspect-[5/4] overflow-hidden rounded-sm bg-ink-100 order-1">
+                <img src={story.image} alt="" className="absolute inset-0 h-full w-full object-cover" loading="lazy" />
+              </div>
+            )}
+            <div className="order-2">
+              {story.eyebrow && <p className="text-eyebrow uppercase text-brand-700">{story.eyebrow}</p>}
+              {story.title && (
+                <h2 className="font-display text-3xl sm:text-[40px] md:text-[48px] leading-tight text-ink-900 mt-2">{story.title}</h2>
+              )}
+              {story.body && (
+                <p className="mt-5 text-sm sm:text-base text-ink-600 leading-relaxed whitespace-pre-line max-w-prose">{story.body}</p>
+              )}
+              <Link
+                to="/store/story"
+                className="mt-7 inline-flex items-center gap-2 text-sm text-ink-900 border-b border-ink-300 hover:border-brand-500 pb-0.5 transition-colors"
+              >
+                Our story
+                <ArrowRight className="h-4 w-4" />
+              </Link>
+            </div>
           </div>
         </section>
       )}
@@ -533,7 +650,7 @@ export function StorefrontHome(): JSX.Element {
                   className="absolute inset-0 h-full w-full object-cover group-hover:scale-[1.06] transition-transform duration-slow"
                   loading="lazy"
                 />
-                <div className="absolute inset-0 bg-gradient-to-t from-ink-900/75 via-ink-900/10 to-ink-900/20" aria-hidden />
+                <div className="absolute inset-0 bg-gradient-to-t from-ink-900/90 via-ink-900/35 to-transparent" aria-hidden />
                 {/* Reel play indicator */}
                 <div className="absolute top-3 right-3 h-7 w-7 rounded-full bg-ink-0/85 backdrop-blur-sm inline-flex items-center justify-center shadow-sm">
                   <svg width="10" height="12" viewBox="0 0 10 12" fill="none" aria-hidden>

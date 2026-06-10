@@ -59,9 +59,10 @@ export function HeroCarousel({ slides }: { slides: HeroSlide[] }): JSX.Element |
                 className="absolute inset-0 h-full w-full object-cover"
                 loading={i === 0 ? 'eager' : 'lazy'}
               />
-              {/* Legibility scrim — stronger at the bottom where the CTA sits. */}
+              {/* Legibility scrim — strong at the bottom so white text stays
+                  readable even over light/cream product photography. */}
               <div
-                className="absolute inset-0 bg-gradient-to-t from-ink-900/55 via-ink-900/10 to-transparent"
+                className="absolute inset-0 bg-gradient-to-t from-ink-900/85 via-ink-900/35 to-transparent"
                 aria-hidden
               />
               {/* Slide content — bottom-left, with a Shop Now CTA. */}
