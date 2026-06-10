@@ -25,6 +25,12 @@ export interface PublicProduct {
   /** Per-gram making charge in paise. Used when makingChargeMode is PER_GRAM. */
   makingChargePerGramPaise: number | null;
   basePricePaise: number;
+  /**
+   * Pre-GST taxable base for a FIXED-priced piece (admin set a selling price).
+   * Non-null = skip the live metal-rate calc and price off this value + GST so
+   * the customer pays exactly the inclusive selling price. Null = price live.
+   */
+  fixedPricePaise: number | null;
   stoneChargePaise: number;
   categoryId: string;
   /** Metal type from the linked category — gates gold vs silver vs non-precious price calc. */

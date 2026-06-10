@@ -6,6 +6,7 @@ import { prisma } from '../../lib/prisma.js';
 import { NotFoundError, BusinessRuleError } from '../../lib/errors.js';
 import { readGoldRatePaise } from '../../lib/redis.js';
 import { computeGoldValuePaise } from '../../lib/money.js';
+import { taxableFromInclusivePaise } from '@goldos/shared/bill-math';
 import { getTenantId } from '../../lib/async-context.js';
 import type { ItemInput, VendorInput, PurchaseOrderCreate, AddStock } from '@goldos/shared/types';
 
@@ -18,6 +19,86 @@ function slugifyForProduct(raw: string): string {
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-+|-+$/g, '');
   return base || 'item';
+}
+
+// Fields off an inventory Item needed to build / sync its storefront Product
+// mirror. Structural so it works for both prisma.item.create() results and
+// hand-picked selects.
+type ItemForMirror = {
+  id: string;
+  sku: string;
+  name: string | null;
+  description: string | null;
+  categoryId: string;
+  images: string[];
+  weightMg: number;
+  purityCaratX100: number;
+  makingChargeBps: number | null;
+  costPricePaise: number;
+  sellingPricePaise: number | null;
+};
+
+// Resolve the storefront Product price fields from an inventory Item. A fixed
+// (GST-inclusive) selling price becomes the pre-GST taxable base on BOTH
+// basePricePaise (so legacy reads stay correct) and fixedPricePaise (the
+// signal that storefront pricing should skip the live metal-rate calc and use
+// this value + GST so the customer pays exactly the inclusive selling price).
+// Without a selling price we fall back to costPricePaise as the starting base,
+// exactly as before.
+function productPricingFromItem(item: {
+  costPricePaise: number;
+  sellingPricePaise: number | null;
+  makingChargeBps: number | null;
+}): {
+  basePricePaise: number;
+  fixedPricePaise: number | null;
+  makingChargeBps: number;
+} {
+  if (item.sellingPricePaise != null) {
+    // Fixed price is all-in: zero the storefront making charge so no extra is
+    // layered on top of the (pre-GST) base; GST alone brings it to the
+    // inclusive selling price.
+    const taxable = taxableFromInclusivePaise(item.sellingPricePaise);
+    return { basePricePaise: taxable, fixedPricePaise: taxable, makingChargeBps: 0 };
+  }
+  return {
+    basePricePaise: item.costPricePaise,
+    fixedPricePaise: null,
+    makingChargeBps: item.makingChargeBps ?? 0,
+  };
+}
+
+// Create a storefront Product mirroring an inventory Item, published. Requires
+// a display name + at least one image (ProductInputSchema enforces min(1));
+// callers must gate on that before calling. Resolves a unique per-tenant slug,
+// appending a short id-derived suffix on collision.
+async function createProductMirror(tenantId: string, item: ItemForMirror): Promise<void> {
+  const baseSlug = slugifyForProduct(item.name ?? item.sku);
+  const existing = await prisma.product.findUnique({
+    where: { tenantId_slug: { tenantId, slug: baseSlug } },
+    select: { id: true },
+  });
+  const slug = existing ? `${baseSlug}-${item.id.slice(-6).toLowerCase()}` : baseSlug;
+  const pricing = productPricingFromItem(item);
+  await prisma.product.create({
+    data: {
+      tenantId,
+      linkedItemId: item.id,
+      name: item.name ?? item.sku,
+      slug,
+      categoryId: item.categoryId,
+      // Master description flows to the storefront (M3 FR#5).
+      descriptionMd: item.description ?? '',
+      images: item.images,
+      weightMg: item.weightMg,
+      purityCaratX100: item.purityCaratX100,
+      makingChargeBps: pricing.makingChargeBps,
+      basePricePaise: pricing.basePricePaise,
+      fixedPricePaise: pricing.fixedPricePaise,
+      stoneChargePaise: 0,
+      isPublished: true,
+    },
+  });
 }
 
 // The admin inventory list paginates via cursor + Load-more. A larger
@@ -46,6 +127,10 @@ export async function listItems(opts: { shopId?: string; categoryId?: string; cu
     include: {
       diamonds: true,
       collections: { select: { collectionId: true } },
+      // Surface the linked storefront Product's publish flag so the Edit
+      // dialog's "Publish on storefront" checkbox reflects reality instead of
+      // always defaulting to false (it's a Product column, not an Item one).
+      storefrontProduct: { select: { isPublished: true } },
     },
   });
   const hasMore = items.length > take;
@@ -54,15 +139,31 @@ export async function listItems(opts: { shopId?: string; categoryId?: string; cu
 }
 
 // Flatten the ItemCollection join into a plain `collectionIds: string[]` so the
-// client form can round-trip it directly (it submits collectionIds back).
-function withCollectionIds<T extends { collections: { collectionId: string }[] }>(item: T) {
-  return { ...item, collectionIds: item.collections.map((c) => c.collectionId) };
+// client form can round-trip it directly (it submits collectionIds back), and
+// surface `isPublished` from the linked storefront Product (null when the piece
+// was never mirrored) so the Edit dialog can show the live publish state.
+function withCollectionIds<
+  T extends {
+    collections: { collectionId: string }[];
+    storefrontProduct?: { isPublished: boolean } | null;
+  },
+>(item: T) {
+  const { storefrontProduct, ...rest } = item;
+  return {
+    ...rest,
+    collectionIds: item.collections.map((c) => c.collectionId),
+    isPublished: storefrontProduct?.isPublished ?? false,
+  };
 }
 
 export async function getItem(id: string) {
   const item = await prisma.item.findUnique({
     where: { id },
-    include: { diamonds: true, collections: { select: { collectionId: true } } },
+    include: {
+      diamonds: true,
+      collections: { select: { collectionId: true } },
+      storefrontProduct: { select: { isPublished: true } },
+    },
   });
   if (!item) throw new NotFoundError();
   return withCollectionIds(item);
@@ -122,38 +223,7 @@ export async function createItem(input: ItemInput, performedByUserId?: string) {
   // the admin can publish later from the e-commerce tab.
   if (publishToWebsite && item.name && item.images.length > 0) {
     try {
-      // Resolve a unique slug per-tenant. If the natural slug already exists
-      // (two pieces named "Lotus pendant" in the same tenant), append a short
-      // id-derived suffix.
-      const baseSlug = slugifyForProduct(item.name ?? item.sku);
-      const existing = await prisma.product.findUnique({
-        where: { tenantId_slug: { tenantId, slug: baseSlug } },
-        select: { id: true },
-      });
-      const slug = existing ? `${baseSlug}-${item.id.slice(-6).toLowerCase()}` : baseSlug;
-      await prisma.product.create({
-        data: {
-          tenantId,
-          linkedItemId: item.id,
-          name: item.name ?? item.sku,
-          slug,
-          categoryId: item.categoryId,
-          // Master description flows to the storefront (M3 FR#5). Admin can
-          // still enrich it later from the e-commerce tab.
-          descriptionMd: item.description ?? '',
-          images: item.images,
-          weightMg: item.weightMg,
-          purityCaratX100: item.purityCaratX100,
-          makingChargeBps: item.makingChargeBps ?? 0,
-          // basePricePaise mirrors costPricePaise as a starting point. The
-          // storefront pricing surface re-prices on the fly from the live
-          // gold rate (see ecommerce.routes), so this is mostly a floor for
-          // non-gold pieces.
-          basePricePaise: item.costPricePaise,
-          stoneChargePaise: 0,
-          isPublished: true,
-        },
-      });
+      await createProductMirror(tenantId, item);
     } catch (err) {
       // Mirror failure must not break the primary Item create — log and move
       // on. The admin will see the inventory row landed; storefront publish
@@ -170,8 +240,9 @@ export async function updateItem(id: string, patch: Partial<ItemInput>, performe
   const before = await prisma.item.findUnique({ where: { id } });
   if (!before) throw new NotFoundError();
   // `publishToWebsite`, `collectionIds`, `diamonds` are write-only — never
-  // persist them as Item columns.
-  const { publishToWebsite: _ignored, collectionIds, diamonds, ...itemPatch } = patch;
+  // persist them as Item columns. `publishToWebsite` is handled below (it
+  // creates / publishes / unpublishes the linked storefront Product).
+  const { publishToWebsite, collectionIds, diamonds, ...itemPatch } = patch;
   const item = await prisma.item.update({ where: { id }, data: itemPatch });
 
   // Replace diamond lines when the patch includes them (full-set semantics:
@@ -227,6 +298,21 @@ export async function updateItem(id: string, patch: Partial<ItemInput>, performe
   if (itemPatch.makingChargeBps !== undefined && itemPatch.makingChargeBps !== null) {
     mirrorPatch.makingChargeBps = itemPatch.makingChargeBps;
   }
+  // Re-derive the storefront price whenever the cost, selling price, or making
+  // charge changed, so the public catalog charges the new amount (basePrice =
+  // pre-GST taxable base; fixedPrice non-null = "skip live rate, use this";
+  // making zeroed for fixed pieces). This overrides the makingChargeBps sync
+  // above for fixed-priced items.
+  if (
+    itemPatch.sellingPricePaise !== undefined ||
+    itemPatch.costPricePaise !== undefined ||
+    itemPatch.makingChargeBps !== undefined
+  ) {
+    const pricing = productPricingFromItem(item);
+    mirrorPatch.basePricePaise = pricing.basePricePaise;
+    mirrorPatch.fixedPricePaise = pricing.fixedPricePaise;
+    mirrorPatch.makingChargeBps = pricing.makingChargeBps;
+  }
   if (Object.keys(mirrorPatch).length > 0) {
     try {
       await prisma.product.updateMany({
@@ -235,6 +321,31 @@ export async function updateItem(id: string, patch: Partial<ItemInput>, performe
       });
     } catch (err) {
       console.error('[inventory.updateItem] Product mirror sync failed', err);
+    }
+  }
+
+  // Storefront publish toggle. The Edit dialog sends `publishToWebsite` on every
+  // save; honour it by creating, publishing, or unpublishing the linked Product.
+  // Previously this field was dropped on update, so ticking the box never stuck.
+  if (publishToWebsite !== undefined && tenantId) {
+    try {
+      const existingProduct = await prisma.product.findFirst({
+        where: { linkedItemId: id },
+        select: { id: true },
+      });
+      if (publishToWebsite) {
+        if (existingProduct) {
+          await prisma.product.update({ where: { id: existingProduct.id }, data: { isPublished: true } });
+        } else if (item.name && item.images.length > 0) {
+          // No mirror yet — create one (published). Needs a name + image, same
+          // gate as create; the Edit form blocks publishing without an image.
+          await createProductMirror(tenantId, item);
+        }
+      } else if (existingProduct) {
+        await prisma.product.update({ where: { id: existingProduct.id }, data: { isPublished: false } });
+      }
+    } catch (err) {
+      console.error('[inventory.updateItem] publish sync failed', err);
     }
   }
 

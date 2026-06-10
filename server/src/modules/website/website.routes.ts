@@ -426,6 +426,7 @@ websiteRouter.post('/checkout/pricing', async (req, res, next) => {
         slug: true,
         name: true,
         basePricePaise: true,
+        fixedPricePaise: true,
         stoneChargePaise: true,
         weightMg: true,
         purityCaratX100: true,
@@ -458,6 +459,14 @@ websiteRouter.post('/checkout/pricing', async (req, res, next) => {
       const isGold = metalType === 'GOLD' || metalType === 'DIAMOND' || metalType == null;
       const isSilver = metalType === 'SILVER';
       const exactRate = findRate(p.purityCaratX100);
+
+      // Fixed selling price overrides the live metal-rate calc for any metal.
+      // fixedPricePaise is the pre-GST base; the 3% GST added below brings the
+      // line to the inclusive selling price the admin set.
+      if (p.fixedPricePaise != null) {
+        priceByProductId.set(p.id, p.fixedPricePaise);
+        continue;
+      }
 
       let metalValuePaise = 0;
       if (isGold) {
@@ -674,6 +683,7 @@ websiteRouter.post('/orders', async (req, res, next) => {
         slug: true,
         name: true,
         basePricePaise: true,
+        fixedPricePaise: true,
         stoneChargePaise: true,
         weightMg: true,
         purityCaratX100: true,
@@ -766,6 +776,15 @@ websiteRouter.post('/orders', async (req, res, next) => {
       const isSilver = metalType === 'SILVER';
       
       const exactRate = findRate(p.purityCaratX100);
+
+      // Fixed selling price overrides the live metal-rate calc for any metal.
+      // fixedPricePaise is the pre-GST base; the 3% GST added below brings the
+      // line to the inclusive selling price the admin set.
+      if (p.fixedPricePaise != null) {
+        priceByProductId.set(p.id, p.fixedPricePaise);
+        continue;
+      }
+
       let metalValuePaise = 0;
       let ratePerGramPaise = 0;
 

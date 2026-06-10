@@ -377,7 +377,8 @@ export function WebsiteAdminPage(): JSX.Element {
           )}
 
           {tab === 'hero' && (
-            <Card title="Hero section" desc="The first impression on the home page.">
+            <>
+            <Card title="Hero section" desc="The editorial band shown directly under the banner carousel (eyebrow, headline, subtitle, buttons + live rates). Manage the rotating banner images in 'Hero carousel slides' below.">
               <Field label="Eyebrow" hint='Small caps line above the title (e.g. "The 2025 Bridal Edit").'>
                 <Input
                   value={content.hero.eyebrow}
@@ -402,7 +403,7 @@ export function WebsiteAdminPage(): JSX.Element {
               </Field>
               <Field
                 label="Hero video"
-                hint="MP4/WebM that loops in the right hero panel. Renders as the primary hero on the live storefront. Leave empty if you only have a still image."
+                hint="Optional MP4/WebM. Legacy single-image/video hero — the live storefront now leads with the banner carousel below, so this is only used by older themes. Leave empty unless you need it."
               >
                 <HeroMediaUploader
                   mode="video"
@@ -459,6 +460,186 @@ export function WebsiteAdminPage(): JSX.Element {
                 </Field>
               </div>
             </Card>
+
+            <Card
+              title="Hero carousel slides"
+              desc="Full-width rotating banners at the top of the home page. Each slide is an image with a 'Shop Now' button that links to a collection. Add 3–6 for the best effect; the wide banner crop works best."
+              action={
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={(content.heroSlides ?? []).length >= 8}
+                  onClick={() => {
+                    dispatch(
+                      setContent({
+                        ...content,
+                        heroSlides: [
+                          ...(content.heroSlides ?? []),
+                          { image: '', headline: '', ctaLabel: 'Shop Now', ctaHref: '/store/collections/bridal' },
+                        ],
+                      }),
+                    );
+                    notify();
+                  }}
+                >
+                  <Plus className="h-4 w-4" /> Add slide
+                </Button>
+              }
+            >
+              <div className="space-y-4">
+                {(content.heroSlides ?? []).length === 0 && (
+                  <p className="text-sm text-ink-500">
+                    No slides yet — the storefront shows default banners. Add a slide to take control.
+                  </p>
+                )}
+                {(content.heroSlides ?? []).map((slide, i) => (
+                  <div key={i} className="rounded-md border border-ink-100 p-4 space-y-3 bg-ink-25">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-medium text-ink-500">Slide {i + 1}</span>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => {
+                          const updated = content.heroSlides?.filter((_, idx) => idx !== i) ?? [];
+                          dispatch(setContent({ ...content, heroSlides: updated }));
+                          notify();
+                        }}
+                        aria-label={`Remove slide ${i + 1}`}
+                      >
+                        <Trash2 className="h-4 w-4 text-danger-500" />
+                      </Button>
+                    </div>
+                    <Field
+                      label="Banner image"
+                      compact
+                      hint="Wide image works best (~16:7). Upload a local file (≤ 2 MB) or paste a URL."
+                    >
+                      <div className="flex items-start gap-3">
+                        <div
+                          className="h-20 w-32 rounded-md bg-ink-50 border border-ink-100 overflow-hidden shrink-0"
+                          aria-hidden="true"
+                        >
+                          {slide.image ? (
+                            <img src={slide.image} alt="" className="h-full w-full object-cover" />
+                          ) : (
+                            <div className="h-full w-full flex items-center justify-center text-xs text-ink-400">
+                              No image
+                            </div>
+                          )}
+                        </div>
+                        <div className="flex-1 space-y-2">
+                          <Input
+                            placeholder="https://… or paste a URL"
+                            value={slide.image}
+                            onChange={(e) => {
+                              const updated = [...(content.heroSlides ?? [])];
+                              updated[i] = { ...slide, image: e.target.value };
+                              dispatch(setContent({ ...content, heroSlides: updated }));
+                            }}
+                            onBlur={notify}
+                          />
+                          <div className="flex items-center gap-2">
+                            <label
+                              htmlFor={`hero-slide-image-${i}`}
+                              className="inline-flex items-center gap-1.5 h-8 px-3 rounded-md border border-ink-200 bg-ink-0 text-xs text-ink-700 hover:bg-ink-50 cursor-pointer"
+                            >
+                              Upload image
+                            </label>
+                            <input
+                              id={`hero-slide-image-${i}`}
+                              type="file"
+                              accept="image/png,image/jpeg,image/webp"
+                              className="sr-only"
+                              onChange={async (e) => {
+                                const file = e.target.files?.[0];
+                                if (!file) return;
+                                if (file.size > 2_000 * 1024) {
+                                  toast.error('Image must be under 2 MB');
+                                  e.target.value = '';
+                                  return;
+                                }
+                                try {
+                                  const result = await uploadImageToCloudinary(file, {
+                                    folder: 'zelora/hero/slides',
+                                  });
+                                  const updated = [...(content.heroSlides ?? [])];
+                                  updated[i] = { ...slide, image: result.secureUrl };
+                                  dispatch(setContent({ ...content, heroSlides: updated }));
+                                  notify();
+                                  toast.success('Image uploaded');
+                                } catch (err) {
+                                  toast.error(
+                                    err instanceof Error ? err.message : 'Failed to upload image',
+                                  );
+                                }
+                                e.target.value = '';
+                              }}
+                            />
+                            {slide.image && (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  const updated = [...(content.heroSlides ?? [])];
+                                  updated[i] = { ...slide, image: '' };
+                                  dispatch(setContent({ ...content, heroSlides: updated }));
+                                  notify();
+                                }}
+                                className="inline-flex items-center gap-1.5 h-8 px-3 rounded-md text-xs text-ink-600 hover:text-ink-900 hover:bg-ink-50"
+                              >
+                                <Trash2 className="h-3.5 w-3.5" /> Remove
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    </Field>
+                    <Field
+                      label="Headline (optional)"
+                      compact
+                      hint="Short overlay text shown on the slide. Leave blank for image only."
+                    >
+                      <Input
+                        value={slide.headline}
+                        placeholder="The 2025 Bridal Edit"
+                        onChange={(e) => {
+                          const updated = [...(content.heroSlides ?? [])];
+                          updated[i] = { ...slide, headline: e.target.value };
+                          dispatch(setContent({ ...content, heroSlides: updated }));
+                        }}
+                        onBlur={notify}
+                      />
+                    </Field>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <Field label="Button label" compact>
+                        <Input
+                          value={slide.ctaLabel}
+                          placeholder="Shop Now"
+                          onChange={(e) => {
+                            const updated = [...(content.heroSlides ?? [])];
+                            updated[i] = { ...slide, ctaLabel: e.target.value };
+                            dispatch(setContent({ ...content, heroSlides: updated }));
+                          }}
+                          onBlur={notify}
+                        />
+                      </Field>
+                      <Field label="Button link" compact hint="e.g. /store/collections/bridal">
+                        <Input
+                          value={slide.ctaHref}
+                          placeholder="/store/collections/bridal"
+                          onChange={(e) => {
+                            const updated = [...(content.heroSlides ?? [])];
+                            updated[i] = { ...slide, ctaHref: e.target.value };
+                            dispatch(setContent({ ...content, heroSlides: updated }));
+                          }}
+                          onBlur={notify}
+                        />
+                      </Field>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </Card>
+            </>
           )}
 
           {tab === 'navigation' && (

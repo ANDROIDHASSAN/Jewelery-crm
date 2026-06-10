@@ -6,6 +6,7 @@ import { cn } from '@/lib/cn';
 import { useAppSelector } from '@/app/hooks';
 import { useGetPublicGoldRateQuery } from '@/features/storefront/storefrontApi';
 import type { DoorCard, TestimonialCard, TrustBadge } from '@/features/storefront/storefrontContentSlice';
+import { HeroCarousel } from './HeroCarousel';
 
 function formatLiveRate(paise: number | undefined, fallback: string): string {
   if (!paise || paise <= 0) return fallback;
@@ -40,6 +41,7 @@ export function StorefrontHome(): JSX.Element {
   const content = useAppSelector((s) => s.storefrontContent);
   const {
     hero,
+    heroSlides,
     rates: cmsRates,
     shopByOccasion,
     browseCategories,
@@ -70,72 +72,48 @@ export function StorefrontHome(): JSX.Element {
   };
   return (
     <>
-      {/* Hero — light split editorial. Text on faint blush, full-bleed image on right. */}
-      <section className="bg-[#FAF3EE] border-b border-[#EFE0D2]/70">
-        <div className="max-w-[1280px] mx-auto grid grid-cols-1 lg:grid-cols-[1.05fr_1fr] items-stretch">
-          {/* Left: cream content panel — staggered fade-in-up */}
-          <div className="flex flex-col justify-center px-4 sm:px-6 lg:pl-2 lg:pr-12 py-14 sm:py-20 lg:py-24 order-2 lg:order-1">
-            <p className="text-eyebrow uppercase text-brand-700 animate-fade-in-up-1 inline-flex items-center gap-1.5">
-              <Sparkles className="h-3 w-3 text-brand-500 animate-twinkle" aria-hidden /> {hero.eyebrow}
-            </p>
-            <h1 className="font-display text-[36px] leading-[1.05] sm:text-[48px] md:text-[64px] lg:text-[72px] lg:leading-[1.02] tracking-tight text-ink-900 mt-4 sm:mt-5 max-w-xl animate-fade-in-up-2">
-              {hero.title}
-            </h1>
-            <p className="mt-5 sm:mt-6 max-w-md text-[15px] sm:text-base text-ink-600 leading-relaxed animate-fade-in-up-3">
-              {hero.subtitle}
-            </p>
-            <div className="mt-7 sm:mt-9 flex flex-wrap items-center gap-3 animate-fade-in-up-4">
-              <Link
-                to={hero.ctaHref}
-                className="group inline-flex items-center gap-2 h-11 sm:h-12 px-5 sm:px-7 rounded-full bg-ink-900 text-ink-0 text-sm font-medium hover:bg-ink-800 transition-colors duration-fast"
-              >
-                <span className="gold-shine-target">{hero.ctaLabel}</span>
-                <ArrowRight className="h-4 w-4 transition-transform duration-200 group-hover:translate-x-0.5" />
-              </Link>
-              {hero.secondaryCtaLabel && (
-                <Link
-                  to={hero.secondaryCtaHref}
-                  className="inline-flex items-center gap-2 h-11 sm:h-12 px-5 sm:px-6 rounded-full border border-ink-200 text-ink-800 text-sm hover:border-ink-400 hover:text-ink-900 transition-colors duration-fast"
-                >
-                  {hero.secondaryCtaLabel}
-                </Link>
-              )}
-            </div>
-            {/* Live rate strip — on cream, gold accents */}
-            <div className="mt-10 sm:mt-12 flex flex-wrap items-center gap-x-5 sm:gap-x-6 gap-y-2 text-xs text-ink-600 font-mono tabular-nums border-t border-ink-100 pt-5 sm:pt-6 animate-fade-in-up-5">
-              <span><span className="text-ink-400">Today 24K</span> <span className="text-brand-700 font-semibold">{rates.g24}</span></span>
-              <span><span className="text-ink-400">22K</span> <span className="text-brand-700 font-semibold">{rates.g22}</span></span>
-              <span className="hidden sm:inline"><span className="text-ink-400">18K</span> {rates.g18}</span>
-              <span className="hidden md:inline"><span className="text-ink-400">Silver</span> {rates.silver}</span>
-              <span className="hidden lg:inline text-ink-400 ml-auto">Updated {rates.updatedAt}</span>
-            </div>
-          </div>
+      {/* Hero — full-bleed auto-rotating banner carousel (CMS-managed slides,
+          each with its own "Shop Now" CTA). Falls back to nothing when no
+          slides are configured; the editorial band below carries the copy. */}
+      <HeroCarousel slides={heroSlides} />
 
-          {/* Right: full-bleed video panel (Pinterest reel). Save the video
-              file to client/public/img/hero.mp4 and it auto-plays. Height
-              extends down to roughly the CTA-button line of the left text
-              panel so the fold reads balanced (not too short, not dominant). */}
-          <div className="relative aspect-[4/5] sm:aspect-[16/10] lg:aspect-auto lg:h-[680px] xl:h-[720px] bg-ink-100 order-1 lg:order-2 overflow-hidden">
-            <video
-              src={hero.videoSrc || '/img/hero.mp4'}
-              poster={hero.image}
-              autoPlay
-              muted
-              loop
-              playsInline
-              preload="metadata"
-              className="absolute inset-0 h-full w-full object-cover"
-              aria-hidden
+      {/* Editorial brand band — the headline, CTAs and live rates moved here,
+          directly under the banner, on cream. */}
+      <section className="bg-[#FAF3EE] border-b border-[#EFE0D2]/70">
+        <div className="max-w-3xl mx-auto px-4 sm:px-6 py-12 sm:py-16 text-center">
+          <p className="text-eyebrow uppercase text-brand-700 inline-flex items-center gap-1.5 animate-fade-in-up-1">
+            <Sparkles className="h-3 w-3 text-brand-500 animate-twinkle" aria-hidden /> {hero.eyebrow}
+          </p>
+          <h1 className="font-display text-[30px] leading-[1.08] sm:text-[40px] lg:text-[48px] tracking-tight text-ink-900 mt-4 animate-fade-in-up-2">
+            {hero.title}
+          </h1>
+          <p className="mt-4 mx-auto max-w-xl text-[15px] sm:text-base text-ink-600 leading-relaxed animate-fade-in-up-3">
+            {hero.subtitle}
+          </p>
+          <div className="mt-7 flex flex-wrap items-center justify-center gap-3 animate-fade-in-up-4">
+            <Link
+              to={hero.ctaHref}
+              className="group inline-flex items-center gap-2 h-11 sm:h-12 px-5 sm:px-7 rounded-full bg-ink-900 text-ink-0 text-sm font-medium hover:bg-ink-800 transition-colors duration-fast"
             >
-              {/* Fallback for browsers that block autoplay or fail to load */}
-              <img
-                src={hero.image}
-                alt=""
-                className="absolute inset-0 h-full w-full object-cover"
-              />
-            </video>
-            {/* Subtle vignette to keep edges soft against cream panel */}
-            <div className="absolute inset-0 bg-gradient-to-l from-transparent via-transparent to-[#FAF3EE]/40 pointer-events-none" aria-hidden />
+              <span className="gold-shine-target">{hero.ctaLabel}</span>
+              <ArrowRight className="h-4 w-4 transition-transform duration-200 group-hover:translate-x-0.5" />
+            </Link>
+            {hero.secondaryCtaLabel && (
+              <Link
+                to={hero.secondaryCtaHref}
+                className="inline-flex items-center gap-2 h-11 sm:h-12 px-5 sm:px-6 rounded-full border border-ink-200 text-ink-800 text-sm hover:border-ink-400 hover:text-ink-900 transition-colors duration-fast"
+              >
+                {hero.secondaryCtaLabel}
+              </Link>
+            )}
+          </div>
+          {/* Live rate strip — gold accents, centered under the CTAs */}
+          <div className="mt-9 flex flex-wrap items-center justify-center gap-x-5 sm:gap-x-6 gap-y-2 text-xs text-ink-600 font-mono tabular-nums border-t border-ink-100 pt-5 animate-fade-in-up-5">
+            <span><span className="text-ink-400">Today 24K</span> <span className="text-brand-700 font-semibold">{rates.g24}</span></span>
+            <span><span className="text-ink-400">22K</span> <span className="text-brand-700 font-semibold">{rates.g22}</span></span>
+            <span className="hidden sm:inline"><span className="text-ink-400">18K</span> {rates.g18}</span>
+            <span className="hidden md:inline"><span className="text-ink-400">Silver</span> {rates.silver}</span>
+            <span className="hidden lg:inline text-ink-400">· Updated {rates.updatedAt}</span>
           </div>
         </div>
       </section>
@@ -168,7 +146,7 @@ export function StorefrontHome(): JSX.Element {
           </div>
           {/* Marquee */}
           <div className="group">
-            <div className="flex w-max gap-6 sm:gap-8 md:gap-10 animate-marquee-left marquee-pause px-4 sm:px-6">
+            <div className="flex w-max gap-6 sm:gap-8 md:gap-10 animate-marquee-left marquee-pause pr-6 sm:pr-8 md:pr-10">
               {[...browseCategories, ...browseCategories].map((c, i) => (
                 <Link
                   key={`${c.label}-${i}`}
@@ -499,7 +477,7 @@ function TestimonialMarquee({
   const doubled = [...items, ...items];
   return (
     <div className="group">
-      <div className={`flex w-max gap-4 sm:gap-5 ${animClass} marquee-pause`}>
+      <div className={`flex w-max gap-4 sm:gap-5 ${animClass} marquee-pause pr-4 sm:pr-5`}>
         {doubled.map((t, i) => (
           <figure
             key={`${t.author}-${i}`}

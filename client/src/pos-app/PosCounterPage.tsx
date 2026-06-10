@@ -59,7 +59,7 @@ import { OpenRegisterGate } from './OpenRegisterGate';
 import { enqueueOffline, isReallyOnline } from '@/features/pos/offline';
 import type { Item } from '@goldos/shared/types';
 import type { PaymentMode } from '@goldos/shared/constants';
-import { computeBillTotals } from '@goldos/shared/bill-math';
+import { computeBillTotals, taxableFromInclusivePaise } from '@goldos/shared/bill-math';
 
 // ---------------------------------------------------------------------------
 // Types & helpers (mirror PosPage so swapping the surface is risk-free)
@@ -346,9 +346,15 @@ function PosBillingScreen(): JSX.Element {
         return;
       }
       const rate = rateForPurity(rates, it.purityCaratX100);
-      const makingBps = it.makingChargeBps ?? 1200;
-      const goldValue = computeGoldValuePaise(it.weightMg, it.purityCaratX100, rate.paise);
-      const makingPaise = applyBps(goldValue, makingBps);
+      // Fixed (GST-inclusive) selling price overrides the live-rate calc for any
+      // metal: back out the pre-GST taxable base and feed it as the metal value
+      // with no making, so the GST the bill adds brings it to the selling price.
+      const isFixed = it.sellingPricePaise != null;
+      const makingBps = isFixed ? 0 : it.makingChargeBps ?? 1200;
+      const goldValue = isFixed
+        ? taxableFromInclusivePaise(it.sellingPricePaise!)
+        : computeGoldValuePaise(it.weightMg, it.purityCaratX100, rate.paise);
+      const makingPaise = isFixed ? 0 : applyBps(goldValue, makingBps);
       setLines((curr) => [
         ...curr,
         {
@@ -362,7 +368,7 @@ function PosBillingScreen(): JSX.Element {
           purityCaratX100: it.purityCaratX100,
           makingChargeBps: makingBps,
           stoneChargePaise: 0,
-          ratePerGramPaise: rate.paise,
+          ratePerGramPaise: isFixed ? 0 : rate.paise,
           goldValuePaise: goldValue,
           makingPaise,
           linePaise: goldValue + makingPaise,
@@ -388,9 +394,15 @@ function PosBillingScreen(): JSX.Element {
             const it = items.find((i) => i.id === dl.itemId);
             if (it) {
               const rate = rateForPurity(rates, it.purityCaratX100);
-              const makingBps = dl.makingChargeBps ?? it.makingChargeBps ?? 1200;
-              const goldValue = computeGoldValuePaise(it.weightMg, it.purityCaratX100, rate.paise);
-              const makingPaise = applyBps(goldValue, makingBps);
+              // Fixed (GST-inclusive) selling price overrides live-rate pricing
+              // and ignores any stone charge — the inclusive price is all-in.
+              const isFixed = it.sellingPricePaise != null;
+              const stoneChargePaise = isFixed ? 0 : dl.stoneChargePaise ?? 0;
+              const makingBps = isFixed ? 0 : dl.makingChargeBps ?? it.makingChargeBps ?? 1200;
+              const goldValue = isFixed
+                ? taxableFromInclusivePaise(it.sellingPricePaise!)
+                : computeGoldValuePaise(it.weightMg, it.purityCaratX100, rate.paise);
+              const makingPaise = isFixed ? 0 : applyBps(goldValue, makingBps);
               newLines.push({
                 id: `${it.id}-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
                 itemId: it.id,
@@ -401,11 +413,11 @@ function PosBillingScreen(): JSX.Element {
                 weightMg: it.weightMg,
                 purityCaratX100: it.purityCaratX100,
                 makingChargeBps: makingBps,
-                stoneChargePaise: dl.stoneChargePaise ?? 0,
-                ratePerGramPaise: rate.paise,
+                stoneChargePaise,
+                ratePerGramPaise: isFixed ? 0 : rate.paise,
                 goldValuePaise: goldValue,
                 makingPaise,
-                linePaise: goldValue + makingPaise + (dl.stoneChargePaise ?? 0),
+                linePaise: goldValue + makingPaise + stoneChargePaise,
               });
             }
           }
@@ -1044,7 +1056,9 @@ function ProductCard({
   const rate = rateForPurity(rates, item.purityCaratX100);
   const goldValue = computeGoldValuePaise(item.weightMg, item.purityCaratX100, rate.paise);
   const making = applyBps(goldValue, item.makingChargeBps ?? 1200);
-  const indicative = goldValue + making;
+  // A fixed selling price is the all-in tag price (incl. GST); show it directly.
+  // Otherwise show the live indicative (metal + making, pre-GST).
+  const indicative = item.sellingPricePaise != null ? item.sellingPricePaise : goldValue + making;
   const purityLabel = PURITY_LABEL[item.purityCaratX100] ?? `${item.purityCaratX100 / 100}c`;
   const heroImage = cloudinaryThumb(item.images?.[0] ?? null, 360);
   const displayName = item.name?.trim() || item.sku;
@@ -1276,7 +1290,9 @@ function BillLineRow({ line, onRemove }: { line: CartLine; onRemove: () => void 
           <span className="tabular-nums">{(line.weightMg / 1000).toFixed(2)} g</span>
         </div>
         <div className="text-[11px] text-ink-400 mt-0.5 tabular-nums">
-          @ ₹{Math.round(line.ratePerGramPaise / 100).toLocaleString('en-IN')}/g
+          {line.ratePerGramPaise > 0
+            ? `@ ₹${Math.round(line.ratePerGramPaise / 100).toLocaleString('en-IN')}/g`
+            : 'Fixed price'}
         </div>
       </div>
       <div className="text-right shrink-0">

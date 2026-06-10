@@ -2662,6 +2662,7 @@ function AddItemDialog({ open, onClose }: { open: boolean; onClose: () => void }
     hallmarkStatus: 'PENDING' as 'PENDING' | 'SUBMITTED' | 'CERTIFIED' | 'EXEMPT',
     hallmarkRef: '',
     costPriceRupees: '',
+    sellingPriceRupees: '',
     makingMode: 'PERCENTAGE' as 'PERCENTAGE' | 'PER_GRAM',
     makingChargePct: '',
     makingPerGramRupees: '',
@@ -2788,6 +2789,15 @@ function AddItemDialog({ open, onClose }: { open: boolean; onClose: () => void }
     if (!Number.isFinite(costPricePaise) || costPricePaise <= 0) return void toast.error('Cost price must be > 0');
     if (!form.shopId || !form.categoryId) return void toast.error('Pick a shop and category');
 
+    // Selling price is optional. When given it must be a positive amount — it's
+    // the GST-inclusive price the customer pays (overrides the live metal rate).
+    let sellingPricePaise: number | null = null;
+    if (form.sellingPriceRupees.trim()) {
+      const parsed = Math.round(parseFloat(form.sellingPriceRupees) * 100);
+      if (!Number.isFinite(parsed) || parsed <= 0) return void toast.error('Selling price must be > 0');
+      sellingPricePaise = parsed;
+    }
+
     // Stone weight is optional. Guard against NaN (empty / non-numeric) and
     // negatives — the schema rejects either and Zod's error path is opaque
     // when a `parseFloat(...) * 1000` slips through with a bad value.
@@ -2813,6 +2823,7 @@ function AddItemDialog({ open, onClose }: { open: boolean; onClose: () => void }
         hallmarkStatus: form.hallmarkStatus,
         hallmarkRef: form.hallmarkRef.trim() || null,
         costPricePaise,
+        sellingPricePaise,
         makingChargeBps: making.makingChargeBps,
         makingChargeMode: making.makingChargeMode,
         makingChargePerGramPaise: making.makingChargePerGramPaise,
@@ -2831,15 +2842,12 @@ function AddItemDialog({ open, onClose }: { open: boolean; onClose: () => void }
         publishToWebsite
           ? `Added ${form.name.trim()}${stockLabel} and published to storefront`
           : `Added ${form.name.trim()}${stockLabel}`,
-        {
-          action: {
-            label: 'Print label',
-            onClick: () => navigate('/admin/inventory/print-labels', { state: { skus: [newSku] } }),
-          },
-          duration: 8000,
-        },
       );
       onClose();
+      // Jump straight to the label printer for the piece we just added so its
+      // tag can be printed immediately, without hunting for it in the list. The
+      // print page pre-selects this SKU via router state.
+      navigate('/admin/inventory/print-labels', { state: { skus: [newSku] } });
     } catch (err) {
       const message =
         (err as { data?: { error?: { message?: string } } }).data?.error?.message ?? 'Could not save item.';
@@ -2876,6 +2884,8 @@ function AddItemDialog({ open, onClose }: { open: boolean; onClose: () => void }
                       hallmarkStatus: it.hallmarkStatus,
                       hallmarkRef: it.hallmarkRef || '',
                       costPriceRupees: String(it.costPricePaise / 100),
+                      sellingPriceRupees:
+                        it.sellingPricePaise != null ? String(it.sellingPricePaise / 100) : '',
                       makingMode: 'PERCENTAGE',
                       makingChargePct: it.makingChargeBps ? String(it.makingChargeBps / 100) : '',
                       makingPerGramRupees: '',
@@ -3158,18 +3168,36 @@ function AddItemDialog({ open, onClose }: { open: boolean; onClose: () => void }
                   className={fieldCls}
                   required
                 />
+                <p className="mt-1 text-[11px] text-ink-500">
+                  Internal — drives COGS &amp; analytics. Never shown to customers.
+                </p>
               </Field>
-              <Field label="Making charge override">
-                <MakingChargeOverride
-                  mode={form.makingMode}
-                  pct={form.makingChargePct}
-                  perGram={form.makingPerGramRupees}
-                  onMode={(m) => setForm({ ...form, makingMode: m })}
-                  onPct={(v) => setForm({ ...form, makingChargePct: v })}
-                  onPerGram={(v) => setForm({ ...form, makingPerGramRupees: v })}
+              <Field label="Selling price (₹)">
+                <input
+                  type="number"
+                  step="0.01"
+                  min={0}
+                  value={form.sellingPriceRupees}
+                  onChange={(e) => setForm({ ...form, sellingPriceRupees: e.target.value })}
+                  className={fieldCls}
+                  placeholder="optional"
                 />
+                <p className="mt-1 text-[11px] text-ink-500">
+                  Final price the customer pays (incl. GST) in POS &amp; storefront. Blank = price by live metal rate.
+                </p>
               </Field>
             </div>
+
+            <Field label="Making charge override">
+              <MakingChargeOverride
+                mode={form.makingMode}
+                pct={form.makingChargePct}
+                perGram={form.makingPerGramRupees}
+                onMode={(m) => setForm({ ...form, makingMode: m })}
+                onPct={(v) => setForm({ ...form, makingChargePct: v })}
+                onPerGram={(v) => setForm({ ...form, makingPerGramRupees: v })}
+              />
+            </Field>
 
             <Field label="Description">
               <textarea
@@ -3288,6 +3316,7 @@ function EditItemDialog({
     hallmarkStatus: item.hallmarkStatus,
     hallmarkRef: item.hallmarkRef ?? '',
     costPriceRupees: String(item.costPricePaise / 100),
+    sellingPriceRupees: item.sellingPricePaise != null ? String(item.sellingPricePaise / 100) : '',
     makingMode: (item.makingChargeMode ?? 'PERCENTAGE') as 'PERCENTAGE' | 'PER_GRAM',
     makingChargePct: item.makingChargeBps ? String(item.makingChargeBps / 100) : '',
     makingPerGramRupees:
@@ -3319,6 +3348,7 @@ function EditItemDialog({
       hallmarkStatus: item.hallmarkStatus,
       hallmarkRef: item.hallmarkRef ?? '',
       costPriceRupees: String(item.costPricePaise / 100),
+      sellingPriceRupees: item.sellingPricePaise != null ? String(item.sellingPricePaise / 100) : '',
       makingMode: (item.makingChargeMode ?? 'PERCENTAGE') as 'PERCENTAGE' | 'PER_GRAM',
       makingChargePct: item.makingChargeBps ? String(item.makingChargeBps / 100) : '',
       makingPerGramRupees:
@@ -3378,6 +3408,14 @@ function EditItemDialog({
       return void toast.error('Cost price must be > 0');
     }
 
+    // Optional GST-inclusive selling price (overrides live metal-rate pricing).
+    let sellingPricePaise: number | null = null;
+    if (form.sellingPriceRupees.trim()) {
+      const parsed = Math.round(parseFloat(form.sellingPriceRupees) * 100);
+      if (!Number.isFinite(parsed) || parsed <= 0) return void toast.error('Selling price must be > 0');
+      sellingPricePaise = parsed;
+    }
+
     const stoneRaw = parseFloat(form.stoneWeightG);
     const stoneWeightMg =
       form.stoneWeightG && Number.isFinite(stoneRaw) && stoneRaw > 0
@@ -3400,6 +3438,7 @@ function EditItemDialog({
           hallmarkStatus: form.hallmarkStatus,
           hallmarkRef: form.hallmarkRef.trim() || null,
           costPricePaise,
+          sellingPricePaise,
           makingChargeBps: making.makingChargeBps,
           makingChargeMode: making.makingChargeMode,
           makingChargePerGramPaise: making.makingChargePerGramPaise,
@@ -3629,18 +3668,36 @@ function EditItemDialog({
                   className={fieldCls}
                   required
                 />
+                <p className="mt-1 text-[11px] text-ink-500">
+                  Internal — drives COGS &amp; analytics. Never shown to customers.
+                </p>
               </Field>
-              <Field label="Making charge override">
-                <MakingChargeOverride
-                  mode={form.makingMode}
-                  pct={form.makingChargePct}
-                  perGram={form.makingPerGramRupees}
-                  onMode={(m) => setForm({ ...form, makingMode: m })}
-                  onPct={(v) => setForm({ ...form, makingChargePct: v })}
-                  onPerGram={(v) => setForm({ ...form, makingPerGramRupees: v })}
+              <Field label="Selling price (₹)">
+                <input
+                  type="number"
+                  step="0.01"
+                  min={0}
+                  value={form.sellingPriceRupees}
+                  onChange={(e) => setForm({ ...form, sellingPriceRupees: e.target.value })}
+                  className={fieldCls}
+                  placeholder="optional"
                 />
+                <p className="mt-1 text-[11px] text-ink-500">
+                  Final price the customer pays (incl. GST) in POS &amp; storefront. Blank = price by live metal rate.
+                </p>
               </Field>
             </div>
+
+            <Field label="Making charge override">
+              <MakingChargeOverride
+                mode={form.makingMode}
+                pct={form.makingChargePct}
+                perGram={form.makingPerGramRupees}
+                onMode={(m) => setForm({ ...form, makingMode: m })}
+                onPct={(v) => setForm({ ...form, makingChargePct: v })}
+                onPerGram={(v) => setForm({ ...form, makingPerGramRupees: v })}
+              />
+            </Field>
 
             <Field label="Description">
               <textarea

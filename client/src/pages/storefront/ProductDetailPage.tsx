@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
-import { Heart, ShieldCheck, Truck, RotateCcw, ChevronDown, Minus, Plus, X } from 'lucide-react';
+import { Heart, Truck, RotateCcw, RefreshCw, Sparkles, Award, Banknote, ChevronDown, Minus, Plus, X } from 'lucide-react';
 import * as Dialog from '@radix-ui/react-dialog';
 import { toast } from 'sonner';
 import { Money } from '@/components/ui/money';
@@ -18,6 +18,12 @@ import {
   useVerifyRazorpayPaymentMutation,
   type PublicProduct,
 } from '@/features/storefront/storefrontApi';
+import {
+  productMaterialLabel,
+  productMetaLabel,
+  storefrontTotalPaise,
+  isNonPrecious,
+} from '@/features/storefront/pricing';
 import { openRazorpayCheckout } from '@/lib/razorpay';
 import { StarRating } from './OrderReviewSheet';
 
@@ -35,7 +41,7 @@ export function ProductDetailPage(): JSX.Element {
   const [imgIdx, setImgIdx] = useState(0);
   const [size, setSize] = useState<string>(SIZES[1] ?? SIZES[0] ?? '');
   const [qty, setQty] = useState(1);
-  const [openSection, setOpenSection] = useState<string | null>('details');
+  const [openSection, setOpenSection] = useState<string | null>('description');
   const [reserveOpen, setReserveOpen] = useState(false);
   const shop = useShopActions();
   const navigate = useNavigate();
@@ -82,15 +88,24 @@ export function ProductDetailPage(): JSX.Element {
 
   const weightG = product.weightMg / 1000;
   const purityK = product.purityCaratX100 / 100;
-  const purity = `${purityK}K · BIS Hallmarked`;
+  // Material label — never "0K · BIS Hallmarked" for non-precious / gold-tone
+  // pieces (stainless steel carries no carat and isn't hallmarked).
+  const purity = productMaterialLabel(product);
+  const nonPrecious = isNonPrecious(product);
 
   // Determine if this product is gold-based. Only GOLD and DIAMOND items
   // use the gold rate for valuation. Silver, Stainless Steel, Platinum and
   // Other metals must NOT use the gold rate — this was the root cause of the
   // Tone Necklace (STAINLESS_STEEL) being priced using the silver rate but
   // labelled as "Gold value".
-  const isGold = product.metalType === 'GOLD' || product.metalType === 'DIAMOND' || product.metalType === null;
-  const isSilver = product.metalType === 'SILVER';
+  // A fixed selling price is the all-in tag price (GST-inclusive). When set we
+  // bypass the live metal-rate calc for EVERY metal type and price off the
+  // pre-GST fixed base (mirrored onto basePricePaise), so the displayed total
+  // matches what POS + checkout charge. Routing through the non-precious branch
+  // below (metalValue = basePricePaise) does exactly that.
+  const isFixed = product.fixedPricePaise != null;
+  const isGold = !isFixed && (product.metalType === 'GOLD' || product.metalType === 'DIAMOND' || product.metalType === null);
+  const isSilver = !isFixed && product.metalType === 'SILVER';
 
   // Resolve a per-gram rate from the live feed. Strategy:
   //   1. If the feed has an entry matching this piece's exact purity
@@ -143,8 +158,12 @@ export function ProductDetailPage(): JSX.Element {
   // PER_GRAM:   perGramPaise × weightG (flat ₹/g regardless of metal rate)
   // If metalType is non-precious (no metalValuePaise), making charges are
   // per-gram only since there is no metal value to take a percentage of.
+  // Fixed-priced pieces carry no separate making charge — the inclusive price
+  // already covers everything, so the only addition is GST below.
   let making = 0;
-  if (product.makingChargeMode === 'PER_GRAM' && product.makingChargePerGramPaise != null) {
+  if (isFixed) {
+    making = 0;
+  } else if (product.makingChargeMode === 'PER_GRAM' && product.makingChargePerGramPaise != null) {
     making = Math.round((product.makingChargePerGramPaise * product.weightMg) / 1000);
   } else if (product.makingChargeBps > 0 && gold > 0) {
     // PERCENTAGE mode (default) — percentage of gold/silver metal value
@@ -451,29 +470,51 @@ export function ProductDetailPage(): JSX.Element {
             </p>
           )}
 
-          {/* Trust row */}
-          <ul className="grid grid-cols-1 sm:grid-cols-3 gap-4 pt-2 text-xs text-ink-600">
-            <li className="flex flex-col items-start gap-1.5">
-              <ShieldCheck className="h-4 w-4 text-brand-700" />
-              <span>BIS hallmarked · weighed in front of you</span>
-            </li>
-            <li className="flex flex-col items-start gap-1.5">
-              <Truck className="h-4 w-4 text-brand-700" />
-              <span>Free Haryana delivery · India shipping</span>
-            </li>
-            <li className="flex flex-col items-start gap-1.5">
-              <RotateCcw className="h-4 w-4 text-brand-700" />
-              <span>Lifetime exchange against pure-gold value</span>
-            </li>
-          </ul>
+          {/* Feature / assurance grid — boxed icon row (Palmonas-style). The
+              top row adapts to the metal (gold-tone fashion vs precious), the
+              bottom row carries the universal service promises. */}
+          <div className="pt-2 space-y-3">
+            <div className="grid grid-cols-3 gap-2 rounded-xl bg-[#F6EEE6] p-4 sm:p-5">
+              <PdpFeature icon={<Truck className="h-6 w-6" />} label="Free Shipping" />
+              <PdpFeature
+                icon={<Sparkles className="h-6 w-6" />}
+                label={nonPrecious ? 'Skin Safe Jewellery' : 'BIS Hallmarked'}
+              />
+              <PdpFeature
+                icon={<Award className="h-6 w-6" />}
+                label={nonPrecious ? '18K Gold Tone Plated' : 'Certified Purity'}
+              />
+            </div>
+            <div className="grid grid-cols-3 gap-2">
+              <PdpFeature boxed icon={<RotateCcw className="h-5 w-5" />} label="7 Day Returns" />
+              <PdpFeature
+                boxed
+                icon={<RefreshCw className="h-5 w-5" />}
+                label={nonPrecious ? '10 Day Exchange' : 'Lifetime Exchange'}
+              />
+              <PdpFeature boxed icon={<Banknote className="h-5 w-5" />} label="Cash on Delivery" />
+            </div>
+          </div>
 
-          {/* Accordions */}
+          {/* Accordions — Description · Specification · Supplier · Returns */}
           <div className="pt-4 border-t border-ink-100 divide-y divide-ink-100">
             <Accordion
-              id="details"
-              title="Product details"
-              open={openSection === 'details'}
-              onToggle={() => setOpenSection(openSection === 'details' ? null : 'details')}
+              id="description"
+              title="Description"
+              open={openSection === 'description'}
+              onToggle={() => setOpenSection(openSection === 'description' ? null : 'description')}
+            >
+              <p className="text-sm text-ink-600 leading-relaxed whitespace-pre-line">
+                {product.descriptionMd?.trim()
+                  ? product.descriptionMd
+                  : `${product.name} — ${purity}, ${weightG.toFixed(2)} g. Handcrafted ${nonPrecious ? 'gold-tone' : 'fine'} jewellery${category ? ` from our ${category.name} collection` : ''}.`}
+              </p>
+            </Accordion>
+            <Accordion
+              id="specs"
+              title="Specification"
+              open={openSection === 'specs'}
+              onToggle={() => setOpenSection(openSection === 'specs' ? null : 'specs')}
             >
               <dl className="grid grid-cols-2 gap-y-2 text-sm">
                 <dt className="text-ink-500">SKU</dt>
@@ -488,33 +529,42 @@ export function ProductDetailPage(): JSX.Element {
                     <dd className="text-ink-800">{category.name}</dd>
                   </>
                 )}
-                <dt className="text-ink-500">Making charge</dt>
-                <dd className="text-ink-800 tabular-nums">{(product.makingChargeBps / 100).toFixed(2)}%</dd>
+                {product.makingChargeBps > 0 && (
+                  <>
+                    <dt className="text-ink-500">Making charge</dt>
+                    <dd className="text-ink-800 tabular-nums">{(product.makingChargeBps / 100).toFixed(2)}%</dd>
+                  </>
+                )}
                 <dt className="text-ink-500">Made in</dt>
                 <dd className="text-ink-800">Gurugram, Haryana</dd>
               </dl>
-              {product.descriptionMd && (
-                <p className="mt-4 text-sm text-ink-600 leading-relaxed whitespace-pre-line">{product.descriptionMd}</p>
+              {!nonPrecious && (
+                <p className="mt-4 text-sm text-ink-600 leading-relaxed">
+                  Each piece carries a BIS 916 hallmark stamped on the inner band. You&apos;ll receive a printed certificate of weight, purity and current-day rate at billing — countersigned in store.
+                </p>
               )}
             </Accordion>
             <Accordion
-              id="cert"
-              title="Certification & hallmark"
-              open={openSection === 'cert'}
-              onToggle={() => setOpenSection(openSection === 'cert' ? null : 'cert')}
+              id="supplier"
+              title="Supplier Information"
+              open={openSection === 'supplier'}
+              onToggle={() => setOpenSection(openSection === 'supplier' ? null : 'supplier')}
             >
-              <p className="text-sm text-ink-600 leading-relaxed">
-                Each piece carries a BIS 916 hallmark stamped on the inner band. You&apos;ll receive a printed certificate of weight, purity and current-day rate at billing — countersigned in store.
-              </p>
+              <div className="text-sm text-ink-600 leading-relaxed space-y-1.5">
+                <p><span className="text-ink-500">Sold by</span> · Zehlora Jewellers, Haryana — since 1972</p>
+                <p><span className="text-ink-500">Country of origin</span> · India</p>
+                <p><span className="text-ink-500">Manufactured &amp; packed at</span> · Gurugram, Haryana</p>
+                <p className="pt-1">For product, sizing or warranty queries, reach us from the Help page or visit your nearest Zehlora store.</p>
+              </div>
             </Accordion>
             <Accordion
-              id="shipping"
-              title="Shipping & returns"
-              open={openSection === 'shipping'}
-              onToggle={() => setOpenSection(openSection === 'shipping' ? null : 'shipping')}
+              id="returns"
+              title="Returns"
+              open={openSection === 'returns'}
+              onToggle={() => setOpenSection(openSection === 'returns' ? null : 'returns')}
             >
               <p className="text-sm text-ink-600 leading-relaxed">
-                Free delivery within Haryana. India-wide shipping via insured Shiprocket within 4–6 working days. Returns accepted for 7 days in original packaging; exchange against pure-gold value valid for lifetime.
+                Free delivery within Haryana; India-wide insured shipping in 4–6 working days. Returns accepted for 7 days in original packaging{nonPrecious ? ' with a 10-day exchange window' : '; lifetime exchange against pure-gold value'}. Cash on delivery available.
               </p>
             </Accordion>
           </div>
@@ -548,10 +598,10 @@ export function ProductDetailPage(): JSX.Element {
               <div className="mt-3 sm:mt-4">
                 <h3 className="font-display text-base sm:text-[17px] leading-tight text-ink-900">{p.name}</h3>
                 <p className="text-[11px] sm:text-xs text-ink-500 mt-1">
-                  {(p.weightMg / 1000).toFixed(2)} g · {p.purityCaratX100 / 100}K
+                  {(p.weightMg / 1000).toFixed(2)} g{productMetaLabel(p) ? ` · ${productMetaLabel(p)}` : ''}
                 </p>
                 <p className="text-sm text-ink-900 font-mono tabular-nums mt-1 sm:mt-1.5">
-                  ₹{((p.basePricePaise + p.stoneChargePaise) / 100).toLocaleString('en-IN')}
+                  ₹{(storefrontTotalPaise(p, liveRate?.rates) / 100).toLocaleString('en-IN')}
                 </p>
               </div>
             </Link>
@@ -1239,6 +1289,30 @@ function Accordion({
           {children}
         </div>
       )}
+    </div>
+  );
+}
+
+// Boxed icon + label for the PDP assurance grid (Palmonas-style). `boxed`
+// wraps it in a bordered card for the service-promise row.
+function PdpFeature({
+  icon,
+  label,
+  boxed,
+}: {
+  icon: React.ReactNode;
+  label: string;
+  boxed?: boolean;
+}): JSX.Element {
+  return (
+    <div
+      className={cn(
+        'flex flex-col items-center justify-center gap-2 text-center px-1 py-2',
+        boxed && 'rounded-xl border border-ink-100 bg-ink-0 py-3',
+      )}
+    >
+      <span className="text-brand-700">{icon}</span>
+      <span className="text-[11px] sm:text-xs font-medium text-ink-700 leading-tight">{label}</span>
     </div>
   );
 }

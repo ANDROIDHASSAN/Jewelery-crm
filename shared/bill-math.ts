@@ -87,6 +87,25 @@ export function resolveMakingChargePaise(opts: {
 /** Wastage applied to an exchanged old-gold piece. 2% is the trade standard. */
 export const OLD_GOLD_WASTAGE_BPS = 200;
 
+/**
+ * Total GST applied to a taxable line (CGST+SGST intra-state, or IGST
+ * inter-state — both sum to 3%). Used to back out the taxable base from a
+ * GST-inclusive price. Kept here so POS, storefront, and inventory all agree.
+ */
+export const TOTAL_GST_BPS = 300;
+
+/**
+ * Back-calculate the pre-GST taxable base from a GST-INCLUSIVE price.
+ * A fixed selling price is entered as the final amount the customer pays, so
+ * we feed `taxable` into the normal GST-on-top pipeline and the grand total
+ * lands back on the inclusive price (within per-line rounding). Integer
+ * paise, banker's rounded.
+ *   taxable + 3% GST ≈ inclusive
+ */
+export function taxableFromInclusivePaise(inclusivePaise: number): number {
+  return bankersRound((inclusivePaise * 10_000) / (10_000 + TOTAL_GST_BPS));
+}
+
 export interface BillMathLine {
   /** Pure-metal value of this line in paise. */
   goldValuePaise: number;

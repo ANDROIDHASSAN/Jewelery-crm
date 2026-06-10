@@ -421,6 +421,11 @@ model Item {
   hallmarkStatus  HallmarkStatus @default(PENDING)
   hallmarkRef     String?
   costPricePaise  Int
+  // Fixed selling price the customer pays (GST-INCLUSIVE). When set it
+  // overrides live weight×rate pricing in POS + storefront for every metal
+  // type. Null = price live (gold/silver) or by basePrice (non-precious).
+  // costPricePaise stays the internal cost used for COGS / analytics.
+  sellingPricePaise Int?
   makingChargeBps Int?
   // Item-level making-charge override. makingChargeMode null = inherit the
   // category's mode + rate. PER_GRAM uses makingChargePerGramPaise.
@@ -1288,6 +1293,11 @@ model Product {
   purityCaratX100  Int
   makingChargeBps  Int
   basePricePaise   Int
+  // Pre-GST taxable base for a FIXED-priced product (mirrors the linked
+  // Item.sellingPricePaise, backed out of GST). Non-null signals storefront
+  // pricing to skip the live metal-rate calc and use this value + GST so the
+  // customer pays exactly the inclusive selling price. Null = price normally.
+  fixedPricePaise  Int?
   stoneChargePaise Int       @default(0)
   // BIS Hallmark Unique ID (6-char alphanumeric). Mandatory for gold
   // jewellery sold in India since 2021 under the BIS Act. Nullable for

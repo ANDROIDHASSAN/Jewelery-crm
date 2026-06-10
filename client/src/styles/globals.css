@@ -116,9 +116,14 @@
   animation: float-bob 4s ease-in-out infinite;
 }
 
-/* Marquee — auto-scrolling testimonial rows. Duplicate the children in JSX
-   so the strip is rendered twice; -50% translation makes the loop seamless.
-   Pause on hover so users can read a card that catches their eye. */
+/* Marquee — auto-scrolling rows. Duplicate the children in JSX so the strip
+   is rendered twice; the -50% translation makes the loop seamless ONLY when
+   the track is exactly two identical halves. Because the track spaces items
+   with CSS `gap`, there is no gap *after* the last item, so the two halves
+   aren't equal and -50% lands half a gap off (a visible jump). The fix: the
+   track adds a trailing padding-right equal to the gap (and uses NO symmetric
+   horizontal padding, which would also skew the math). Pause on hover so users
+   can read a card that catches their eye. */
 @keyframes marquee-left {
   0%   { transform: translateX(0); }
   100% { transform: translateX(-50%); }

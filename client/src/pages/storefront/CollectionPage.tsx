@@ -6,11 +6,17 @@ import { useAppSelector } from '@/app/hooks';
 import {
   useGetPublicProductsQuery,
   useGetPublicCollectionsQuery,
+  useGetPublicGoldRateQuery,
   useGetCollectionItemsQuery,
   type PublicProduct,
   type PublicCategory,
 } from '@/features/storefront/storefrontApi';
 import type { FilterGroup } from '@/features/storefront/storefrontContentSlice';
+import {
+  storefrontTotalPaise,
+  productMetaLabel,
+  type StorefrontRates,
+} from '@/features/storefront/pricing';
 
 const TITLES: Record<string, { title: string; subtitle: string }> = {
   bridal: { title: 'Bridal', subtitle: 'Heirloom pieces for the day that matters. Hand-set, 22K, BIS-hallmarked.' },
@@ -27,19 +33,11 @@ const TITLES: Record<string, { title: string; subtitle: string }> = {
 const SORTS = ['Featured', 'Newest', 'Price: low → high', 'Price: high → low', 'Weight: light → heavy'] as const;
 type Sort = (typeof SORTS)[number];
 
-function priceOf(p: PublicProduct): number {
-  return p.basePricePaise + p.stoneChargePaise;
-}
-
-// 0 = silver (the canonical "no carat info" value); 9500 = Pt 950; any
-// value 1..2400 is a gold carat × 100 (including custom alloys like 9K =
-// 900). Previously every value < 1000 collapsed to "Silver", so a 9K
-// gold Rose Ring rendered as "Silver hallmarked" on the storefront.
-function purityLabel(p: PublicProduct): string {
-  if (p.purityCaratX100 === 0) return 'Silver';
-  if (p.purityCaratX100 === 9500) return 'Pt 950';
-  const k = p.purityCaratX100 / 100;
-  return `${Number.isInteger(k) ? k.toFixed(0) : k.toFixed(1)}K`;
+// GST-inclusive price the customer pays (matches the product page + checkout).
+// `rates` is optional so module-level filters/sorts can call it with the
+// fallback rate; the card grid passes the live feed for accuracy.
+function priceOf(p: PublicProduct, rates?: StorefrontRates): number {
+  return storefrontTotalPaise(p, rates);
 }
 
 // Predicate registry — keyed by the option label inside each FilterGroup
@@ -51,8 +49,11 @@ const FILTER_PREDICATES: Record<string, (p: PublicProduct) => boolean> = {
   // metal
   '22K Gold': (p) => p.purityCaratX100 === 2200,
   '18K Gold': (p) => p.purityCaratX100 === 1800,
-  Silver: (p) => p.purityCaratX100 === 0,
-  Platinum: (p) => p.purityCaratX100 === 9500,
+  // Silver = metal type SILVER, NOT purity 0 — stainless-steel "gold tone" and
+  // other non-precious pieces also carry purity 0. The null fallback keeps
+  // legacy products (no metalType) that are genuinely purity-0 silver.
+  Silver: (p) => p.metalType === 'SILVER' || (p.metalType == null && p.purityCaratX100 === 0),
+  Platinum: (p) => p.metalType === 'PLATINUM' || p.purityCaratX100 === 9500,
   // weight
   'Under 10 g': (p) => p.weightMg < 10_000,
   '10 – 20 g': (p) => p.weightMg >= 10_000 && p.weightMg < 20_000,
@@ -110,7 +111,11 @@ function filterBySlug(
     case '18k':
       return products.filter((p) => p.purityCaratX100 === 1800);
     case 'silver':
-      return products.filter((p) => p.purityCaratX100 === 0);
+      // metalType, not purity — purity 0 also matches stainless-steel "gold
+      // tone" / non-precious pieces, which were leaking into the Silver page.
+      return products.filter(
+        (p) => p.metalType === 'SILVER' || (p.metalType == null && p.purityCaratX100 === 0),
+      );
     case 'under-50k':
       return products.filter((p) => priceOf(p) < 50_00_000);
     case 'gifting':
@@ -164,6 +169,10 @@ export function CollectionPage(): JSX.Element {
 
   const { data: products = [], isLoading: productsLoading } = useGetPublicProductsQuery();
   const { data: categories = [] } = useGetPublicCollectionsQuery();
+  // Live metal rates so gold/silver cards show the same price as the product
+  // page (incl. GST). Cached app-wide (the header polls the same feed).
+  const { data: liveRate } = useGetPublicGoldRateQuery();
+  const rates = liveRate?.rates;
   // Try to fetch collection items if slug is provided. Returns 404 if not an inventory collection.
   const { data: collectionItems = [], isLoading: collectionItemsLoading, isError: collectionItemsError } = useGetCollectionItemsQuery(slug ?? '', { skip: !slug });
 
@@ -300,9 +309,9 @@ export function CollectionPage(): JSX.Element {
     const arr = [...filtered];
     switch (sort) {
       case 'Price: low → high':
-        return arr.sort((a, b) => priceOf(a) - priceOf(b));
+        return arr.sort((a, b) => priceOf(a, rates) - priceOf(b, rates));
       case 'Price: high → low':
-        return arr.sort((a, b) => priceOf(b) - priceOf(a));
+        return arr.sort((a, b) => priceOf(b, rates) - priceOf(a, rates));
       case 'Weight: light → heavy':
         return arr.sort((a, b) => a.weightMg - b.weightMg);
       case 'Newest':
@@ -310,7 +319,7 @@ export function CollectionPage(): JSX.Element {
       default:
         return arr;
     }
-  }, [filtered, sort]);
+  }, [filtered, sort, rates]);
 
   return (
     <div className="bg-[#FDF8F4] min-h-full">
@@ -449,6 +458,7 @@ export function CollectionPage(): JSX.Element {
           )}
           {sorted.map((p) => {
             const weightG = p.weightMg / 1000;
+            const meta = productMetaLabel(p);
             const primary = p.images[0] ?? '';
             const secondary = p.images[1] ?? primary;
             // `inStock` is computed server-side from the linked inventory
@@ -488,10 +498,10 @@ export function CollectionPage(): JSX.Element {
                 <div className="mt-3 sm:mt-4 space-y-1 px-0.5">
                   <h3 className="font-display text-base sm:text-[18px] leading-tight text-ink-900 group-hover:text-brand-700 transition-colors">{p.name}</h3>
                   <p className="text-[11px] sm:text-xs text-ink-500">
-                    {weightG.toFixed(2)} g · {purityLabel(p)} hallmarked
+                    {weightG.toFixed(2)} g{meta ? ` · ${meta}` : ''}
                   </p>
                   <p className="text-sm text-ink-900 font-mono tabular-nums pt-0.5">
-                    ₹{(priceOf(p) / 100).toLocaleString('en-IN')}
+                    ₹{(priceOf(p, rates) / 100).toLocaleString('en-IN')}
                   </p>
                 </div>
               </Link>

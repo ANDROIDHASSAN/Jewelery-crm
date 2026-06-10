@@ -12,7 +12,7 @@ import { readGoldRatePaise } from '../../lib/redis.js';
 import { BusinessRuleError, ConflictError, NotFoundError } from '../../lib/errors.js';
 import { getTenantId } from '../../lib/async-context.js';
 import type { BillCreate } from '@goldos/shared/types';
-import { computeBillTotals, resolveMakingChargePaise } from '@goldos/shared/bill-math';
+import { computeBillTotals, resolveMakingChargePaise, taxableFromInclusivePaise } from '@goldos/shared/bill-math';
 
 const DEFAULT_GOLD_RATE = 642_000; // ₹6,420/g — dev fallback.
 
@@ -76,10 +76,27 @@ export async function createBill(input: BillCreate, createdByUserId?: string) {
   // Build lines.
   const lineComputes = await Promise.all(
     input.lines.map(async (l) => {
+      const item = itemById.get(l.itemId)!;
+      // Fixed (GST-inclusive) selling price overrides the live-rate calc for
+      // ANY metal type: back out the pre-GST taxable base and feed it as the
+      // line's metal value with no making/stone, so computeBillTotals adds GST
+      // on top and the customer pays exactly the inclusive selling price.
+      if (item.sellingPricePaise != null) {
+        const taxableBase = taxableFromInclusivePaise(item.sellingPricePaise);
+        return {
+          l,
+          item,
+          ratePerGramPaise: 0,
+          goldValuePaise: taxableBase,
+          makingPaise: 0,
+          makingBps: 0,
+          stoneChargePaise: 0,
+          linePaise: taxableBase,
+        };
+      }
       const cached = await readGoldRatePaise(l.purityCaratX100);
       const ratePerGramPaise = cached?.paise ?? DEFAULT_GOLD_RATE;
       const goldValuePaise = computeGoldValuePaise(l.weightMg, l.purityCaratX100, ratePerGramPaise);
-      const item = itemById.get(l.itemId)!;
       const cat = item.category;
       // Resolve making charge. Precedence: explicit per-line bps override (the
       // cashier typed one) → item-level mode/rate → category mode/rate →
@@ -118,7 +135,16 @@ export async function createBill(input: BillCreate, createdByUserId?: string) {
       // the rupee making amount is still captured inside linePaise.
       const makingBps = mode === 'PERCENTAGE' ? bps : 0;
       const linePaise = goldValuePaise + makingPaise + l.stoneChargePaise;
-      return { l, item, ratePerGramPaise, goldValuePaise, makingPaise, makingBps, linePaise };
+      return {
+        l,
+        item,
+        ratePerGramPaise,
+        goldValuePaise,
+        makingPaise,
+        makingBps,
+        stoneChargePaise: l.stoneChargePaise,
+        linePaise,
+      };
     }),
   );
 
@@ -134,7 +160,7 @@ export async function createBill(input: BillCreate, createdByUserId?: string) {
     lines: lineComputes.map((c) => ({
       goldValuePaise: c.goldValuePaise,
       makingPaise: c.makingPaise,
-      stoneChargePaise: c.l.stoneChargePaise,
+      stoneChargePaise: c.stoneChargePaise,
     })),
     oldGold: input.oldGoldExchange
       ? {
@@ -186,7 +212,7 @@ export async function createBill(input: BillCreate, createdByUserId?: string) {
             purityCaratX100: c.l.purityCaratX100,
             ratePerGramPaise: c.ratePerGramPaise,
             makingChargeBps: c.makingBps,
-            stoneChargePaise: c.l.stoneChargePaise,
+            stoneChargePaise: c.stoneChargePaise,
             linePaise: c.linePaise,
           })),
         },

@@ -38,11 +38,17 @@ function computeLivePricePaise(
     makingChargeBps: number;
     stoneChargePaise: number;
     basePricePaise: number;
+    fixedPricePaise?: number | null;
     category: { metalType: string };
   },
   rate24KPaise: number,
   rateSilverPaise: number,
 ): number {
+  // Fixed-priced piece (admin set a selling price): skip the live metal-rate
+  // calc. fixedPricePaise is the pre-GST taxable base — exactly what this
+  // function returns (callers add GST on top) — so the customer pays the
+  // inclusive selling price regardless of metal type or today's gold rate.
+  if (product.fixedPricePaise != null) return product.fixedPricePaise;
   let metalValue: number;
   if (product.category.metalType === 'GOLD') {
     metalValue = computeGoldValuePaise(product.weightMg, product.purityCaratX100, rate24KPaise);

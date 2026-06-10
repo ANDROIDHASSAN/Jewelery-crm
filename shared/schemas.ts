@@ -282,6 +282,12 @@ export const ItemSchema = z.object({
   hallmarkStatus: z.enum(HALLMARK_STATUSES),
   hallmarkRef: HuidSchema.optional().nullable(),
   costPricePaise: PaiseSchema,
+  // Fixed selling price the customer pays — GST-INCLUSIVE (the final tag /
+  // online price). When set it overrides the live metal-rate calculation in
+  // both POS and the storefront for ALL metal types. Null = price by live
+  // weight×rate (gold/silver) or basePrice (non-precious), as before. Cost
+  // price stays internal (COGS / analytics) and is never shown to customers.
+  sellingPricePaise: PaiseSchema.optional().nullable(),
   makingChargeBps: BpsSchema.optional().nullable(),
   // Item-level making-charge override. When makingChargeMode is null the item
   // inherits its category's mode + rate. PER_GRAM uses makingChargePerGramPaise.
@@ -697,6 +703,17 @@ export const CollectionTileSchema = z.object({
   img: z.string().min(1).max(2048),
 });
 
+// One slide of the homepage hero carousel (CMS-managed). `image` is required;
+// everything else is optional so a slide can be just an image + a "Shop Now"
+// button that links to a collection (or product). `headline` is an optional
+// short overlay; the main editorial copy still lives in the `hero` block.
+export const HeroSlideSchema = z.object({
+  image: z.string().min(1).max(2048),
+  headline: z.string().max(160).optional().default(''),
+  ctaLabel: z.string().max(60).optional().default('Shop Now'),
+  ctaHref: z.string().max(2048).optional().default('/store/collections'),
+});
+
 // New homepage section sub-schemas (CMS-editable). All optional with sensible
 // defaults so existing DB rows continue to validate after this expansion.
 
@@ -811,6 +828,10 @@ export const StorefrontContentSchema = z.object({
     // to `image` as the poster + when not provided).
     videoSrc: z.string().max(2048).optional().default(''),
   }),
+  // Homepage hero carousel — CMS-managed rotating banners, each with its own
+  // "Shop Now" CTA. Optional + default [] so legacy content rows keep
+  // validating; the storefront falls back to the single `hero` block when empty.
+  heroSlides: z.array(HeroSlideSchema).max(8).optional().default([]),
   rates: z.object({
     g22: z.string().max(40),
     g18: z.string().max(40),

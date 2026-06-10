@@ -5,7 +5,9 @@ import { useAppSelector } from '@/app/hooks';
 import {
   useGetPublicProductsQuery,
   useGetPublicCollectionsQuery,
+  useGetPublicGoldRateQuery,
 } from '@/features/storefront/storefrontApi';
+import { storefrontTotalPaise, productMetaLabel } from '@/features/storefront/pricing';
 
 export function SearchResultsPage(): JSX.Element {
   const [params] = useSearchParams();
@@ -13,6 +15,8 @@ export function SearchResultsPage(): JSX.Element {
   const collections = useAppSelector((s) => s.storefrontContent.collections);
   const { data: products = [], isLoading } = useGetPublicProductsQuery();
   const { data: categories = [] } = useGetPublicCollectionsQuery();
+  const { data: liveRate } = useGetPublicGoldRateQuery();
+  const rates = liveRate?.rates;
 
   const productMatches = useMemo(() => {
     if (!q) return [];
@@ -115,16 +119,10 @@ export function SearchResultsPage(): JSX.Element {
           <h2 className="font-display text-xl sm:text-[22px] text-ink-900 mb-4 sm:mb-5">Pieces</h2>
           <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-x-3 gap-y-8 sm:gap-x-5 sm:gap-y-10">
             {productMatches.map((p) => {
-              const price = p.basePricePaise + p.stoneChargePaise;
-              // 0 = silver, 9500 = Pt 950, anything else is gold carat × 100
-              // (including custom alloys like 9K = 900). Previously every
-              // value < 1000 collapsed to "Silver".
-              const purity =
-                p.purityCaratX100 === 0
-                  ? 'Silver'
-                  : p.purityCaratX100 === 9500
-                    ? 'Pt 950'
-                    : `${p.purityCaratX100 / 100}K`;
+              // GST-inclusive price (same as the product page + checkout).
+              const price = storefrontTotalPaise(p, rates);
+              // Material label — never fakes "Silver" for non-precious / gold-tone.
+              const meta = productMetaLabel(p);
               return (
                 <Link key={p.id} to={`/store/products/${p.slug}`} className="group block">
                   <div className="aspect-[4/5] overflow-hidden bg-ink-100">
@@ -132,7 +130,7 @@ export function SearchResultsPage(): JSX.Element {
                   </div>
                   <div className="mt-3 sm:mt-4">
                     <h3 className="font-display text-base sm:text-[17px] text-ink-900 leading-tight">{p.name}</h3>
-                    <p className="text-[11px] sm:text-xs text-ink-500 mt-1">{(p.weightMg / 1000).toFixed(2)} g · {purity}</p>
+                    <p className="text-[11px] sm:text-xs text-ink-500 mt-1">{(p.weightMg / 1000).toFixed(2)} g{meta ? ` · ${meta}` : ''}</p>
                     <p className="text-sm text-ink-900 font-mono tabular-nums mt-1 sm:mt-1.5">₹{(price / 100).toLocaleString('en-IN')}</p>
                   </div>
                 </Link>

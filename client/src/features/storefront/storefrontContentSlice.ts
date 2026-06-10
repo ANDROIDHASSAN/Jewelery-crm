@@ -21,6 +21,18 @@ export interface CollectionTile {
   img: string;
 }
 
+/** One slide of the homepage hero carousel (CMS-managed). */
+export interface HeroSlide {
+  /** Background image (Cloudinary URL). */
+  image: string;
+  /** Optional short overlay headline. Empty = image only. */
+  headline: string;
+  /** CTA button label — defaults to "Shop Now". */
+  ctaLabel: string;
+  /** Where the CTA links — a collection or product route. */
+  ctaHref: string;
+}
+
 /**
  * Storefront filter facet shown on collection / search pages. Each group has a
  * stable `key` (so per-collection visibility lists can reference it) and a list
@@ -113,6 +125,8 @@ export interface StorefrontContent {
     /** Optional MP4/WebM URL that plays on the right hero panel. Empty string = static image only. */
     videoSrc: string;
   };
+  /** CMS-managed hero carousel slides. Empty = fall back to the single `hero` block. */
+  heroSlides: HeroSlide[];
   rates: {
     g22: string;
     g18: string;
@@ -238,6 +252,32 @@ export const DEFAULT_CONTENT: StorefrontContent = {
       'https://images.unsplash.com/photo-1602173574767-37ac01994b2a?auto=format&fit=crop&w=2400&q=95',
     videoSrc: '',
   },
+  // Default hero carousel — seeded so the storefront shows a rotating banner out
+  // of the box. The admin replaces these with branded banners + collection links
+  // from Website CMS → Hero.
+  heroSlides: [
+    {
+      image:
+        'https://images.unsplash.com/photo-1617038220319-276d3cfab638?auto=format&fit=crop&w=2400&q=90',
+      headline: 'The 2025 Bridal Edit',
+      ctaLabel: 'Shop Now',
+      ctaHref: '/store/collections/bridal',
+    },
+    {
+      image:
+        'https://images.unsplash.com/photo-1535632787350-4e68ef0ac584?auto=format&fit=crop&w=2400&q=90',
+      headline: '22K BIS-Hallmarked Gold',
+      ctaLabel: 'Shop Now',
+      ctaHref: '/store/collections/22k',
+    },
+    {
+      image:
+        'https://images.unsplash.com/photo-1611591437281-460bfbe1220a?auto=format&fit=crop&w=2400&q=90',
+      headline: '925 Sterling Silver',
+      ctaLabel: 'Shop Now',
+      ctaHref: '/store/collections/silver',
+    },
+  ],
   rates: {
     g22: '₹6,420/g',
     g18: '₹5,255/g',
@@ -508,6 +548,9 @@ const slice = createSlice({
         ...DEFAULT_CONTENT,
         ...incoming,
         filters: incoming.filters ?? DEFAULT_CONTENT.filters,
+        // Hero carousel — legacy rows pre-date this; seed the defaults so the
+        // banner never renders empty (same fallback the other sections use).
+        heroSlides: incoming.heroSlides?.length ? incoming.heroSlides : DEFAULT_CONTENT.heroSlides,
         shopByOccasion: incoming.shopByOccasion?.length ? incoming.shopByOccasion : DEFAULT_CONTENT.shopByOccasion,
         browseCategories: incoming.browseCategories?.length ? incoming.browseCategories : DEFAULT_CONTENT.browseCategories,
         reels: incoming.reels?.length ? incoming.reels : DEFAULT_CONTENT.reels,
