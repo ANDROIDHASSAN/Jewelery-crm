@@ -69,7 +69,7 @@ export function HeroCarousel({ slides }: { slides: HeroSlide[] }): JSX.Element |
               <div className="absolute inset-x-0 bottom-0">
                 <div className="max-w-[1280px] mx-auto px-5 sm:px-8 pb-12 sm:pb-16">
                   {slide.headline && (
-                    <h2 className="font-display text-ink-0 text-[28px] sm:text-[40px] lg:text-[52px] leading-[1.1] max-w-xl drop-shadow-sm">
+                    <h2 className="font-display text-ink-0 text-[28px] sm:text-[40px] lg:text-[52px] leading-[1.1] max-w-xl text-on-image">
                       {slide.headline}
                     </h2>
                   )}

@@ -330,7 +330,7 @@ export function StorefrontHome(): JSX.Element {
                 loading={i < 2 ? 'eager' : 'lazy'}
               />
               {/* Dark gradient at bottom — name + product count */}
-              <div className="absolute inset-x-0 bottom-0 pt-16 pb-4 sm:pb-5 px-3 sm:px-4 bg-gradient-to-t from-ink-900/85 via-ink-900/50 to-transparent">
+              <div className="absolute inset-x-0 bottom-0 pt-16 pb-4 sm:pb-5 px-3 sm:px-4 bg-gradient-to-t from-ink-900/85 via-ink-900/50 to-transparent text-on-image">
                 <h3 className="text-ink-0 font-display text-lg sm:text-[22px] leading-tight">
                   {c.name}
                 </h3>
@@ -429,8 +429,62 @@ export function StorefrontHome(): JSX.Element {
         </div>
       </section>
 
+      {/* Featured lookbook — 1 big editorial + up to 2 stacked, CMS-managed
+          (Website CMS → Homepage sections → Featured lookbook). The first card
+          renders large with its body + CTA; the rest are compact image tiles.
+          Sits below Deals of the Week. */}
+      {lookbookCards.length > 0 && (
+        <section className="bg-[#FDF8F4]">
+          <div className="max-w-[1280px] mx-auto px-4 sm:px-6 py-14 sm:py-20 md:py-24 grid grid-cols-1 lg:grid-cols-[1.4fr_1fr] gap-6 md:gap-8">
+            {lookbookCards[0] && (
+              <Link to={lookbookCards[0].href || '#'} className="group relative block aspect-[4/5] lg:aspect-auto lg:min-h-[560px] overflow-hidden bg-ink-100 rounded-sm">
+                <img
+                  src={lookbookCards[0].img}
+                  alt={lookbookCards[0].title}
+                  className="absolute inset-0 h-full w-full object-cover group-hover:scale-[1.03] transition-transform duration-slow"
+                  loading="lazy"
+                />
+                {/* Legibility scrim — strong at the bottom so the white title
+                    stays readable over light photography. */}
+                <div className="absolute inset-0 bg-gradient-to-t from-ink-900/80 via-ink-900/25 to-transparent" aria-hidden />
+                <div className="absolute bottom-0 left-0 right-0 p-6 sm:p-8 md:p-10 text-ink-0 text-on-image">
+                  {lookbookCards[0].eyebrow && (
+                    <p className="text-eyebrow uppercase text-brand-200">{lookbookCards[0].eyebrow}</p>
+                  )}
+                  <h3 className="font-display text-2xl sm:text-[34px] md:text-[44px] leading-[1.05] mt-3 max-w-md">{lookbookCards[0].title}</h3>
+                  {lookbookCards[0].body && (
+                    <p className="mt-2 sm:mt-3 text-xs sm:text-sm text-ink-100/90 max-w-md">{lookbookCards[0].body}</p>
+                  )}
+                  {lookbookCards[0].ctaLabel && (
+                    <span className="mt-5 inline-flex items-center gap-1.5 text-sm border-b border-brand-300 pb-0.5">
+                      {lookbookCards[0].ctaLabel}
+                      <ArrowRight className="h-3.5 w-3.5" />
+                    </span>
+                  )}
+                </div>
+              </Link>
+            )}
+            {lookbookCards.length > 1 && (
+              <div className="grid grid-rows-2 gap-6 md:gap-8">
+                {lookbookCards.slice(1, 3).map((f, idx) => (
+                  <Link key={idx} to={f.href || '#'} className="group relative block overflow-hidden bg-ink-100 aspect-[4/3] lg:aspect-auto rounded-sm">
+                    <img src={f.img} alt={f.title} className="absolute inset-0 h-full w-full object-cover group-hover:scale-[1.03] transition-transform duration-slow" loading="lazy" />
+                    <div className="absolute inset-0 bg-gradient-to-t from-ink-900/80 via-ink-900/25 to-transparent" aria-hidden />
+                    <div className="absolute inset-0 p-5 sm:p-6 md:p-7 flex flex-col justify-end text-ink-0 text-on-image">
+                      {f.eyebrow && <p className="text-eyebrow uppercase text-brand-200">{f.eyebrow}</p>}
+                      <h3 className="font-display text-xl sm:text-[24px] md:text-[28px] leading-tight mt-2">{f.title}</h3>
+                    </div>
+                  </Link>
+                ))}
+              </div>
+            )}
+          </div>
+        </section>
+      )}
+
       {/* Fine Silver — same layout as the 9 KT Gold block above, for the
-          925 Sterling Silver category + its sub-categories. */}
+          925 Sterling Silver category + its sub-categories. Sits below the
+          Featured lookbook. */}
       <section className="bg-[#FDF8F4] border-b border-[#EFE0D2]/60">
         <div className="max-w-[1280px] mx-auto px-4 sm:px-6 py-14 sm:py-20 md:py-24 grid grid-cols-1 lg:grid-cols-[320px_1fr] gap-6 sm:gap-8 lg:gap-10 items-stretch">
           <aside className="relative overflow-hidden rounded-md bg-ink-900 text-ink-0 min-h-[420px] lg:min-h-full flex flex-col">
@@ -506,59 +560,6 @@ export function StorefrontHome(): JSX.Element {
           </div>
         </div>
       </section>
-
-      {/* Featured lookbook — 1 big editorial + up to 2 stacked, CMS-managed
-          (Website CMS → Homepage sections → Featured lookbook). The first card
-          renders large with its body + CTA; the rest are compact image tiles.
-          Sits below Deals of the Week. */}
-      {lookbookCards.length > 0 && (
-        <section className="bg-[#FDF8F4]">
-          <div className="max-w-[1280px] mx-auto px-4 sm:px-6 py-14 sm:py-20 md:py-24 grid grid-cols-1 lg:grid-cols-[1.4fr_1fr] gap-6 md:gap-8">
-            {lookbookCards[0] && (
-              <Link to={lookbookCards[0].href || '#'} className="group relative block aspect-[4/5] lg:aspect-auto lg:min-h-[560px] overflow-hidden bg-ink-100 rounded-sm">
-                <img
-                  src={lookbookCards[0].img}
-                  alt={lookbookCards[0].title}
-                  className="absolute inset-0 h-full w-full object-cover group-hover:scale-[1.03] transition-transform duration-slow"
-                  loading="lazy"
-                />
-                {/* Legibility scrim — strong at the bottom so the white title
-                    stays readable over light photography. */}
-                <div className="absolute inset-0 bg-gradient-to-t from-ink-900/80 via-ink-900/25 to-transparent" aria-hidden />
-                <div className="absolute bottom-0 left-0 right-0 p-6 sm:p-8 md:p-10 text-ink-0">
-                  {lookbookCards[0].eyebrow && (
-                    <p className="text-eyebrow uppercase text-brand-200">{lookbookCards[0].eyebrow}</p>
-                  )}
-                  <h3 className="font-display text-2xl sm:text-[34px] md:text-[44px] leading-[1.05] mt-3 max-w-md">{lookbookCards[0].title}</h3>
-                  {lookbookCards[0].body && (
-                    <p className="mt-2 sm:mt-3 text-xs sm:text-sm text-ink-100/90 max-w-md">{lookbookCards[0].body}</p>
-                  )}
-                  {lookbookCards[0].ctaLabel && (
-                    <span className="mt-5 inline-flex items-center gap-1.5 text-sm border-b border-brand-300 pb-0.5">
-                      {lookbookCards[0].ctaLabel}
-                      <ArrowRight className="h-3.5 w-3.5" />
-                    </span>
-                  )}
-                </div>
-              </Link>
-            )}
-            {lookbookCards.length > 1 && (
-              <div className="grid grid-rows-2 gap-6 md:gap-8">
-                {lookbookCards.slice(1, 3).map((f, idx) => (
-                  <Link key={idx} to={f.href || '#'} className="group relative block overflow-hidden bg-ink-100 aspect-[4/3] lg:aspect-auto rounded-sm">
-                    <img src={f.img} alt={f.title} className="absolute inset-0 h-full w-full object-cover group-hover:scale-[1.03] transition-transform duration-slow" loading="lazy" />
-                    <div className="absolute inset-0 bg-gradient-to-t from-ink-900/80 via-ink-900/25 to-transparent" aria-hidden />
-                    <div className="absolute inset-0 p-5 sm:p-6 md:p-7 flex flex-col justify-end text-ink-0">
-                      {f.eyebrow && <p className="text-eyebrow uppercase text-brand-200">{f.eyebrow}</p>}
-                      <h3 className="font-display text-xl sm:text-[24px] md:text-[28px] leading-tight mt-2">{f.title}</h3>
-                    </div>
-                  </Link>
-                ))}
-              </div>
-            )}
-          </div>
-        </section>
-      )}
 
       {/* Business story — CMS-editable (Website CMS → Story). Image + editorial
           copy on who we are. Hidden when no title/body is set. */}
@@ -657,7 +658,7 @@ export function StorefrontHome(): JSX.Element {
                     <path d="M0 0L10 6L0 12V0Z" fill="#1F1D1A" />
                   </svg>
                 </div>
-                <div className="absolute inset-x-0 bottom-0 p-3 sm:p-4 text-ink-0">
+                <div className="absolute inset-x-0 bottom-0 p-3 sm:p-4 text-ink-0 text-on-image">
                   <p className="text-[10px] uppercase tracking-[0.16em] text-brand-200">{r.handle}</p>
                   <p className="mt-1 text-xs sm:text-sm leading-snug">{r.caption}</p>
                 </div>
