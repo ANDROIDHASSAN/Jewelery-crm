@@ -177,11 +177,21 @@ function ItemsTab(): JSX.Element {
   useEffect(() => {
     if (!data?.data) return;
     setAllRows((prev) => {
+      // First page only → the query result IS the full list, so mirror it
+      // directly. This is what makes edits / deletes / additions appear
+      // immediately after a mutation invalidates the cache. (Previously we
+      // only appended unseen ids, so an edited row kept its stale values until
+      // a full page reload.)
+      if (cursorChain.length === 1) return data.data;
+      // Extra pages loaded via "Load more" → update any rows present in the
+      // refreshed page and append newly-seen ones, preserving the other pages.
+      const incoming = new Map(data.data.map((r) => [r.id, r]));
+      const updated = prev.map((r) => incoming.get(r.id) ?? r);
       const seen = new Set(prev.map((r) => r.id));
-      const fresh = data.data.filter((r) => !seen.has(r.id));
-      return fresh.length === 0 ? prev : [...prev, ...fresh];
+      const appended = data.data.filter((r) => !seen.has(r.id));
+      return [...updated, ...appended];
     });
-  }, [data]);
+  }, [data, cursorChain.length]);
   function loadMore(): void {
     const next = data?.page.nextCursor;
     if (!next) return;
