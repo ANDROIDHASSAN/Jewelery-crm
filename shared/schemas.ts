@@ -764,6 +764,18 @@ export const DoorCardSchema = z.object({
   img: z.string().min(1).max(2048),
 });
 
+// Featured "lookbook" editorial card (1 big + up to 2 stacked). Only the first
+// card renders its body + CTA; the rest are compact image tiles. eyebrow / body
+// / ctaLabel may be blank (small cards), so they're optional.
+export const LookbookCardSchema = z.object({
+  eyebrow: z.string().max(120).optional().default(''),
+  title: z.string().min(1).max(160),
+  body: z.string().max(600).optional().default(''),
+  ctaLabel: z.string().max(60).optional().default(''),
+  href: z.string().min(1).max(2048),
+  img: z.string().min(1).max(2048),
+});
+
 export const TrustBadgeSchema = z.object({
   icon: z.enum(['shield', 'sparkles', 'award']),
   title: z.string().min(1).max(80),
@@ -863,12 +875,15 @@ export const StorefrontContentSchema = z.object({
   testimonialsRow1: z.array(TestimonialCardSchema).max(12).optional().default([]),
   testimonialsRow2: z.array(TestimonialCardSchema).max(12).optional().default([]),
   doorCards: z.array(DoorCardSchema).max(2).optional().default([]),
+  lookbookCards: z.array(LookbookCardSchema).max(3).optional().default([]),
   trustBadges: z.array(TrustBadgeSchema).max(6).optional().default([]),
   pressLogos: z.array(z.string().min(1).max(80)).max(10).optional().default([]),
   footerShop: z.array(FooterLinkSchema).max(10).optional().default([]),
   footerVisit: z.array(FooterLinkSchema).max(10).optional().default([]),
   footerHelp: z.array(FooterLinkSchema).max(10).optional().default([]),
   footerEmail: z.string().max(160).optional().default(''),
+  footerAddress: z.string().max(400).optional().default(''),
+  footerPhone: z.string().max(60).optional().default(''),
   copyrightLine: z.string().max(400).optional().default(''),
   sectionLabels: SectionLabelsSchema.partial().optional().default({}),
   // Top navigation menu shown in the storefront header. Empty array means

@@ -2524,6 +2524,15 @@ const DOOR_CARD_FIELDS = [
   { key: 'img', label: 'Image URL', type: 'image', span: 3 },
 ] as const;
 
+const LOOKBOOK_FIELDS = [
+  { key: 'img', label: 'Image URL', type: 'image', span: 3 },
+  { key: 'eyebrow', label: 'Eyebrow', type: 'text', placeholder: 'Lookbook · Autumn', span: 2 },
+  { key: 'title', label: 'Title', type: 'text', span: 2 },
+  { key: 'href', label: 'Link', type: 'url', placeholder: '/store/collections/bridal', span: 2 },
+  { key: 'ctaLabel', label: 'Button (1st card only)', type: 'text', placeholder: 'Read the story', span: 2 },
+  { key: 'body', label: 'Body (1st card only)', type: 'textarea', span: 3 },
+] as const;
+
 const TRUST_BADGE_FIELDS = [
   {
     key: 'icon',
@@ -2734,6 +2743,17 @@ function HomepageSectionsTab({
         />
       </Card>
 
+      <Card title="Featured lookbook (1 big + 2 cards)" desc="The editorial banner below Deals of the Week. The first card renders large with its body + button; the next two are compact image tiles. Each links to a collection. Use ↑/↓ to reorder.">
+        <ListItemEditor
+          items={content.lookbookCards ?? []}
+          fields={LOOKBOOK_FIELDS as ReadonlyArray<FieldDef<{ eyebrow: string; title: string; body: string; ctaLabel: string; href: string; img: string }>>}
+          newItem={() => ({ eyebrow: '', title: '', body: '', ctaLabel: '', href: '/store/collections', img: '' })}
+          onChange={(v) => onPatch({ lookbookCards: v })}
+          itemLabel={(it) => it.title || 'New card'}
+          max={3}
+        />
+      </Card>
+
       <Card title="Trust badges (3)" desc="Each badge: icon, title, body.">
         <ListItemEditor
           items={content.trustBadges ?? []}
@@ -2757,14 +2777,46 @@ function FooterSectionsTab({
 }): JSX.Element {
   return (
     <div className="space-y-6">
-      <Card title="Footer email" desc="Contact email shown in the footer left column.">
-        <Field label="Email">
-          <Input
-            value={content.footerEmail}
-            placeholder="hello@yourjewellers.in"
-            onChange={(e) => onPatch({ footerEmail: e.target.value })}
-          />
-        </Field>
+      <Card title="Footer brand block" desc="The footer's left column — brand name, tagline, address, phone and email. Name & tagline are shared with the Brand tab; address & phone fall back to your first store when left blank.">
+        <div className="space-y-3">
+          <Field label="Brand name">
+            <Input
+              value={content.brand.name}
+              onChange={(e) => onPatch({ brand: { ...content.brand, name: e.target.value } })}
+            />
+          </Field>
+          <Field label="Tagline">
+            <Textarea
+              rows={2}
+              value={content.brand.tagline}
+              placeholder="Family jewellers since 1972. Hallmarked gold. Transparent pricing."
+              onChange={(e) => onPatch({ brand: { ...content.brand, tagline: e.target.value } })}
+            />
+          </Field>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <Field label="Address" hint="Blank = use your first store's address.">
+              <Input
+                value={content.footerAddress}
+                placeholder="PANIPAT, HARYANA"
+                onChange={(e) => onPatch({ footerAddress: e.target.value })}
+              />
+            </Field>
+            <Field label="Phone" hint="Blank = use your first store's phone.">
+              <Input
+                value={content.footerPhone}
+                placeholder="9996444442"
+                onChange={(e) => onPatch({ footerPhone: e.target.value })}
+              />
+            </Field>
+          </div>
+          <Field label="Email">
+            <Input
+              value={content.footerEmail}
+              placeholder="hello@yourjewellers.in"
+              onChange={(e) => onPatch({ footerEmail: e.target.value })}
+            />
+          </Field>
+        </div>
       </Card>
 
       <Card title="Copyright line" desc="Text shown after the © year and brand name. Use for hallmark numbers, GSTIN etc.">

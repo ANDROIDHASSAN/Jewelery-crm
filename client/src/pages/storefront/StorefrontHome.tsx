@@ -55,6 +55,7 @@ export function StorefrontHome(): JSX.Element {
     testimonialsRow1,
     testimonialsRow2,
     doorCards,
+    lookbookCards,
     trustBadges,
     pressLogos,
     sectionLabels,
@@ -420,46 +421,57 @@ export function StorefrontHome(): JSX.Element {
         </div>
       </section>
 
-      {/* Featured pair — 1 big editorial + 2 stacked. Light surround, softer
-          overlays. Sits below Deals of the Week. */}
-      <section className="bg-[#FDF8F4]">
-        <div className="max-w-[1280px] mx-auto px-4 sm:px-6 py-14 sm:py-20 md:py-24 grid grid-cols-1 lg:grid-cols-[1.4fr_1fr] gap-6 md:gap-8">
-          <Link to="/store/collections/bridal" className="group relative block aspect-[4/5] lg:aspect-auto lg:min-h-[560px] overflow-hidden bg-ink-100 rounded-sm">
-            <img
-              src="https://images.unsplash.com/photo-1602173574767-37ac01994b2a?auto=format&fit=crop&w=2000&q=95"
-              alt="Bridal lookbook"
-              className="absolute inset-0 h-full w-full object-cover group-hover:scale-[1.03] transition-transform duration-slow"
-              loading="lazy"
-            />
-            {/* Lighter, sheer overlay — photography wins */}
-            <div className="absolute inset-0 bg-gradient-to-t from-ink-900/55 via-ink-900/5 to-transparent" aria-hidden />
-            <div className="absolute bottom-0 left-0 right-0 p-6 sm:p-8 md:p-10 text-ink-0">
-              <p className="text-eyebrow uppercase text-brand-200">Lookbook · Autumn</p>
-              <h3 className="font-display text-2xl sm:text-[34px] md:text-[44px] leading-[1.05] mt-3 max-w-md">The Bridal lookbook</h3>
-              <p className="mt-2 sm:mt-3 text-xs sm:text-sm text-ink-100/90 max-w-md">Twelve heirloom pieces, photographed in our Gurugram workshop.</p>
-              <span className="mt-5 inline-flex items-center gap-1.5 text-sm border-b border-brand-300 pb-0.5">
-                Read the story
-                <ArrowRight className="h-3.5 w-3.5" />
-              </span>
-            </div>
-          </Link>
-          <div className="grid grid-rows-2 gap-6 md:gap-8">
-            {[
-              { slug: 'gifting', overline: 'Under ₹50,000', title: 'Gifts that hold value', img: 'https://images.unsplash.com/photo-1605100804763-247f67b3557e?auto=format&fit=crop&w=1600&q=92' },
-              { slug: 'diamond', overline: 'New · Diamond', title: 'Solitaires, certified', img: 'https://images.unsplash.com/photo-1603561591411-07134e71a2a9?auto=format&fit=crop&w=1600&q=92' },
-            ].map((f) => (
-              <Link key={f.slug} to={`/store/collections/${f.slug}`} className="group relative block overflow-hidden bg-ink-100 aspect-[4/3] lg:aspect-auto rounded-sm">
-                <img src={f.img} alt={f.title} className="absolute inset-0 h-full w-full object-cover group-hover:scale-[1.03] transition-transform duration-slow" loading="lazy" />
-                <div className="absolute inset-0 bg-gradient-to-r from-ink-900/45 via-ink-900/5 to-transparent" aria-hidden />
-                <div className="absolute inset-0 p-5 sm:p-6 md:p-7 flex flex-col justify-end text-ink-0">
-                  <p className="text-eyebrow uppercase text-brand-200">{f.overline}</p>
-                  <h3 className="font-display text-xl sm:text-[24px] md:text-[28px] leading-tight mt-2">{f.title}</h3>
+      {/* Featured lookbook — 1 big editorial + up to 2 stacked, CMS-managed
+          (Website CMS → Homepage sections → Featured lookbook). The first card
+          renders large with its body + CTA; the rest are compact image tiles.
+          Sits below Deals of the Week. */}
+      {lookbookCards.length > 0 && (
+        <section className="bg-[#FDF8F4]">
+          <div className="max-w-[1280px] mx-auto px-4 sm:px-6 py-14 sm:py-20 md:py-24 grid grid-cols-1 lg:grid-cols-[1.4fr_1fr] gap-6 md:gap-8">
+            {lookbookCards[0] && (
+              <Link to={lookbookCards[0].href || '#'} className="group relative block aspect-[4/5] lg:aspect-auto lg:min-h-[560px] overflow-hidden bg-ink-100 rounded-sm">
+                <img
+                  src={lookbookCards[0].img}
+                  alt={lookbookCards[0].title}
+                  className="absolute inset-0 h-full w-full object-cover group-hover:scale-[1.03] transition-transform duration-slow"
+                  loading="lazy"
+                />
+                {/* Lighter, sheer overlay — photography wins */}
+                <div className="absolute inset-0 bg-gradient-to-t from-ink-900/55 via-ink-900/5 to-transparent" aria-hidden />
+                <div className="absolute bottom-0 left-0 right-0 p-6 sm:p-8 md:p-10 text-ink-0">
+                  {lookbookCards[0].eyebrow && (
+                    <p className="text-eyebrow uppercase text-brand-200">{lookbookCards[0].eyebrow}</p>
+                  )}
+                  <h3 className="font-display text-2xl sm:text-[34px] md:text-[44px] leading-[1.05] mt-3 max-w-md">{lookbookCards[0].title}</h3>
+                  {lookbookCards[0].body && (
+                    <p className="mt-2 sm:mt-3 text-xs sm:text-sm text-ink-100/90 max-w-md">{lookbookCards[0].body}</p>
+                  )}
+                  {lookbookCards[0].ctaLabel && (
+                    <span className="mt-5 inline-flex items-center gap-1.5 text-sm border-b border-brand-300 pb-0.5">
+                      {lookbookCards[0].ctaLabel}
+                      <ArrowRight className="h-3.5 w-3.5" />
+                    </span>
+                  )}
                 </div>
               </Link>
-            ))}
+            )}
+            {lookbookCards.length > 1 && (
+              <div className="grid grid-rows-2 gap-6 md:gap-8">
+                {lookbookCards.slice(1, 3).map((f, idx) => (
+                  <Link key={idx} to={f.href || '#'} className="group relative block overflow-hidden bg-ink-100 aspect-[4/3] lg:aspect-auto rounded-sm">
+                    <img src={f.img} alt={f.title} className="absolute inset-0 h-full w-full object-cover group-hover:scale-[1.03] transition-transform duration-slow" loading="lazy" />
+                    <div className="absolute inset-0 bg-gradient-to-r from-ink-900/45 via-ink-900/5 to-transparent" aria-hidden />
+                    <div className="absolute inset-0 p-5 sm:p-6 md:p-7 flex flex-col justify-end text-ink-0">
+                      {f.eyebrow && <p className="text-eyebrow uppercase text-brand-200">{f.eyebrow}</p>}
+                      <h3 className="font-display text-xl sm:text-[24px] md:text-[28px] leading-tight mt-2">{f.title}</h3>
+                    </div>
+                  </Link>
+                ))}
+              </div>
+            )}
           </div>
-        </div>
-      </section>
+        </section>
+      )}
 
       {/* Two editorial promo cards with doors-opening reveal animation.
           Left card slides in from the left, right card from the right when

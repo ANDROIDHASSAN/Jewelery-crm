@@ -12,6 +12,9 @@ export function StorefrontFooter(): JSX.Element {
   const footerVisit = useAppSelector((s) => s.storefrontContent.footerVisit);
   const footerHelp = useAppSelector((s) => s.storefrontContent.footerHelp);
   const footerEmail = useAppSelector((s) => s.storefrontContent.footerEmail);
+  // Footer-specific address/phone; fall back to the first store when blank.
+  const footerAddress = useAppSelector((s) => s.storefrontContent.footerAddress);
+  const footerPhone = useAppSelector((s) => s.storefrontContent.footerPhone);
   const copyrightLine = useAppSelector((s) => s.storefrontContent.copyrightLine);
   const L = useAppSelector((s) => s.storefrontContent.sectionLabels);
   // Social links from CMS — render only the icons that have a URL set.
@@ -91,11 +94,11 @@ export function StorefrontFooter(): JSX.Element {
             {brand.tagline}
           </p>
           <ul className="mt-5 space-y-2.5 text-sm text-ink-700">
-            {primaryLocation && (
-              <>
-                <li className="flex gap-2.5"><MapPin className="h-4 w-4 mt-0.5 text-ink-400 shrink-0" /> {primaryLocation.address}</li>
-                <li className="flex gap-2.5"><Phone className="h-4 w-4 mt-0.5 text-ink-400 shrink-0" /> {primaryLocation.phone}</li>
-              </>
+            {(footerAddress || primaryLocation?.address) && (
+              <li className="flex gap-2.5"><MapPin className="h-4 w-4 mt-0.5 text-ink-400 shrink-0" /> {footerAddress || primaryLocation?.address}</li>
+            )}
+            {(footerPhone || primaryLocation?.phone) && (
+              <li className="flex gap-2.5"><Phone className="h-4 w-4 mt-0.5 text-ink-400 shrink-0" /> {footerPhone || primaryLocation?.phone}</li>
             )}
             {footerEmail && (
               <li className="flex gap-2.5"><Mail className="h-4 w-4 mt-0.5 text-ink-400 shrink-0" /> {footerEmail}</li>

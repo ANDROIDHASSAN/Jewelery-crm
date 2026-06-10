@@ -64,6 +64,10 @@ export interface ReelTile { handle: string; caption: string; poster: string; slu
 export interface DealCard { slug: string; name: string; category: string; priceLabel: string; badge: 'NEW' | 'SALE' | 'OUT'; img: string; }
 export interface TestimonialCard { quote: string; author: string; city: string; occasion: string; }
 export interface DoorCard { eyebrow: string; title: string; body: string; href: string; img: string; }
+// Featured "lookbook" editorial cards (1 large + up to 2 stacked) shown above
+// Shop-by-occasion. First card renders large with its body + CTA; the rest are
+// compact image tiles. Each links to a collection (or any route).
+export interface LookbookCard { eyebrow: string; title: string; body: string; ctaLabel: string; href: string; img: string; }
 export interface TrustBadge { icon: 'shield' | 'sparkles' | 'award'; title: string; body: string; }
 export interface FooterLink { label: string; href: string; }
 
@@ -156,12 +160,17 @@ export interface StorefrontContent {
   testimonialsRow1: TestimonialCard[];
   testimonialsRow2: TestimonialCard[];
   doorCards: DoorCard[];
+  /** Featured "lookbook" editorial cards (1 big + 2). Empty = hide the section. */
+  lookbookCards: LookbookCard[];
   trustBadges: TrustBadge[];
   pressLogos: string[];
   footerShop: FooterLink[];
   footerVisit: FooterLink[];
   footerHelp: FooterLink[];
   footerEmail: string;
+  /** Footer brand-block address + phone. Empty = fall back to the first store. */
+  footerAddress: string;
+  footerPhone: string;
   copyrightLine: string;
   sectionLabels: SectionLabels;
   navMenu: NavItem[];
@@ -423,6 +432,11 @@ export const DEFAULT_CONTENT: StorefrontContent = {
     { eyebrow: 'Luxury necklace', title: 'Best Friend Jewelry',     body: 'A wide range of exquisite 22K & 18K necklaces — hand-set in Haryana, BIS-hallmarked.',     href: '/store/collections/bridal',  img: '/img/j9.jpg'  },
     { eyebrow: 'Our earrings',    title: 'Diamond Stud Earrings',   body: 'IGI-certified solitaires and timeless studs, priced against today\u2019s live MCX rate.', href: '/store/collections/diamond', img: '/img/j10.jpg' },
   ],
+  lookbookCards: [
+    { eyebrow: 'Lookbook · Autumn', title: 'The Bridal lookbook', body: 'Twelve heirloom pieces, photographed in our Gurugram workshop.', ctaLabel: 'Read the story', href: '/store/collections/bridal', img: 'https://images.unsplash.com/photo-1602173574767-37ac01994b2a?auto=format&fit=crop&w=2000&q=95' },
+    { eyebrow: 'Under ₹50,000', title: 'Gifts that hold value', body: '', ctaLabel: '', href: '/store/collections/gifting', img: 'https://images.unsplash.com/photo-1605100804763-247f67b3557e?auto=format&fit=crop&w=1600&q=92' },
+    { eyebrow: 'New · Diamond', title: 'Solitaires, certified', body: '', ctaLabel: '', href: '/store/collections/diamond', img: 'https://images.unsplash.com/photo-1603561591411-07134e71a2a9?auto=format&fit=crop&w=1600&q=92' },
+  ],
   trustBadges: [
     { icon: 'shield',   title: 'BIS 916 hallmarked gold',         body: 'Every gram of our 22K and 18K jewellery is BIS-hallmarked and audited monthly by an independent assay lab.' },
     { icon: 'sparkles', title: 'Live MCX rate · transparent GST', body: 'Weight \u00d7 today\u2019s MCX gold rate + making charges + 3% GST, itemised on every bill. No hidden margins.' },
@@ -449,6 +463,8 @@ export const DEFAULT_CONTENT: StorefrontContent = {
     { label: 'Hallmark guide',       href: '/store/hallmark' },
   ],
   footerEmail: 'hello@anantjewellers.in',
+  footerAddress: '',
+  footerPhone: '',
   copyrightLine: 'BIS Hallmark #IND-916 · GSTIN 27ABCDE1234F1Z5',
   sectionLabels: {
     categoriesEyebrow: 'Browse by category',
@@ -558,6 +574,7 @@ const slice = createSlice({
         testimonialsRow1: incoming.testimonialsRow1?.length ? incoming.testimonialsRow1 : DEFAULT_CONTENT.testimonialsRow1,
         testimonialsRow2: incoming.testimonialsRow2?.length ? incoming.testimonialsRow2 : DEFAULT_CONTENT.testimonialsRow2,
         doorCards: incoming.doorCards?.length ? incoming.doorCards : DEFAULT_CONTENT.doorCards,
+        lookbookCards: incoming.lookbookCards?.length ? incoming.lookbookCards : DEFAULT_CONTENT.lookbookCards,
         trustBadges: incoming.trustBadges?.length ? incoming.trustBadges : DEFAULT_CONTENT.trustBadges,
         pressLogos: incoming.pressLogos?.length ? incoming.pressLogos : DEFAULT_CONTENT.pressLogos,
         footerShop: incoming.footerShop?.length ? incoming.footerShop : DEFAULT_CONTENT.footerShop,
