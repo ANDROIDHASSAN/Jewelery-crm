@@ -68,6 +68,11 @@ export interface DoorCard { eyebrow: string; title: string; body: string; href: 
 // Shop-by-occasion. First card renders large with its body + CTA; the rest are
 // compact image tiles. Each links to a collection (or any route).
 export interface LookbookCard { eyebrow: string; title: string; body: string; ctaLabel: string; href: string; img: string; }
+// One journal / blog post (CMS-managed). Shown as cards in the homepage Blogs
+// section and on the /store/blog index; each opens a detail page at
+// /store/blog/:slug. `date` is an ISO string (YYYY-MM-DD) rendered as a date
+// badge + full date; `body` uses blank lines to separate paragraphs.
+export interface BlogPost { slug: string; title: string; date: string; excerpt: string; image: string; body: string; author: string; }
 export interface TrustBadge { icon: 'shield' | 'sparkles' | 'award'; title: string; body: string; }
 export interface FooterLink { label: string; href: string; }
 
@@ -162,6 +167,8 @@ export interface StorefrontContent {
   doorCards: DoorCard[];
   /** Featured "lookbook" editorial cards (1 big + 2). Empty = hide the section. */
   lookbookCards: LookbookCard[];
+  /** Journal / blog posts. Empty = hide the homepage Blogs section. */
+  blogs: BlogPost[];
   trustBadges: TrustBadge[];
   pressLogos: string[];
   footerShop: FooterLink[];
@@ -437,6 +444,48 @@ export const DEFAULT_CONTENT: StorefrontContent = {
     { eyebrow: 'Under ₹50,000', title: 'Gifts that hold value', body: '', ctaLabel: '', href: '/store/collections/gifting', img: 'https://images.unsplash.com/photo-1605100804763-247f67b3557e?auto=format&fit=crop&w=1600&q=92' },
     { eyebrow: 'New · Diamond', title: 'Solitaires, certified', body: '', ctaLabel: '', href: '/store/collections/diamond', img: 'https://images.unsplash.com/photo-1603561591411-07134e71a2a9?auto=format&fit=crop&w=1600&q=92' },
   ],
+  blogs: [
+    {
+      slug: 'gold-vs-silver-how-to-choose',
+      title: 'Gold vs Silver Jewellery: How to Choose What Suits You Best',
+      date: '2026-03-03',
+      author: 'The Zelora Studio',
+      image: 'https://images.unsplash.com/photo-1535632787350-4e68ef0ac584?auto=format&fit=crop&w=1600&q=92',
+      excerpt: 'The great debate is always on — gold or silver? Here is a simple way to decide based on skin tone, occasion and budget.',
+      body:
+        'The great debate is always on — gold or silver. Both are beautiful, both are timeless, and the truth is most jewellery wardrobes have room for both. But when you are buying a piece you will wear often, a few simple guidelines make the choice easy.\n\nStart with skin tone. Warm undertones — think golden or olive skin that tans easily — glow next to yellow and rose gold. Cooler undertones, where the skin burns before it tans, are flattered by the bright white of silver and 925 sterling. If your wrist veins look green you are likely warm; blue means cool.\n\nNext, think about occasion. For bridal and festive wear, 22K gold carries weight, both literally and culturally — it photographs richly and holds its value. For daily wear and gifting, lightweight 18K or 925 silver is practical, comfortable, and easy to restyle.\n\nFinally, budget. Gold tracks the live MCX rate, so price moves with weight and purity. Silver lets you experiment with bigger, more design-forward pieces for less. At Zelora every piece — gold or silver — is hallmarked and weighed in front of you, so whichever you choose, you know exactly what you are paying for.',
+    },
+    {
+      slug: 'how-to-read-a-bis-hallmark',
+      title: 'How to Read a BIS Hallmark Before You Buy Gold',
+      date: '2026-02-18',
+      author: 'The Zelora Studio',
+      image: 'https://images.unsplash.com/photo-1611591437281-460bfbe1220a?auto=format&fit=crop&w=1600&q=92',
+      excerpt: 'Every gold piece over 2 grams sold in India must carry a BIS hallmark. Here is what each tiny stamp on the band actually means.',
+      body:
+        'Every piece of gold over 2 grams sold in India must legally carry a BIS hallmark. It is your guarantee of purity — but most buyers have never looked closely at what those tiny stamps mean. Here is a quick guide so you can read any piece with confidence.\n\nThe BIS logo is a small triangular mark. It confirms the piece was tested at a BIS-recognised assaying and hallmarking centre — not self-certified by the seller.\n\nThe purity grade tells you the karat. 916 means 22K (91.6% pure gold), 750 means 18K, and 585 means 14K. The bigger the number, the purer the gold.\n\nThe HUID is a six-character alphanumeric code unique to your exact piece. You can verify it on the BIS Care app or the official portal — a genuine code will pull up the registered details of the item.\n\nWhen you buy from us, we hand you the hallmark details on the bill and show you the stamps under a loupe. If a seller hesitates to do that, walk away.',
+    },
+    {
+      slug: 'caring-for-your-22k-gold',
+      title: 'Caring for Your 22K Gold: A Simple Monthly Routine',
+      date: '2026-01-29',
+      author: 'The Zelora Studio',
+      image: 'https://images.unsplash.com/photo-1599643477877-530eb83abc8e?auto=format&fit=crop&w=1600&q=92',
+      excerpt: 'Gold is durable, but it likes a gentle wipe. Two minutes a month keeps a 22K piece looking new for a decade.',
+      body:
+        'Gold does not rust or tarnish the way silver does, but daily wear leaves behind lotion, perfume and skin oils that dull its shine. The good news: two minutes a month is all it takes to keep a 22K piece looking new.\n\nFor everyday habits, put your jewellery on last — after perfume, lotion and makeup — and take it off first before swimming, sleeping or the gym. Chlorine and harsh sweat are the main culprits behind a tired-looking finish.\n\nFor a monthly clean, soak the piece in warm water with a single drop of mild dish soap for ten minutes, brush gently with a soft baby toothbrush, rinse, and pat dry with a microfibre cloth. Avoid toothpaste and tissue — both are abrasive and leave fine scratches.\n\nStore each piece in its own soft pouch so harder stones do not scratch softer gold, and keep everything away from direct sunlight and humidity. And remember — any piece bought from us gets free professional polishing, any time you walk in.',
+    },
+    {
+      slug: 'lab-grown-vs-natural-diamonds',
+      title: 'Lab-Grown vs Natural Diamonds: What Every Indian Buyer Should Know',
+      date: '2026-01-12',
+      author: 'The Zelora Studio',
+      image: 'https://images.unsplash.com/photo-1603561591411-07134e71a2a9?auto=format&fit=crop&w=1600&q=92',
+      excerpt: 'Lab-grown diamonds are real diamonds — chemically identical to mined ones. Here is how to decide which is right for you.',
+      body:
+        'Lab-grown diamonds have gone from curiosity to mainstream in just a few years, and a lot of buyers are confused about what they actually are. The short version: a lab-grown diamond is a real diamond — chemically, physically and optically identical to a mined one. The only difference is origin.\n\nOn price, lab-grown stones typically cost 40–70% less than a natural diamond of the same size and quality. That means a bigger, cleaner stone for the same budget — which is why they are popular for engagement rings and statement studs.\n\nOn value, natural diamonds are rarer and tend to hold resale value better, while lab-grown prices have been falling as production scales. If you are buying as a long-term store of value, natural still has the edge; if you are buying for beauty per rupee, lab-grown wins.\n\nWhatever you choose, insist on certification. Every diamond we sell above 0.20 ct comes with an IGI or GIA certificate stating exactly what it is — natural or lab-grown — with its 4Cs documented. No ambiguity, no markup on the mystery.',
+    },
+  ],
   trustBadges: [
     { icon: 'shield',   title: 'BIS 916 hallmarked gold',         body: 'Every gram of our 22K and 18K jewellery is BIS-hallmarked and audited monthly by an independent assay lab.' },
     { icon: 'sparkles', title: 'Live MCX rate · transparent GST', body: 'Weight \u00d7 today\u2019s MCX gold rate + making charges + 3% GST, itemised on every bill. No hidden margins.' },
@@ -453,6 +502,7 @@ export const DEFAULT_CONTENT: StorefrontContent = {
   footerVisit: [
     { label: 'Stores',          href: '/store/locations' },
     { label: 'Our story',       href: '/store/story' },
+    { label: 'Journal',         href: '/store/blog' },
     { label: 'Workshop tours',  href: '/store/workshop' },
     { label: 'Contact',         href: '/store/contact' },
   ],
@@ -575,6 +625,7 @@ const slice = createSlice({
         testimonialsRow2: incoming.testimonialsRow2?.length ? incoming.testimonialsRow2 : DEFAULT_CONTENT.testimonialsRow2,
         doorCards: incoming.doorCards?.length ? incoming.doorCards : DEFAULT_CONTENT.doorCards,
         lookbookCards: incoming.lookbookCards?.length ? incoming.lookbookCards : DEFAULT_CONTENT.lookbookCards,
+        blogs: incoming.blogs?.length ? incoming.blogs : DEFAULT_CONTENT.blogs,
         trustBadges: incoming.trustBadges?.length ? incoming.trustBadges : DEFAULT_CONTENT.trustBadges,
         pressLogos: incoming.pressLogos?.length ? incoming.pressLogos : DEFAULT_CONTENT.pressLogos,
         footerShop: incoming.footerShop?.length ? incoming.footerShop : DEFAULT_CONTENT.footerShop,

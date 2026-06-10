@@ -2533,6 +2533,16 @@ const LOOKBOOK_FIELDS = [
   { key: 'body', label: 'Body (1st card only)', type: 'textarea', span: 3 },
 ] as const;
 
+const BLOG_FIELDS = [
+  { key: 'image', label: 'Cover image', type: 'image', span: 3 },
+  { key: 'title', label: 'Title', type: 'text', span: 3 },
+  { key: 'slug', label: 'URL slug', type: 'text', placeholder: 'how-to-read-a-hallmark', span: 2 },
+  { key: 'date', label: 'Date (YYYY-MM-DD)', type: 'text', placeholder: '2026-03-03', span: 1 },
+  { key: 'author', label: 'Author', type: 'text', placeholder: 'The Zelora Studio', span: 2 },
+  { key: 'excerpt', label: 'Excerpt (card summary)', type: 'textarea', span: 3 },
+  { key: 'body', label: 'Article body (blank line = new paragraph)', type: 'textarea', span: 3 },
+] as const;
+
 const TRUST_BADGE_FIELDS = [
   {
     key: 'icon',
@@ -2762,6 +2772,17 @@ function HomepageSectionsTab({
           onChange={(v) => onPatch({ trustBadges: v })}
           itemLabel={(it) => it.title || 'New badge'}
           max={6}
+        />
+      </Card>
+
+      <Card title="Blog / Journal posts" desc="The 'From the journal' section near the bottom of the homepage shows the first 4 posts; the rest appear on the /store/blog page. Each post opens its own detail page at /store/blog/{slug}. Use ↑/↓ to reorder. Body: leave a blank line between paragraphs.">
+        <ListItemEditor
+          items={content.blogs ?? []}
+          fields={BLOG_FIELDS as ReadonlyArray<FieldDef<{ slug: string; title: string; date: string; excerpt: string; image: string; body: string; author: string }>>}
+          newItem={() => ({ slug: '', title: '', date: '', excerpt: '', image: '', body: '', author: '' })}
+          onChange={(v) => onPatch({ blogs: v })}
+          itemLabel={(it) => it.title || 'New post'}
+          max={24}
         />
       </Card>
     </div>

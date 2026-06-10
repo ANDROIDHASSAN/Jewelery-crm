@@ -120,7 +120,18 @@ export function StorefrontFooter(): JSX.Element {
           </div>
         </div>
         <FooterCol title="Shop"  links={footerShop.map((l) => [l.label, l.href])} />
-        <FooterCol title="Visit" links={footerVisit.map((l) => [l.label, l.href])} />
+        <FooterCol
+          title="Visit"
+          // Always surface a Journal/Blog link in the footer, even on tenants
+          // whose saved Visit column predates the blog (saved content overrides
+          // the default list, so we append it here unless one already exists).
+          links={[
+            ...footerVisit.map((l): [string, string] => [l.label, l.href]),
+            ...(footerVisit.some((l) => /\/blog\/?$/.test(l.href))
+              ? []
+              : [['Journal', '/store/blog'] as [string, string]]),
+          ]}
+        />
         <FooterCol title="Help"  links={footerHelp.map((l) => [l.label, l.href])} />
       </div>
 

@@ -782,6 +782,19 @@ export const TrustBadgeSchema = z.object({
   body: z.string().min(1).max(400),
 });
 
+// Journal / blog post. `date` is an ISO date string (YYYY-MM-DD); `body` is the
+// full article with blank lines separating paragraphs. excerpt/author may be
+// blank. Each post opens a detail page at /store/blog/:slug.
+export const BlogPostSchema = z.object({
+  slug: z.string().min(1).max(160),
+  title: z.string().min(1).max(200),
+  date: z.string().max(40).optional().default(''),
+  excerpt: z.string().max(600).optional().default(''),
+  image: z.string().min(1).max(2048),
+  body: z.string().max(20000).optional().default(''),
+  author: z.string().max(120).optional().default(''),
+});
+
 export const FooterLinkSchema = z.object({
   label: z.string().min(1).max(60),
   href: z.string().min(1).max(2048),
@@ -876,6 +889,7 @@ export const StorefrontContentSchema = z.object({
   testimonialsRow2: z.array(TestimonialCardSchema).max(12).optional().default([]),
   doorCards: z.array(DoorCardSchema).max(2).optional().default([]),
   lookbookCards: z.array(LookbookCardSchema).max(3).optional().default([]),
+  blogs: z.array(BlogPostSchema).max(24).optional().default([]),
   trustBadges: z.array(TrustBadgeSchema).max(6).optional().default([]),
   pressLogos: z.array(z.string().min(1).max(80)).max(10).optional().default([]),
   footerShop: z.array(FooterLinkSchema).max(10).optional().default([]),

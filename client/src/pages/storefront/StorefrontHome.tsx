@@ -13,6 +13,18 @@ import type { DoorCard, TestimonialCard, TrustBadge } from '@/features/storefron
 import { storefrontTotalPaise, productMetaLabel } from '@/features/storefront/pricing';
 import { HeroCarousel } from './HeroCarousel';
 
+// Parse a blog's ISO date (YYYY-MM-DD) into a {day, month} badge. Returns null
+// for blank/invalid dates so the card can simply hide the badge.
+function blogDateParts(iso: string): { day: string; month: string } | null {
+  if (!iso) return null;
+  const d = new Date(`${iso}T00:00:00`);
+  if (Number.isNaN(d.getTime())) return null;
+  return {
+    day: String(d.getDate()).padStart(2, '0'),
+    month: d.toLocaleString('en-US', { month: 'short' }).toUpperCase(),
+  };
+}
+
 function formatLiveRate(paise: number | undefined, fallback: string): string {
   if (!paise || paise <= 0) return fallback;
   const rupees = paise / 100;
@@ -45,6 +57,7 @@ const TRUST_ICONS: Record<TrustBadge['icon'], React.ComponentType<{ className?: 
 export function StorefrontHome(): JSX.Element {
   const content = useAppSelector((s) => s.storefrontContent);
   const {
+    brand,
     hero,
     heroSlides,
     story,
@@ -57,6 +70,7 @@ export function StorefrontHome(): JSX.Element {
     testimonialsRow2,
     doorCards,
     lookbookCards,
+    blogs,
     trustBadges,
     pressLogos,
     sectionLabels,
@@ -565,7 +579,14 @@ export function StorefrontHome(): JSX.Element {
           copy on who we are. Hidden when no title/body is set. */}
       {(story.title || story.body) && (
         <section className="bg-ink-0">
-          <div className="max-w-[1280px] mx-auto px-4 sm:px-6 py-14 sm:py-20 md:py-24 grid grid-cols-1 lg:grid-cols-2 gap-8 md:gap-12 items-center">
+          {/* Section header — sits above the editorial story block. */}
+          <div className="max-w-[1280px] mx-auto px-4 sm:px-6 pt-14 sm:pt-20 md:pt-24 text-center">
+            <p className="text-eyebrow uppercase text-brand-700">Our heritage</p>
+            <h2 className="font-display text-3xl sm:text-[40px] md:text-[48px] leading-tight text-ink-900 mt-2">
+              The {brand.name} Story
+            </h2>
+          </div>
+          <div className="max-w-[1280px] mx-auto px-4 sm:px-6 pt-10 sm:pt-12 pb-14 sm:pb-20 md:pb-24 grid grid-cols-1 lg:grid-cols-2 gap-8 md:gap-12 items-center">
             {story.image && (
               <div className="relative aspect-[4/3] lg:aspect-[5/4] overflow-hidden rounded-sm bg-ink-100 order-1">
                 <img src={story.image} alt="" className="absolute inset-0 h-full w-full object-cover" loading="lazy" />
@@ -697,6 +718,71 @@ export function StorefrontHome(): JSX.Element {
           </div>
         </div>
       </section>
+
+      {/* From the journal — CMS-managed blog posts (Website CMS → Homepage
+          sections → Blog / Journal posts). Up to 4 cards; each opens a detail
+          page at /store/blog/:slug. Hidden when there are no posts. */}
+      {blogs.length > 0 && (
+        <section className="bg-ink-0 border-t border-[#EFE0D2]/60">
+          <div className="max-w-[1280px] mx-auto px-4 sm:px-6 py-14 sm:py-20 md:py-24">
+            <div className="flex items-end justify-between mb-8 sm:mb-10 gap-4">
+              <div>
+                <p className="text-eyebrow uppercase text-brand-700">Our journal</p>
+                <h2 className="font-display text-3xl sm:text-[36px] md:text-[44px] leading-tight text-ink-900 mt-2">
+                  Stories, guides &amp; edits
+                </h2>
+                <p className="mt-2 text-sm text-ink-600 max-w-md">
+                  Buying guides, care tips and behind-the-bench stories from our Haryana workshop.
+                </p>
+              </div>
+              <Link
+                to="/store/blog"
+                className="hidden sm:inline-flex items-center gap-1 text-sm text-ink-700 hover:text-brand-700 border-b border-ink-200 hover:border-brand-400 pb-0.5 shrink-0 transition-colors"
+              >
+                View all
+                <ArrowRight className="h-3.5 w-3.5" />
+              </Link>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5 sm:gap-6 md:gap-7">
+              {blogs.slice(0, 4).map((b, i) => {
+                const badge = blogDateParts(b.date);
+                return (
+                  <Link
+                    key={b.slug}
+                    to={`/store/blog/${b.slug}`}
+                    className={`group flex flex-col animate-fade-in-up-${(i % 4) + 1}`}
+                  >
+                    <div className="relative aspect-[4/5] overflow-hidden rounded-md bg-[#FAF3EE] gold-shine-target">
+                      <img
+                        src={b.image}
+                        alt={b.title}
+                        className="absolute inset-0 h-full w-full object-cover group-hover:scale-[1.05] transition-transform duration-slow"
+                        loading="lazy"
+                      />
+                      {badge && (
+                        <div className="absolute top-3 right-3 h-14 w-14 rounded-full bg-ink-0 shadow-sm flex flex-col items-center justify-center text-center leading-none">
+                          <span className="font-display text-lg text-ink-900">{badge.day}</span>
+                          <span className="text-[9px] uppercase tracking-[0.12em] text-ink-500 mt-0.5">{badge.month}</span>
+                        </div>
+                      )}
+                    </div>
+                    <h3 className="mt-4 font-display text-lg leading-snug text-ink-900 group-hover:text-brand-700 transition-colors line-clamp-2">
+                      {b.title}
+                    </h3>
+                    {b.excerpt && (
+                      <p className="mt-2 text-sm text-ink-600 leading-relaxed line-clamp-2">{b.excerpt}</p>
+                    )}
+                    <span className="mt-3 inline-flex items-center gap-1.5 text-sm text-brand-700 group-hover:gap-2.5 transition-all">
+                      Read more
+                      <ArrowRight className="h-3.5 w-3.5" />
+                    </span>
+                  </Link>
+                );
+              })}
+            </div>
+          </div>
+        </section>
+      )}
 
       {/* Visit-us CTA — faint blush surround */}
       <section className="bg-[#FDF8F4]">
