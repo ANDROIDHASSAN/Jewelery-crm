@@ -392,6 +392,100 @@ websiteRouter.get('/products/:slug/reviews', async (req, res, next) => {
 });
 
 // ============================================================================
+// Per-size pricing helpers — shared by the pricing preview and order endpoints
+// so a sized piece is charged off the SELECTED size's weight, not its base.
+// ============================================================================
+
+type RateLookup = {
+  findRate: (purityCaratX100: number) => number | undefined;
+  live22: number | undefined;
+  liveSilver: number | undefined;
+};
+
+type PriceableProduct = {
+  basePricePaise: number;
+  fixedPricePaise: number | null;
+  stoneChargePaise: number;
+  weightMg: number;
+  purityCaratX100: number;
+  makingChargeBps: number;
+  sizes?: unknown;
+  linkedItem?: {
+    makingChargeMode?: string | null;
+    makingChargePerGramPaise?: number | null;
+    category?: { metalType?: string | null } | null;
+  } | null;
+};
+
+// The Product.sizes column is free-form Json; parse it defensively into a typed
+// list, dropping any malformed/zero-weight entries.
+function parseProductSizes(sizes: unknown): Array<{ label: string; weightMg: number }> {
+  if (!Array.isArray(sizes)) return [];
+  const out: Array<{ label: string; weightMg: number }> = [];
+  for (const s of sizes) {
+    if (s && typeof s === 'object') {
+      const label = (s as { label?: unknown }).label;
+      const weightMg = (s as { weightMg?: unknown }).weightMg;
+      if (typeof label === 'string' && typeof weightMg === 'number' && weightMg > 0) {
+        out.push({ label, weightMg });
+      }
+    }
+  }
+  return out;
+}
+
+function productHasSizes(p: { sizes?: unknown }): boolean {
+  return parseProductSizes(p.sizes).length > 0;
+}
+
+// Weight to price a line at: the selected size's weight when sized and a
+// matching label is supplied, otherwise the base weight.
+function resolveLineWeightMg(p: { weightMg: number; sizes?: unknown }, sizeLabel?: string | null): number {
+  if (!sizeLabel) return p.weightMg;
+  const match = parseProductSizes(p.sizes).find((s) => s.label === sizeLabel);
+  return match ? match.weightMg : p.weightMg;
+}
+
+// Pre-GST line price (metal value + making + stone) for `weightMg` mg of this
+// product. Mirrors the storefront PDP calc. A fixed selling price overrides the
+// live-rate calc — UNLESS the piece is sized, since one price can't express
+// several weights, so sized pieces always price live off the metal rate.
+function computeLinePricePaise(p: PriceableProduct, weightMg: number, rates: RateLookup): number {
+  if (p.fixedPricePaise != null && !productHasSizes(p)) {
+    return p.fixedPricePaise;
+  }
+  const metalType = p.linkedItem?.category?.metalType;
+  const isGold = metalType === 'GOLD' || metalType === 'DIAMOND' || metalType == null;
+  const isSilver = metalType === 'SILVER';
+  // Coerce missing/zero rates to undefined so the `?? fallback` chain behaves
+  // the same whether findRate returns 0 or undefined for an absent purity.
+  const exactRaw = rates.findRate(p.purityCaratX100);
+  const exact = exactRaw && exactRaw > 0 ? exactRaw : undefined;
+  const live22 = rates.live22 && rates.live22 > 0 ? rates.live22 : undefined;
+  const liveSilver = rates.liveSilver && rates.liveSilver > 0 ? rates.liveSilver : undefined;
+
+  let metalValuePaise = 0;
+  if (isGold) {
+    const ratePerGramPaise = exact ?? live22 ?? 642000;
+    metalValuePaise = exact
+      ? Math.round((weightMg * exact) / 1000)
+      : Math.round((weightMg * ratePerGramPaise * p.purityCaratX100) / (1000 * 2200));
+  } else if (isSilver) {
+    metalValuePaise = Math.round((weightMg * (liveSilver ?? 0)) / 1000);
+  } else {
+    metalValuePaise = p.basePricePaise;
+  }
+
+  let making = 0;
+  if (p.linkedItem?.makingChargeMode === 'PER_GRAM' && p.linkedItem.makingChargePerGramPaise != null) {
+    making = Math.round((p.linkedItem.makingChargePerGramPaise * weightMg) / 1000);
+  } else if (p.makingChargeBps > 0 && metalValuePaise > 0) {
+    making = Math.round((metalValuePaise * p.makingChargeBps) / 10000);
+  }
+  return metalValuePaise + making + p.stoneChargePaise;
+}
+
+// ============================================================================
 // Checkout pricing — unified price breakdown with coupon + loyalty
 // ============================================================================
 
@@ -401,6 +495,9 @@ const PricingRequestSchema = z.object({
       productId: z.string().min(1).optional(),
       slug: z.string().min(1).optional(),
       qty: z.number().int().positive().max(99),
+      // Selected size label for sized pieces — resolved server-side to that
+      // size's weight so the previewed price matches what's charged.
+      sizeLabel: z.string().max(24).optional(),
     }).refine((v) => v.productId || v.slug, { message: 'productId or slug required' }),
   ).min(1).max(50),
   coupon_code: z.string().max(60).optional(),
@@ -439,6 +536,7 @@ websiteRouter.post('/checkout/pricing', async (req, res, next) => {
         fixedPricePaise: true,
         stoneChargePaise: true,
         weightMg: true,
+        sizes: true,
         purityCaratX100: true,
         makingChargeBps: true,
         categoryId: true,
@@ -459,52 +557,17 @@ websiteRouter.post('/checkout/pricing', async (req, res, next) => {
     const purities = [2400, 2200, 1800, 1400, 0] as const;
     const ratesArray = await Promise.all(purities.map((p) => readGoldRatePaise(p)));
     const findRate = (p: number) => ratesArray[purities.indexOf(p as typeof purities[number])]?.paise ?? 0;
-    const live22 = findRate(2200);
-    const liveSilver = findRate(0);
+    const rates: RateLookup = { findRate, live22: findRate(2200), liveSilver: findRate(0) };
 
-    // Compute per-product price
-    const priceByProductId = new Map<string, number>();
-    for (const p of products) {
-      const metalType = p.linkedItem?.category?.metalType;
-      const isGold = metalType === 'GOLD' || metalType === 'DIAMOND' || metalType == null;
-      const isSilver = metalType === 'SILVER';
-      const exactRate = findRate(p.purityCaratX100);
-
-      // Fixed selling price overrides the live metal-rate calc for any metal.
-      // fixedPricePaise is the pre-GST base; the 3% GST added below brings the
-      // line to the inclusive selling price the admin set.
-      if (p.fixedPricePaise != null) {
-        priceByProductId.set(p.id, p.fixedPricePaise);
-        continue;
-      }
-
-      let metalValuePaise = 0;
-      if (isGold) {
-        const ratePerGramPaise = exactRate || live22 || 642000;
-        metalValuePaise = exactRate
-          ? Math.round((p.weightMg * exactRate) / 1000)
-          : Math.round((p.weightMg * ratePerGramPaise * p.purityCaratX100) / (1000 * 2200));
-      } else if (isSilver) {
-        metalValuePaise = Math.round((p.weightMg * (liveSilver || 0)) / 1000);
-      } else {
-        metalValuePaise = p.basePricePaise;
-      }
-
-      let making = 0;
-      if (p.linkedItem?.makingChargeMode === 'PER_GRAM' && p.linkedItem.makingChargePerGramPaise != null) {
-        making = Math.round((p.linkedItem.makingChargePerGramPaise * p.weightMg) / 1000);
-      } else if (p.makingChargeBps > 0 && metalValuePaise > 0) {
-        making = Math.round((metalValuePaise * p.makingChargeBps) / 10000);
-      }
-      priceByProductId.set(p.id, metalValuePaise + making + p.stoneChargePaise);
-    }
-
-    // Build resolved lines for coupon service
+    // Build resolved lines for coupon service. Price each line off its selected
+    // size weight (sized pieces) so the preview matches what's charged.
     const cartLines: Array<{ productId: string; qty: number; pricePaise: number; categoryId?: string }> = [];
     for (const ci of body.cart_items) {
       const product = (ci.slug && bySlug.get(ci.slug)) || (ci.productId && byId.get(ci.productId)) || null;
       if (!product) continue;
-      cartLines.push({ productId: product.id, qty: ci.qty, pricePaise: priceByProductId.get(product.id) ?? 0, categoryId: product.categoryId });
+      const weightMg = resolveLineWeightMg(product, ci.sizeLabel);
+      const pricePaise = computeLinePricePaise(product, weightMg, rates);
+      cartLines.push({ productId: product.id, qty: ci.qty, pricePaise, categoryId: product.categoryId });
     }
 
     const subtotalPaise = cartLines.reduce((s, l) => s + l.pricePaise * l.qty, 0);
@@ -623,6 +686,9 @@ const OrderItemPublicSchema = z
     productId: z.string().min(1).optional(),
     slug: z.string().min(1).max(140).optional(),
     qty: z.number().int().positive().max(99),
+    // Selected size label for sized pieces; the server resolves it to that
+    // size's weight to price the line. Ignored for single-weight pieces.
+    sizeLabel: z.string().max(24).optional(),
   })
   .refine((v) => v.productId || v.slug, { message: 'Either productId or slug is required' });
 // Shipping address. Optional in v1 — reserve-at-store and walk-in COD don't
@@ -696,6 +762,7 @@ websiteRouter.post('/orders', async (req, res, next) => {
         fixedPricePaise: true,
         stoneChargePaise: true,
         weightMg: true,
+        sizes: true,
         purityCaratX100: true,
         makingChargeBps: true,
         linkedItem: {
@@ -715,8 +782,9 @@ websiteRouter.post('/orders', async (req, res, next) => {
     const byId = new Map(products.map((p) => [p.id, p]));
     const bySlug = new Map(products.map((p) => [p.slug, p]));
     // Build a resolved item list — every line carries the canonical id we'll
-    // write to OrderItem, no matter how the client identified it.
-    const resolvedItems: Array<{ product: typeof products[number]; qty: number }> = [];
+    // write to OrderItem, plus the selected size label (sized pieces) so we can
+    // price + record the line off that size's weight.
+    const resolvedItems: Array<{ product: typeof products[number]; qty: number; sizeLabel: string | null }> = [];
     for (const it of body.items) {
       const product = (it.slug && bySlug.get(it.slug)) || (it.productId && byId.get(it.productId)) || null;
       if (!product) {
@@ -728,7 +796,7 @@ websiteRouter.post('/orders', async (req, res, next) => {
         });
         return;
       }
-      resolvedItems.push({ product, qty: it.qty });
+      resolvedItems.push({ product, qty: it.qty, sizeLabel: it.sizeLabel ?? null });
     }
 
     // Stock-availability gate. For every line whose Product is linked to an
@@ -776,56 +844,22 @@ websiteRouter.post('/orders', async (req, res, next) => {
     const ratesArray = await Promise.all(purities.map((p) => readGoldRatePaise(p)));
     const rates = purities.map((p, i) => ({ purity: p, ratePerGramPaise: ratesArray[i]?.paise ?? 0 }));
     const findRate = (p: number): number | undefined => rates.find((r) => r.purity === p)?.ratePerGramPaise || undefined;
-    const live22 = findRate(2200);
-    const liveSilver = findRate(0);
+    const rateLookup: RateLookup = { findRate, live22: findRate(2200), liveSilver: findRate(0) };
 
-    const priceByProductId = new Map<string, number>();
-    for (const p of products) {
-      const metalType = p.linkedItem?.category?.metalType;
-      const isGold = metalType === 'GOLD' || metalType === 'DIAMOND' || metalType == null;
-      const isSilver = metalType === 'SILVER';
-      
-      const exactRate = findRate(p.purityCaratX100);
-
-      // Fixed selling price overrides the live metal-rate calc for any metal.
-      // fixedPricePaise is the pre-GST base; the 3% GST added below brings the
-      // line to the inclusive selling price the admin set.
-      if (p.fixedPricePaise != null) {
-        priceByProductId.set(p.id, p.fixedPricePaise);
-        continue;
-      }
-
-      let metalValuePaise = 0;
-      let ratePerGramPaise = 0;
-
-      if (isGold) {
-        ratePerGramPaise = exactRate ?? live22 ?? 642000;
-        metalValuePaise = exactRate
-          ? Math.round((p.weightMg * exactRate) / 1000)
-          : Math.round((p.weightMg * ratePerGramPaise * p.purityCaratX100) / (1000 * 2200));
-      } else if (isSilver) {
-        ratePerGramPaise = liveSilver ?? 0;
-        metalValuePaise = Math.round((p.weightMg * ratePerGramPaise) / 1000);
-      } else {
-        metalValuePaise = p.basePricePaise;
-      }
-
-      let making = 0;
-      if (p.linkedItem?.makingChargeMode === 'PER_GRAM' && p.linkedItem.makingChargePerGramPaise != null) {
-        making = Math.round((p.linkedItem.makingChargePerGramPaise * p.weightMg) / 1000);
-      } else if (p.makingChargeBps > 0 && metalValuePaise > 0) {
-        making = Math.round((metalValuePaise * p.makingChargeBps) / 10000);
-      }
-
-      const itemTotal = metalValuePaise + making + p.stoneChargePaise;
-      priceByProductId.set(p.id, itemTotal);
-    }
+    // Price each resolved line off its selected size weight (sized pieces) or
+    // the base weight. Keyed per line, not per product — the same product can
+    // appear at two different sizes with two different prices.
+    const pricedItems = resolvedItems.map((line) => ({
+      ...line,
+      pricePaise: computeLinePricePaise(
+        line.product,
+        resolveLineWeightMg(line.product, line.sizeLabel),
+        rateLookup,
+      ),
+    }));
 
     const nameById = new Map(products.map((p) => [p.id, p.name]));
-    const subtotalPaise = resolvedItems.reduce(
-      (s, { product, qty }) => s + (priceByProductId.get(product.id) ?? 0) * qty,
-      0,
-    );
+    const subtotalPaise = pricedItems.reduce((s, { pricePaise, qty }) => s + pricePaise * qty, 0);
 
     // ── Promotions: coupon then loyalty ──────────────────────────────────────
 
@@ -847,10 +881,10 @@ websiteRouter.post('/orders', async (req, res, next) => {
     let useLoyaltyPointsEffective = body.useLoyaltyPoints;
 
     if (body.couponCode) {
-      const cartLinesForCoupon = resolvedItems.map(({ product, qty }) => ({
+      const cartLinesForCoupon = pricedItems.map(({ product, qty, pricePaise }) => ({
         productId: product.id,
         qty,
-        pricePaise: priceByProductId.get(product.id) ?? 0,
+        pricePaise,
       }));
       const couponResult = await validateAndComputeCoupon(
         body.couponCode,
@@ -1028,10 +1062,11 @@ websiteRouter.post('/orders', async (req, res, next) => {
             shippingState: body.shippingAddress?.state ?? null,
             shippingPincode: body.shippingAddress?.pincode ?? null,
             items: {
-              create: resolvedItems.map(({ product, qty }) => ({
+              create: pricedItems.map(({ product, qty, pricePaise, sizeLabel }) => ({
                 productId: product.id,
                 qty,
-                pricePaise: priceByProductId.get(product.id) ?? 0,
+                pricePaise,
+                sizeLabel,
               })),
             },
             events: {
@@ -1178,11 +1213,11 @@ websiteRouter.post('/orders', async (req, res, next) => {
           customerName: body.customer.name,
           customerPhone: body.customer.phone,
           shipping: body.shippingAddress!,
-          items: resolvedItems.map(({ product, qty }) => ({
+          items: pricedItems.map(({ product, qty, pricePaise }) => ({
             name: nameById.get(product.id) ?? product.name,
             sku: product.id,
             qty,
-            pricePaise: priceByProductId.get(product.id) ?? 0,
+            pricePaise,
           })),
           subtotalPaise,
           shippingPaise: body.shippingPaise,

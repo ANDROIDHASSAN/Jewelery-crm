@@ -31,7 +31,7 @@ export function CartPage(): JSX.Element {
   const subtotal = cart.reduce((sum, item) => sum + item.pricePaise * item.qty, 0);
 
   const refreshSidebarPricing = useCallback(async (code: string | null) => {
-    const items = cart.map((c) => ({ slug: c.slug, qty: c.qty }));
+    const items = cart.map((c) => ({ slug: c.slug, qty: c.qty, sizeLabel: c.size }));
     if (items.length === 0) { setSidebarPricing(null); return; }
     try {
       const result = await computeSidebarPricing({ cart_items: items, coupon_code: code ?? undefined }).unwrap();
@@ -215,7 +215,7 @@ function CheckoutDialog({ open, onClose, initialCouponCode = null }: { open: boo
 
   // Re-compute pricing whenever cart, coupon, or loyalty changes (debounced via useCallback)
   const refreshPricing = useCallback(async (code: string | null, loyalty: boolean, ph: string) => {
-    const items = cart.map((c) => ({ slug: c.slug, qty: c.qty }));
+    const items = cart.map((c) => ({ slug: c.slug, qty: c.qty, sizeLabel: c.size }));
     if (items.length === 0) { setPricing(null); return; }
     try {
       const customerPhone = ph.length === 10 ? `+91${ph}` : undefined;
@@ -267,9 +267,9 @@ function CheckoutDialog({ open, onClose, initialCouponCode = null }: { open: boo
     const items = cart
       .map((c) => {
         const id = productIdBySlug.get(c.slug);
-        return id ? { productId: id, qty: c.qty } : null;
+        return id ? { productId: id, qty: c.qty, sizeLabel: c.size } : null;
       })
-      .filter((x): x is { productId: string; qty: number } => x !== null);
+      .filter((x): x is { productId: string; qty: number; sizeLabel: string | undefined } => x !== null);
 
     if (items.length === 0) {
       return void toast.error('None of these pieces are available right now — try refreshing.');

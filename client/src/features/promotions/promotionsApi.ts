@@ -27,7 +27,7 @@ export interface PricingBreakdown {
 }
 
 export interface PricingRequest {
-  cart_items: Array<{ productId?: string; slug?: string; qty: number }>;
+  cart_items: Array<{ productId?: string; slug?: string; qty: number; sizeLabel?: string }>;
   coupon_code?: string;
   use_loyalty_points?: boolean;
   loyalty_points_amount?: number;

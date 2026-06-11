@@ -650,6 +650,15 @@ export const LeadSchema = LeadInputSchema.extend({
 
 // --- E-Commerce ---
 
+// A single size variant of a product. `label` is what the shopper sees on the
+// PDP (e.g. "16", "2.6\""); `weightMg` is the metal weight for that size and
+// drives the live price. Only the metal value changes between sizes.
+export const ProductSizeSchema = z.object({
+  label: z.string().min(1).max(24),
+  weightMg: MgSchema.refine((v) => v > 0, 'size weight must be positive'),
+});
+export type ProductSize = z.infer<typeof ProductSizeSchema>;
+
 export const ProductInputSchema = z.object({
   name: z.string().min(2).max(160),
   slug: z
@@ -663,6 +672,9 @@ export const ProductInputSchema = z.object({
   makingChargeBps: BpsSchema,
   basePricePaise: PaiseSchema,
   stoneChargePaise: PaiseSchema.default(0),
+  // Optional size variants. When present the piece is priced per selected size
+  // weight on the storefront (live metal rate), not off a fixed price.
+  sizes: z.array(ProductSizeSchema).max(30).optional(),
   isPublished: z.boolean().default(false),
   // Write-time only: storefront homepage sections this product is featured in
   // (New Arrivals, Best Sellers, …). Synced to ProductSection rows; not a

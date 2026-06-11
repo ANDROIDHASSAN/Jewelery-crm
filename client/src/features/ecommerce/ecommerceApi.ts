@@ -16,6 +16,9 @@ export interface AdminProduct {
   makingChargeBps: number;
   categoryId: string;
   images: string[];
+  // Optional size variants `{ label, weightMg }`. When present the storefront
+  // prices the piece per selected size (live metal rate), not off a fixed price.
+  sizes?: { label: string; weightMg: number }[] | null;
   isPublished: boolean;
   // Storefront homepage sections this product is featured in (one product can
   // be in several; still a single inventory record).

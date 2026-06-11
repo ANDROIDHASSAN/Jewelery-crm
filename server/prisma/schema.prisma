@@ -1303,6 +1303,14 @@ model Product {
   // customer pays exactly the inclusive selling price. Null = price normally.
   fixedPricePaise  Int?
   stoneChargePaise Int       @default(0)
+  // Optional size variants for rate-priced pieces (rings, bangles). Each entry
+  // is `{ label: string, weightMg: number }`. When non-empty the storefront
+  // PDP renders a size selector and prices the piece off the SELECTED size's
+  // weight — so only the metal value (gold/silver) changes between sizes. A
+  // sized piece is always priced live off the metal rate (fixedPricePaise is
+  // ignored), since one fixed price can't express several weights. Null/empty
+  // = single-weight piece priced off `weightMg` as before.
+  sizes            Json?
   // BIS Hallmark Unique ID (6-char alphanumeric). Mandatory for gold
   // jewellery sold in India since 2021 under the BIS Act. Nullable for
   // silver / lab-grown diamond pieces that don't carry HUID.
@@ -1443,6 +1451,10 @@ model OrderItem {
   productId  String
   qty        Int    @default(1)
   pricePaise Int
+  // Selected size label (e.g. "16", "2.6\"") for sized pieces. Null for
+  // single-weight pieces. Recorded so the store knows which size to fulfil —
+  // the charged `pricePaise` was computed off that size's weight.
+  sizeLabel  String?
 
   order   Order   @relation(fields: [orderId], references: [id], onDelete: Cascade)
   product Product @relation(fields: [productId], references: [id])

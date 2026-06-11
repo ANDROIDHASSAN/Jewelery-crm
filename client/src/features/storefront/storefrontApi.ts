@@ -32,6 +32,13 @@ export interface PublicProduct {
    */
   fixedPricePaise: number | null;
   stoneChargePaise: number;
+  /**
+   * Optional size variants `{ label, weightMg }`. When non-empty the PDP shows
+   * a size selector and prices the piece off the SELECTED size's weight at the
+   * live metal rate (fixedPricePaise is ignored for sized pieces). Null/empty =
+   * single-weight piece priced off `weightMg`.
+   */
+  sizes?: { label: string; weightMg: number }[] | null;
   categoryId: string;
   /** Metal type from the linked category — gates gold vs silver vs non-precious price calc. */
   metalType: 'GOLD' | 'SILVER' | 'DIAMOND' | 'PLATINUM' | 'STAINLESS_STEEL' | 'OTHER' | null;
@@ -315,7 +322,7 @@ export const storefrontApi = baseApi.injectEndpoints({
         // resilient path — `/website/products` is edge-cached on Vercel, so
         // cached ids can be stale after a reseed or unpublish. The server
         // prefers slug when both are present.
-        items: Array<{ productId?: string; slug?: string; qty: number }>;
+        items: Array<{ productId?: string; slug?: string; qty: number; sizeLabel?: string }>;
         paymentMethod?: 'reserve-at-store' | 'razorpay' | 'cod';
         shippingPaise?: number;
         shippingAddress?: {

@@ -936,6 +936,10 @@ interface ProductForm {
   makingChargeBps: number;
   basePriceRupees: string;
   stoneChargeRupees: string;
+  // Size variants — label + weight in grams (string for the input field).
+  // Empty = single-weight piece. When set, the storefront prices per selected
+  // size off the live metal rate.
+  sizes: { label: string; weightG: string }[];
   isPublished: boolean;
   sections: StorefrontSectionLiteral[];
 }
@@ -954,9 +958,15 @@ function emptyForm(): ProductForm {
     makingChargeBps: 1200,
     basePriceRupees: '',
     stoneChargeRupees: '0',
+    sizes: [],
     isPublished: true,
     sections: [],
   };
+}
+
+// Map a saved product's `sizes` (weightMg) into the form's grams-string shape.
+function sizesToForm(sizes?: { label: string; weightMg: number }[] | null): { label: string; weightG: string }[] {
+  return (sizes ?? []).map((s) => ({ label: s.label, weightG: (s.weightMg / 1000).toString() }));
 }
 
 function ProductDialog({
@@ -983,6 +993,7 @@ function ProductDialog({
           makingChargeBps: editing.makingChargeBps,
           basePriceRupees: (editing.basePricePaise / 100).toString(),
           stoneChargeRupees: (editing.stoneChargePaise / 100).toString(),
+          sizes: sizesToForm(editing.sizes),
           isPublished: editing.isPublished,
           sections: (editing.sections ?? []) as StorefrontSectionLiteral[],
         }
@@ -1007,6 +1018,7 @@ function ProductDialog({
             makingChargeBps: editing.makingChargeBps,
             basePriceRupees: (editing.basePricePaise / 100).toString(),
             stoneChargeRupees: (editing.stoneChargePaise / 100).toString(),
+            sizes: sizesToForm(editing.sizes),
             isPublished: editing.isPublished,
             sections: (editing.sections ?? []) as StorefrontSectionLiteral[],
           }
@@ -1040,6 +1052,26 @@ function ProductDialog({
       toast.error('Base price must be a positive number');
       return;
     }
+    // Normalise size rows: trim labels, grams → mg, drop blank/zero rows. A
+    // half-filled row (label but no weight, or vice-versa) is a mistake — flag
+    // it rather than silently dropping it.
+    const sizes: { label: string; weightMg: number }[] = [];
+    for (const row of form.sizes) {
+      const label = row.label.trim();
+      const w = Number(row.weightG);
+      const hasWeight = row.weightG.trim() !== '' && Number.isFinite(w) && w > 0;
+      if (!label && !hasWeight) continue; // fully blank row → ignore
+      if (!label || !hasWeight) {
+        toast.error('Each size needs both a label and a positive weight');
+        return;
+      }
+      sizes.push({ label, weightMg: Math.round(w * 1000) });
+    }
+    const labels = sizes.map((s) => s.label.toLowerCase());
+    if (new Set(labels).size !== labels.length) {
+      toast.error('Size labels must be unique');
+      return;
+    }
     const payload = {
       name: form.name.trim(),
       slug: form.slug.trim(),
@@ -1051,6 +1083,7 @@ function ProductDialog({
       makingChargeBps: form.makingChargeBps,
       basePricePaise,
       stoneChargePaise,
+      sizes,
       isPublished: form.isPublished,
       sections: form.sections,
     };
@@ -1142,6 +1175,60 @@ function ProductDialog({
                 <Input type="number" step="1" value={form.stoneChargeRupees} onChange={(e) => setForm({ ...form, stoneChargeRupees: e.target.value })} />
               </Field>
             </div>
+
+            <Field label="Sizes (optional)">
+              <div className="space-y-2">
+                {form.sizes.map((row, i) => (
+                  <div key={i} className="flex items-center gap-2">
+                    <Input
+                      placeholder='Label (e.g. 16, 2.6")'
+                      value={row.label}
+                      onChange={(e) => {
+                        const next = form.sizes.slice();
+                        next[i] = { ...next[i]!, label: e.target.value };
+                        setForm({ ...form, sizes: next });
+                      }}
+                      className="flex-1"
+                    />
+                    <Input
+                      type="number"
+                      step="0.01"
+                      min={0}
+                      placeholder="Weight (g)"
+                      value={row.weightG}
+                      onChange={(e) => {
+                        const next = form.sizes.slice();
+                        next[i] = { ...next[i]!, weightG: e.target.value };
+                        setForm({ ...form, sizes: next });
+                      }}
+                      className="w-32"
+                    />
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setForm({ ...form, sizes: form.sizes.filter((_, j) => j !== i) })}
+                    >
+                      Remove
+                    </Button>
+                  </div>
+                ))}
+                <Button
+                  type="button"
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => setForm({ ...form, sizes: [...form.sizes, { label: '', weightG: '' }] })}
+                >
+                  + Add size
+                </Button>
+              </div>
+              <p className="mt-1 text-[11px] text-ink-500">
+                Add size variants (rings, bangles) with their own metal weight. When set, the
+                storefront shows a size selector and prices the piece off the selected size&apos;s
+                weight at the live metal rate — only the gold/silver value changes between sizes.
+                Leave empty for a single-weight piece priced off the Weight field above.
+              </p>
+            </Field>
 
             <Field label="Description (Markdown)">
               <textarea

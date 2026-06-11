@@ -34,14 +34,14 @@ import { StarRating } from './OrderReviewSheet';
 const FALLBACK_RATE_PER_GRAM_22K_PAISE = 6420_00;
 const GST_BPS = 300;
 
-const SIZES = ['2.4', '2.6', '2.8'];
-
 export function ProductDetailPage(): JSX.Element {
   const { slug = '' } = useParams<{ slug: string }>();
   const [imgIdx, setImgIdx] = useState(0);
-  const [size, setSize] = useState<string>(SIZES[1] ?? SIZES[0] ?? '');
+  // Selected size label. Empty until the shopper picks one; the price calc
+  // falls back to the product's first size (or its base weight when unsized).
+  const [size, setSize] = useState<string>('');
   const [qty, setQty] = useState(1);
-  const [openSection, setOpenSection] = useState<string | null>('description');
+  const [openSection, setOpenSection] = useState<string | null>('specs');
   const [reserveOpen, setReserveOpen] = useState(false);
   const shop = useShopActions();
   const navigate = useNavigate();
@@ -86,7 +86,16 @@ export function ProductDetailPage(): JSX.Element {
     );
   }
 
-  const weightG = product.weightMg / 1000;
+  // Size variants (rings, bangles). When present, the selected size's weight
+  // drives the whole price calc below — only the metal value changes between
+  // sizes. `selectedSize` defaults to the first option until the shopper picks
+  // one (derived, not an effect, to keep hook order stable across the early
+  // returns above).
+  const sizeOptions = (product.sizes ?? []).filter((s) => s.weightMg > 0);
+  const selectedSize = sizeOptions.find((s) => s.label === size) ?? sizeOptions[0];
+  const effectiveWeightMg = selectedSize?.weightMg ?? product.weightMg;
+
+  const weightG = effectiveWeightMg / 1000;
   const purityK = product.purityCaratX100 / 100;
   // Material label — never "0K · BIS Hallmarked" for non-precious / gold-tone
   // pieces (stainless steel carries no carat and isn't hallmarked).
@@ -103,7 +112,9 @@ export function ProductDetailPage(): JSX.Element {
   // pre-GST fixed base (mirrored onto basePricePaise), so the displayed total
   // matches what POS + checkout charge. Routing through the non-precious branch
   // below (metalValue = basePricePaise) does exactly that.
-  const isFixed = product.fixedPricePaise != null;
+  // Sized pieces are always priced live off the metal rate — one fixed price
+  // can't express several weights — so a fixed price is ignored when sizes exist.
+  const isFixed = product.fixedPricePaise != null && sizeOptions.length === 0;
   const isGold = !isFixed && (product.metalType === 'GOLD' || product.metalType === 'DIAMOND' || product.metalType === null);
   const isSilver = !isFixed && product.metalType === 'SILVER';
 
@@ -136,15 +147,15 @@ export function ProductDetailPage(): JSX.Element {
     ratePerGramPaise = exactRate ?? live22 ?? FALLBACK_RATE_PER_GRAM_22K_PAISE;
     displayRatePerGramPaise = exactRate ?? ratePerGramPaise;
     metalValuePaise = exactRate
-      ? Math.round((product.weightMg * exactRate) / 1000)
+      ? Math.round((effectiveWeightMg * exactRate) / 1000)
       : Math.round(
-          (product.weightMg * ratePerGramPaise * product.purityCaratX100) /
+          (effectiveWeightMg * ratePerGramPaise * product.purityCaratX100) /
             (1000 * 2200),
         );
   } else if (isSilver) {
     ratePerGramPaise = liveSilver ?? 0;
     displayRatePerGramPaise = ratePerGramPaise;
-    metalValuePaise = Math.round((product.weightMg * ratePerGramPaise) / 1000);
+    metalValuePaise = Math.round((effectiveWeightMg * ratePerGramPaise) / 1000);
   } else {
     // For Stainless Steel / Platinum / Other: basePricePaise is the actual 
     // cost set for the item.
@@ -164,7 +175,7 @@ export function ProductDetailPage(): JSX.Element {
   if (isFixed) {
     making = 0;
   } else if (product.makingChargeMode === 'PER_GRAM' && product.makingChargePerGramPaise != null) {
-    making = Math.round((product.makingChargePerGramPaise * product.weightMg) / 1000);
+    making = Math.round((product.makingChargePerGramPaise * effectiveWeightMg) / 1000);
   } else if (product.makingChargeBps > 0 && gold > 0) {
     // PERCENTAGE mode (default) — percentage of gold/silver metal value
     making = Math.round((gold * product.makingChargeBps) / 10000);
@@ -308,10 +319,13 @@ export function ProductDetailPage(): JSX.Element {
           </div>
           )}
 
-          {/* Size */}
+          {/* Size — only shown for pieces that carry size variants. Each size
+              has its own weight, so picking one re-prices the metal value,
+              making charge, GST and total above. */}
+          {sizeOptions.length > 0 && (
           <div>
             <div className="flex items-center justify-between mb-3">
-              <span className="text-eyebrow uppercase text-ink-500">Size (inches)</span>
+              <span className="text-eyebrow uppercase text-ink-500">Size</span>
               <a
                 href="/store/help"
                 className="text-xs text-ink-700 underline decoration-ink-200 underline-offset-4 hover:decoration-ink-500"
@@ -320,21 +334,22 @@ export function ProductDetailPage(): JSX.Element {
               </a>
             </div>
             <div className="flex flex-wrap gap-2">
-              {SIZES.map((s) => (
+              {sizeOptions.map((s) => (
                 <button
-                  key={s}
+                  key={s.label}
                   type="button"
-                  onClick={() => setSize(s)}
+                  onClick={() => setSize(s.label)}
                   className={cn(
                     'h-10 min-w-[64px] px-4 rounded-full border text-sm transition-colors',
-                    s === size ? 'border-ink-900 bg-ink-900 text-ink-0' : 'border-ink-200 text-ink-700 hover:border-ink-400',
+                    selectedSize?.label === s.label ? 'border-ink-900 bg-ink-900 text-ink-0' : 'border-ink-200 text-ink-700 hover:border-ink-400',
                   )}
                 >
-                  {s}″
+                  {s.label}
                 </button>
               ))}
             </div>
           </div>
+          )}
 
           {/* Quantity + actions */}
           {product.inStock === false && (
@@ -367,7 +382,7 @@ export function ProductDetailPage(): JSX.Element {
                     weight: `${weightG.toFixed(2)} g · ${purity}`,
                     priceLabel: `₹${(total / 100).toLocaleString('en-IN')}`,
                     pricePaise: subtotal,
-                    size,
+                    size: selectedSize?.label,
                     img: product.images[0] ?? '',
                     qty,
                   });
@@ -399,7 +414,7 @@ export function ProductDetailPage(): JSX.Element {
                     weight: `${weightG.toFixed(2)} g · ${purity}`,
                     priceLabel: `₹${(total / 100).toLocaleString('en-IN')}`,
                     pricePaise: subtotal,
-                    size,
+                    size: selectedSize?.label,
                     img: product.images[0] ?? '',
                     qty,
                   });
@@ -496,20 +511,8 @@ export function ProductDetailPage(): JSX.Element {
             </div>
           </div>
 
-          {/* Accordions — Description · Specification · Supplier · Returns */}
+          {/* Accordions — Specification · Price Breakup · Description · Supplier · Returns */}
           <div className="pt-4 border-t border-ink-100 divide-y divide-ink-100">
-            <Accordion
-              id="description"
-              title="Description"
-              open={openSection === 'description'}
-              onToggle={() => setOpenSection(openSection === 'description' ? null : 'description')}
-            >
-              <p className="text-sm text-ink-600 leading-relaxed whitespace-pre-line">
-                {product.descriptionMd?.trim()
-                  ? product.descriptionMd
-                  : `${product.name} — ${purity}, ${weightG.toFixed(2)} g. Handcrafted ${nonPrecious ? 'gold-tone' : 'fine'} jewellery${category ? ` from our ${category.name} collection` : ''}.`}
-              </p>
-            </Accordion>
             <Accordion
               id="specs"
               title="Specification"
@@ -543,6 +546,79 @@ export function ProductDetailPage(): JSX.Element {
                   Each piece carries a BIS 916 hallmark stamped on the inner band. You&apos;ll receive a printed certificate of weight, purity and current-day rate at billing — countersigned in store.
                 </p>
               )}
+            </Accordion>
+            <Accordion
+              id="pricebreakup"
+              title="Price Breakup"
+              open={openSection === 'pricebreakup'}
+              onToggle={() => setOpenSection(openSection === 'pricebreakup' ? null : 'pricebreakup')}
+            >
+              <div className="space-y-4 text-sm">
+                {/* Metal / base value — three columns mirror the in-store
+                    certificate: rate · weight · final value. Non-precious or
+                    fixed-price pieces have no live rate, so we drop the rate
+                    column and show just weight × final value. */}
+                <div>
+                  <p className="font-medium text-ink-900 mb-2">{purity}</p>
+                  {isGold || isSilver ? (
+                    <div className="grid grid-cols-3 gap-2">
+                      <div>
+                        <Money
+                          paise={weightG > 0 ? Math.round(gold / weightG) : displayRatePerGramPaise}
+                          className="block text-ink-800 font-mono tabular-nums"
+                        />
+                        <span className="text-xs text-ink-500">Rate / g</span>
+                      </div>
+                      <div>
+                        <span className="block text-ink-800 font-mono tabular-nums">{weightG.toFixed(2)} g</span>
+                        <span className="text-xs text-ink-500">Weight</span>
+                      </div>
+                      <div className="text-right">
+                        <Money paise={gold} className="block text-ink-800 font-mono tabular-nums" />
+                        <span className="text-xs text-ink-500">Final value</span>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="grid grid-cols-2 gap-2">
+                      <div>
+                        <span className="block text-ink-800 font-mono tabular-nums">{weightG.toFixed(2)} g</span>
+                        <span className="text-xs text-ink-500">Weight</span>
+                      </div>
+                      <div className="text-right">
+                        <Money paise={gold} className="block text-ink-800 font-mono tabular-nums" />
+                        <span className="text-xs text-ink-500">Final value</span>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                {/* Charges & tax */}
+                <div className="border-t border-ink-100 pt-3 space-y-2">
+                  {making > 0 && <Row label="Making charges" value={<Money paise={making} />} />}
+                  {product.stoneChargePaise > 0 && (
+                    <Row label="Stone / diamond charges" value={<Money paise={product.stoneChargePaise} />} />
+                  )}
+                  <Row label="GST (3%)" value={<Money paise={gst} />} />
+                </div>
+
+                {/* Grand total */}
+                <div className="border-t border-ink-100 pt-3 flex items-center justify-between">
+                  <span className="text-ink-900 font-medium">Grand Total</span>
+                  <Money paise={total} className="text-ink-900 font-medium font-mono tabular-nums" />
+                </div>
+              </div>
+            </Accordion>
+            <Accordion
+              id="description"
+              title="Description"
+              open={openSection === 'description'}
+              onToggle={() => setOpenSection(openSection === 'description' ? null : 'description')}
+            >
+              <p className="text-sm text-ink-600 leading-relaxed whitespace-pre-line">
+                {product.descriptionMd?.trim()
+                  ? product.descriptionMd
+                  : `${product.name} — ${purity}, ${weightG.toFixed(2)} g. Handcrafted ${nonPrecious ? 'gold-tone' : 'fine'} jewellery${category ? ` from our ${category.name} collection` : ''}.`}
+              </p>
             </Accordion>
             <Accordion
               id="supplier"
@@ -626,7 +702,7 @@ export function ProductDetailPage(): JSX.Element {
                 weight: `${weightG.toFixed(2)} g · ${purity}`,
                 priceLabel: `₹${(total / 100).toLocaleString('en-IN')}`,
                 pricePaise: subtotal,
-                size,
+                size: selectedSize?.label,
                 img: product.images[0] ?? '',
                 qty,
               });
