@@ -455,7 +455,7 @@ export function CollectionPage(): JSX.Element {
           </aside>
         )}
 
-        <section className="grid grid-cols-2 md:grid-cols-3 gap-x-3 gap-y-8 sm:gap-x-5 sm:gap-y-10 md:gap-x-6">
+        <section className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-x-3 gap-y-8 sm:gap-x-5 sm:gap-y-10 md:gap-x-6">
           {(productsLoading || collectionItemsLoading) && (
             <p className="col-span-full text-sm text-ink-500">Loading the collection…</p>
           )}

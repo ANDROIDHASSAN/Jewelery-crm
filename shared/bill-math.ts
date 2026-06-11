@@ -236,3 +236,96 @@ export function computeBillTotals(input: BillMathInput): BillMathResult {
     totalPaise,
   };
 }
+
+// ── Place-of-supply resolution for e-commerce GST ──────────────────────────
+// POS bills already carry a 2-digit shop gstStateCode AND a customer state
+// code, so the split is computed at bill time (computeBillTotals above). But
+// e-commerce orders only store the customer's free-text shipping STATE (a name
+// like "Haryana", entered at checkout) plus a single `taxPaise` total. To tag
+// those orders as intra-state (CGST+SGST) vs inter-state (IGST) we have to
+// normalise that free text to a GST state code and compare it to the seller's
+// home state. This map + resolver live here so the server (order invoices,
+// finance GST report) and any client preview agree byte-for-byte.
+
+/** Full GST state/UT code → canonical name. */
+const STATE_CODE_TO_NAME: Record<string, string> = {
+  '01': 'Jammu and Kashmir', '02': 'Himachal Pradesh', '03': 'Punjab',
+  '04': 'Chandigarh', '05': 'Uttarakhand', '06': 'Haryana', '07': 'Delhi',
+  '08': 'Rajasthan', '09': 'Uttar Pradesh', '10': 'Bihar', '11': 'Sikkim',
+  '12': 'Arunachal Pradesh', '13': 'Nagaland', '14': 'Manipur', '15': 'Mizoram',
+  '16': 'Tripura', '17': 'Meghalaya', '18': 'Assam', '19': 'West Bengal',
+  '20': 'Jharkhand', '21': 'Odisha', '22': 'Chhattisgarh', '23': 'Madhya Pradesh',
+  '24': 'Gujarat', '26': 'Dadra and Nagar Haveli and Daman and Diu', '27': 'Maharashtra',
+  '29': 'Karnataka', '30': 'Goa', '31': 'Lakshadweep', '32': 'Kerala',
+  '33': 'Tamil Nadu', '34': 'Puducherry', '35': 'Andaman and Nicobar Islands',
+  '36': 'Telangana', '37': 'Andhra Pradesh', '38': 'Ladakh',
+};
+
+/** Lower-cased state name / alias → 2-digit GST code. */
+const STATE_NAME_TO_CODE: Record<string, string> = (() => {
+  const m: Record<string, string> = {};
+  for (const [code, name] of Object.entries(STATE_CODE_TO_NAME)) m[name.toLowerCase()] = code;
+  // Common aliases / abbreviations people type into a free-text state field.
+  Object.assign(m, {
+    'jammu & kashmir': '01', 'j&k': '01', 'jk': '01',
+    'uttaranchal': '05', 'uk': '05',
+    'haryana ': '06', 'hr': '06',
+    'new delhi': '07', 'nct of delhi': '07', 'delhi ncr': '07', 'dl': '07',
+    'up': '09', 'bihar ': '10',
+    'orissa': '21', 'mp': '23', 'gujrat': '24', 'gj': '24',
+    'maharastra': '27', 'mh': '27', 'ka': '29', 'karnatka': '29',
+    'tamilnadu': '33', 'tn': '33', 'pondicherry': '34',
+    'telengana': '36', 'ts': '36', 'tg': '36', 'kl': '32', 'wb': '19',
+    'rj': '08', 'pb': '03', 'ap': '37',
+  });
+  return m;
+})();
+
+/**
+ * Normalise a captured state value (name, alias, GST code, or full GSTIN) to a
+ * 2-digit GST state code. Returns null when it can't be resolved.
+ */
+export function resolveStateCode(value: string | null | undefined): string | null {
+  if (!value) return null;
+  const raw = value.trim();
+  if (!raw) return null;
+  // Bare 1-2 digit code.
+  if (/^\d{1,2}$/.test(raw)) {
+    const code = raw.padStart(2, '0');
+    return STATE_CODE_TO_NAME[code] ? code : null;
+  }
+  // A full 15-char GSTIN starts with the 2-digit state code.
+  if (/^\d{2}[A-Za-z]{5}\d{4}[A-Za-z]/.test(raw)) {
+    const code = raw.slice(0, 2);
+    return STATE_CODE_TO_NAME[code] ? code : null;
+  }
+  const key = raw.toLowerCase().replace(/\s+/g, ' ');
+  return STATE_NAME_TO_CODE[key] ?? STATE_NAME_TO_CODE[key.trim()] ?? null;
+}
+
+export interface TaxSplit {
+  cgstPaise: number;
+  sgstPaise: number;
+  igstPaise: number;
+}
+
+/**
+ * Split an already-computed total tax into CGST+SGST (intra-state) or IGST
+ * (inter-state), based on the customer's place of supply vs the seller's home
+ * state. Used for e-commerce orders, which persist tax as a single number.
+ * An unresolved customer state defaults to intra-state — the same conservative
+ * convention POS uses — so a local sale is never mis-tagged inter-state.
+ */
+export function splitTaxByPlaceOfSupply(
+  taxPaise: number,
+  customerState: string | null | undefined,
+  homeStateCode: string,
+): TaxSplit {
+  const custCode = resolveStateCode(customerState);
+  const intra = !custCode || custCode === homeStateCode;
+  if (intra) {
+    const cgstPaise = Math.floor(taxPaise / 2);
+    return { cgstPaise, sgstPaise: taxPaise - cgstPaise, igstPaise: 0 };
+  }
+  return { cgstPaise: 0, sgstPaise: 0, igstPaise: taxPaise };
+}

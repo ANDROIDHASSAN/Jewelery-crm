@@ -167,6 +167,12 @@ export interface StorefrontContent {
   doorCards: DoorCard[];
   /** Featured "lookbook" editorial cards (1 big + 2). Empty = hide the section. */
   lookbookCards: LookbookCard[];
+  /** Curated product slugs for the homepage 18K Gold Tone showcase. Empty = auto-fill from the category. */
+  goldToneFeatured: string[];
+  /** Curated product slugs for the homepage 9 KT Fine Gold showcase. Empty = auto-fill from the category. */
+  nineKtFeatured: string[];
+  /** Curated product slugs for the homepage Fine Silver showcase. Empty = auto-fill from the category. */
+  silverFeatured: string[];
   /** Journal / blog posts. Empty = hide the homepage Blogs section. */
   blogs: BlogPost[];
   trustBadges: TrustBadge[];
@@ -444,6 +450,11 @@ export const DEFAULT_CONTENT: StorefrontContent = {
     { eyebrow: 'Under ₹50,000', title: 'Gifts that hold value', body: '', ctaLabel: '', href: '/store/collections/gifting', img: 'https://images.unsplash.com/photo-1605100804763-247f67b3557e?auto=format&fit=crop&w=1600&q=92' },
     { eyebrow: 'New · Diamond', title: 'Solitaires, certified', body: '', ctaLabel: '', href: '/store/collections/diamond', img: 'https://images.unsplash.com/photo-1603561591411-07134e71a2a9?auto=format&fit=crop&w=1600&q=92' },
   ],
+  // Curated showcase product slugs default to empty — each homepage showcase
+  // auto-fills from its category until an admin picks specific pieces in the CMS.
+  goldToneFeatured: [],
+  nineKtFeatured: [],
+  silverFeatured: [],
   blogs: [
     {
       slug: 'gold-vs-silver-how-to-choose',

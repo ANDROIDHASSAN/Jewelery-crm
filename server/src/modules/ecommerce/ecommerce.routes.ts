@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { ProductInputSchema } from '@goldos/shared/schemas';
 import { prisma } from '../../lib/prisma.js';
 import { ORDER_STATUSES } from '@goldos/shared/constants';
+import { resolveStateCode, splitTaxByPlaceOfSupply } from '@goldos/shared/bill-math';
 import { readGoldRatePaise } from '../../lib/redis.js';
 import { applyBps, computeGoldValuePaise } from '../../lib/money.js';
 import { getTenantId } from '../../lib/async-context.js';
@@ -404,6 +405,12 @@ ecommerceRouter.get('/orders/:id/invoice.pdf', async (req, res, next) => {
       .filter((s) => typeof s === 'string' && s.trim().length > 0)
       .join(', ');
 
+    // Split the order's single tax total into CGST+SGST (customer in our home
+    // state) or IGST (out-of-state). Home state = the first two digits of the
+    // tenant's GSTIN; defaults to Haryana ("06") when no GSTIN is on file.
+    const homeStateCode = resolveStateCode(order.tenant?.gstNumber) ?? '06';
+    const ecomGst = splitTaxByPlaceOfSupply(order.taxPaise, order.shippingState, homeStateCode);
+
     await renderReceiptPdf(
       {
         business: {
@@ -444,11 +451,11 @@ ecommerceRouter.get('/orders/:id/invoice.pdf', async (req, res, next) => {
           };
         }),
         subtotalPaise: order.subtotalPaise,
-        // E-commerce stores total tax as a single number rather than
-        // CGST/SGST/IGST split — surface it as IGST (inter-state default).
-        cgstPaise: 0,
-        sgstPaise: 0,
-        igstPaise: order.taxPaise,
+        // E-commerce stores total tax as a single number; split it by place of
+        // supply — CGST+SGST for an in-state customer, IGST for inter-state.
+        cgstPaise: ecomGst.cgstPaise,
+        sgstPaise: ecomGst.sgstPaise,
+        igstPaise: ecomGst.igstPaise,
         discountPaise: 0,
         totalPaise: order.totalPaise,
         payments:

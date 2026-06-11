@@ -147,6 +147,10 @@ export function DashboardPage(): JSX.Element {
   const canReadFinance = useAppSelector(
     (s) => s.auth.user?.perms.includes('finance.read') ?? false,
   );
+  // Greet the signed-in user by their first name. AdminShell refreshes
+  // s.auth.user from /auth/me on load, so this reflects the latest saved
+  // profile name (no more hardcoded greeting).
+  const firstName = useAppSelector((s) => s.auth.user?.name?.trim().split(/\s+/)[0] ?? '');
   const { data: plRes, isLoading: plLoading, isError: plError, error: plErrorObj } = useGetPlQuery(range, {
     pollingInterval: 60_000,
     skip: !canReadFinance,
@@ -259,7 +263,7 @@ export function DashboardPage(): JSX.Element {
       {/* ---- 1. Header ---- */}
       <PageHeader
         eyebrow={`Today · ${new Date().toLocaleDateString('en-IN', { weekday: 'long', day: 'numeric', month: 'long' })}`}
-        title="Welcome back, Anant."
+        title={firstName ? `Welcome back, ${firstName}.` : 'Welcome back.'}
         description="Live across every shop — bills, leads, stock value and gold rate updating on a 60-second polling cadence."
         actions={
           <span className="inline-flex items-center gap-1.5 text-xs text-ink-500 px-2.5 h-8 rounded-full bg-ink-25 border border-ink-100">

@@ -54,6 +54,19 @@ export function DailySalesSection(): JSX.Element {
         paiseToRupeeString(s.gstPaise),
         s.billCount,
       ]),
+      [],
+      ['Invoice No.', 'Date', 'Shop', 'Customer', 'Taxable (₹)', 'CGST (₹)', 'SGST (₹)', 'IGST (₹)', 'Total (₹)'],
+      ...ds.bills.map((b) => [
+        b.billNumber ?? '—',
+        new Date(b.createdAt).toLocaleString('en-IN'),
+        b.shopName,
+        b.customerName ?? '—',
+        paiseToRupeeString(b.subtotalPaise),
+        paiseToRupeeString(b.cgstPaise),
+        paiseToRupeeString(b.sgstPaise),
+        paiseToRupeeString(b.igstPaise),
+        paiseToRupeeString(b.totalPaise),
+      ]),
     ];
     downloadCsv(`daily-sales-${range}.csv`, rows);
   }
@@ -212,6 +225,78 @@ export function DailySalesSection(): JSX.Element {
                     </tr>
                   );
                 })
+              )}
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      {/* Sales Bills report — every bill in the window with its GST split.
+          POS bills + e-commerce orders (online ones tagged with a badge). */}
+      <section className="rounded-md border border-ink-100 bg-ink-0">
+        <header className="px-4 py-3 border-b border-ink-100">
+          <p className="text-eyebrow uppercase text-ink-500">
+            Invoices · {ds?.bills.length ?? 0}
+          </p>
+          <h2 className="text-md font-medium text-ink-900">Sales bills</h2>
+        </header>
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm min-w-[760px]">
+            <thead className="text-eyebrow uppercase text-ink-500 bg-ink-25">
+              <tr>
+                <th className="text-left px-4 py-2.5">Invoice No.</th>
+                <th className="text-left px-4 py-2.5">Date</th>
+                <th className="text-left px-4 py-2.5">Shop</th>
+                <th className="text-left px-4 py-2.5">Customer</th>
+                <th className="text-right px-4 py-2.5">Taxable</th>
+                <th className="text-right px-4 py-2.5">CGST</th>
+                <th className="text-right px-4 py-2.5">SGST</th>
+                <th className="text-right px-4 py-2.5">IGST</th>
+                <th className="text-right px-4 py-2.5">Total</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-ink-100">
+              {!ds || ds.bills.length === 0 ? (
+                <tr>
+                  <td colSpan={9} className="px-4 py-6 text-center text-ink-500">
+                    {isLoading ? 'Loading…' : 'No bills in this window.'}
+                  </td>
+                </tr>
+              ) : (
+                ds.bills.map((b) => (
+                  <tr key={b.id}>
+                    <td className="px-4 py-2 text-xs text-ink-900">
+                      <span className="font-mono">{b.billNumber ?? '—'}</span>
+                      {b.isEcom && (
+                        <span className="ml-1.5 inline-block rounded bg-blue-50 px-1.5 py-0.5 text-[10px] font-medium text-blue-600 leading-none">
+                          Online
+                        </span>
+                      )}
+                    </td>
+                    <td className="px-4 py-2 font-mono text-xs text-ink-600">
+                      {new Date(b.createdAt).toLocaleDateString('en-IN')}
+                    </td>
+                    <td className="px-4 py-2 text-ink-700">{b.shopName}</td>
+                    <td className="px-4 py-2 text-ink-700 max-w-[140px] truncate">
+                      {b.customerName ?? '—'}
+                    </td>
+                    <td className="px-4 py-2 text-right">
+                      <Money paise={b.subtotalPaise} />
+                    </td>
+                    <td className="px-4 py-2 text-right text-ink-700">
+                      <Money paise={b.cgstPaise} />
+                    </td>
+                    <td className="px-4 py-2 text-right text-ink-700">
+                      <Money paise={b.sgstPaise} />
+                    </td>
+                    <td className="px-4 py-2 text-right text-ink-700">
+                      <Money paise={b.igstPaise} />
+                    </td>
+                    <td className="px-4 py-2 text-right font-medium">
+                      <Money paise={b.totalPaise} />
+                    </td>
+                  </tr>
+                ))
               )}
             </tbody>
           </table>

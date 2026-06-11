@@ -30,6 +30,7 @@ import {
 import { prisma } from '../../lib/prisma.js';
 import { getTenantId } from '../../lib/async-context.js';
 import { sumPaise } from '../../lib/money.js';
+import { splitTaxByPlaceOfSupply } from '@goldos/shared/bill-math';
 import { requireAnyPermission, requirePermission } from '../../middleware/require-permission.js';
 import { readCache, writeCache, bustTenant } from './finance.cache.js';
 import { accountingRouter } from './accounting.routes.js';
@@ -52,6 +53,14 @@ function shopWhere(shopId?: string): { shopId: string } | Record<string, never> 
 
 function noTenantError(): { error: { code: string; message: string } } {
   return { error: { code: 'NO_TENANT', message: 'Tenant context missing' } };
+}
+
+// The seller's home GST state code — taken from the (tenant-scoped) first shop's
+// gstStateCode. Used to split e-commerce order tax into CGST+SGST (customer in
+// our state) vs IGST (inter-state). Falls back to Haryana ("06").
+async function getHomeStateCode(): Promise<string> {
+  const shop = await prisma.shop.findFirst({ select: { gstStateCode: true } });
+  return shop?.gstStateCode ?? '06';
 }
 
 function prismaShopFilter(shopId: string): Prisma.Sql {
@@ -410,7 +419,7 @@ financeRouter.get('/daily-sales', async (req, res, next) => {
       `,
       prisma.bill.groupBy({
         by: ['shopId'],
-        where: { tenantId, createdAt: { gte: from, lte: to }, voidedAt: null },
+        where: { tenantId, ...shopFilter, createdAt: { gte: from, lte: to }, voidedAt: null },
         _sum: { totalPaise: true, cgstPaise: true, sgstPaise: true, igstPaise: true },
         _count: { _all: true },
       }),
@@ -478,6 +487,80 @@ financeRouter.get('/daily-sales', async (req, res, next) => {
       .sort(([a], [b]) => a.localeCompare(b))
       .map(([day, v]) => ({ day, ...v }));
 
+    // Sales Bills report — bill-level detail for the window so the Daily Sales
+    // tab can list each sale with its GST split (same shape as the GST tab).
+    // POS bills carry a stored split; e-commerce orders are split on the fly by
+    // place of supply. E-commerce isn't shop-scoped, so it's always included
+    // (matching the Revenue total, which also always includes online orders).
+    const homeStateCode = await getHomeStateCode();
+    const [billRows, ecomOrderRows] = await Promise.all([
+      prisma.bill.findMany({
+        where: { tenantId, ...shopFilter, createdAt: { gte: from, lte: to }, voidedAt: null },
+        orderBy: { createdAt: 'desc' },
+        take: 100,
+        select: {
+          id: true,
+          billNumber: true,
+          createdAt: true,
+          subtotalPaise: true,
+          cgstPaise: true,
+          sgstPaise: true,
+          igstPaise: true,
+          totalPaise: true,
+          shop: { select: { name: true } },
+          customer: { select: { name: true } },
+        },
+      }),
+      prisma.order.findMany({
+        where: ecomDailyWhere,
+        orderBy: { paidAt: 'desc' },
+        take: 100,
+        select: {
+          id: true,
+          paidAt: true,
+          subtotalPaise: true,
+          taxPaise: true,
+          totalPaise: true,
+          shippingState: true,
+          customer: { select: { name: true } },
+        },
+      }),
+    ]);
+
+    const salesBills = [
+      ...billRows.map((b) => ({
+        id: b.id,
+        billNumber: b.billNumber,
+        isEcom: false,
+        createdAt: (b.createdAt as Date).toISOString(),
+        subtotalPaise: b.subtotalPaise,
+        cgstPaise: b.cgstPaise,
+        sgstPaise: b.sgstPaise,
+        igstPaise: b.igstPaise,
+        totalPaise: b.totalPaise,
+        shopName: b.shop?.name ?? '—',
+        customerName: b.customer?.name ?? null,
+      })),
+      ...ecomOrderRows.map((o) => {
+        const split = splitTaxByPlaceOfSupply(o.taxPaise, o.shippingState, homeStateCode);
+        return {
+          id: o.id,
+          billNumber: `ORD-${o.id.slice(-8).toUpperCase()}`,
+          isEcom: true,
+          createdAt: (o.paidAt as Date).toISOString(),
+          subtotalPaise: o.subtotalPaise,
+          cgstPaise: split.cgstPaise,
+          sgstPaise: split.sgstPaise,
+          igstPaise: split.igstPaise,
+          totalPaise: o.totalPaise,
+          shopName: 'E-commerce',
+          customerName: o.customer?.name ?? null,
+        };
+      }),
+    ]
+      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+      .slice(0, 100);
+
     const totalRev = bills._sum.totalPaise ?? 0;
     const billCount = bills._count._all;
     const refundAggRow = refundAgg[0];
@@ -534,6 +617,7 @@ financeRouter.get('/daily-sales', async (req, res, next) => {
           revenuePaise: d.revenuePaise,
           billCount: d.billCount,
         })),
+        bills: salesBills,
       },
     });
   } catch (err) {
@@ -1078,24 +1162,30 @@ financeRouter.get('/gst-summary', async (req, res, next) => {
         where: { createdAt: { gte: from, lt: to }, ...shopWhere(q.shopId) },
         select: { cgstPaise: true, sgstPaise: true, igstPaise: true, totalPaise: true },
       }),
-      // E-commerce orders: tax recorded as a single field (treated as IGST for inter-state sales)
+      // E-commerce orders: tax stored as a single field; split per place of
+      // supply (shippingState vs our home state) below.
       prisma.order.findMany({
         where: {
           paidAt: { gte: from, lt: to },
           paymentStatus: PaymentStatus.PAID,
           status: { notIn: [OrderStatus.CANCELLED, OrderStatus.RETURNED] },
         },
-        select: { totalPaise: true, taxPaise: true },
+        select: { totalPaise: true, taxPaise: true, shippingState: true },
       }),
     ]);
-    const posIgstPaise = sumPaise(bills.map((b) => b.igstPaise));
-    const ecomIgstPaise = sumPaise(ecomOrders.map((o) => o.taxPaise));
+    const homeStateCode = await getHomeStateCode();
+    const ecomSplits = ecomOrders.map((o) =>
+      splitTaxByPlaceOfSupply(o.taxPaise, o.shippingState, homeStateCode),
+    );
+    const ecomCgstPaise = sumPaise(ecomSplits.map((s) => s.cgstPaise));
+    const ecomSgstPaise = sumPaise(ecomSplits.map((s) => s.sgstPaise));
+    const ecomIgstPaise = sumPaise(ecomSplits.map((s) => s.igstPaise));
     res.json({
       data: {
         month: q.month,
-        cgstPaise: sumPaise(bills.map((b) => b.cgstPaise)),
-        sgstPaise: sumPaise(bills.map((b) => b.sgstPaise)),
-        igstPaise: posIgstPaise + ecomIgstPaise,
+        cgstPaise: sumPaise(bills.map((b) => b.cgstPaise)) + ecomCgstPaise,
+        sgstPaise: sumPaise(bills.map((b) => b.sgstPaise)) + ecomSgstPaise,
+        igstPaise: sumPaise(bills.map((b) => b.igstPaise)) + ecomIgstPaise,
         ecomIgstPaise,
         taxableRevenuePaise:
           sumPaise(bills.map((b) => b.totalPaise)) + sumPaise(ecomOrders.map((o) => o.totalPaise)),
@@ -1151,26 +1241,33 @@ financeRouter.get('/gst-bills', async (req, res, next) => {
           subtotalPaise: true,
           taxPaise: true,
           totalPaise: true,
+          shippingState: true,
           customer: { select: { name: true } },
         },
       }),
     ]);
 
+    const homeStateCode = await getHomeStateCode();
+
     // Normalise e-commerce orders into the same shape as POS bills so the
-    // frontend can render them in the same table (tax stored as IGST).
-    const ecomRows = ecomOrders.map((o) => ({
-      id: o.id,
-      billNumber: `ORD-${o.id.slice(-8).toUpperCase()}`,
-      createdAt: o.paidAt,
-      subtotalPaise: o.subtotalPaise,
-      cgstPaise: 0,
-      sgstPaise: 0,
-      igstPaise: o.taxPaise,
-      totalPaise: o.totalPaise,
-      shop: { name: 'E-commerce', gstStateCode: null },
-      customer: o.customer,
-      isEcom: true,
-    }));
+    // frontend can render them in the same table. Tax is split by place of
+    // supply: CGST+SGST for an in-state customer, IGST for inter-state.
+    const ecomRows = ecomOrders.map((o) => {
+      const split = splitTaxByPlaceOfSupply(o.taxPaise, o.shippingState, homeStateCode);
+      return {
+        id: o.id,
+        billNumber: `ORD-${o.id.slice(-8).toUpperCase()}`,
+        createdAt: o.paidAt,
+        subtotalPaise: o.subtotalPaise,
+        cgstPaise: split.cgstPaise,
+        sgstPaise: split.sgstPaise,
+        igstPaise: split.igstPaise,
+        totalPaise: o.totalPaise,
+        shop: { name: 'E-commerce', gstStateCode: null },
+        customer: o.customer,
+        isEcom: true,
+      };
+    });
 
     res.json({ data: [...bills, ...ecomRows].sort((a, b) => new Date(a.createdAt!).getTime() - new Date(b.createdAt!).getTime()) });
   } catch (err) {

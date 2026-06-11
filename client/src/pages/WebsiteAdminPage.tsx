@@ -48,6 +48,9 @@ import { useGetCategoriesQuery } from '@/features/inventory/inventoryApi';
 import {
   useGetAdminStorefrontQuery,
   useUpdateStorefrontMutation,
+  useGetPublicProductsQuery,
+  useGetPublicCollectionsQuery,
+  type PublicProduct,
 } from '@/features/storefront/storefrontApi';
 import {
   useGetLoyaltyConfigQuery,
@@ -2473,6 +2476,173 @@ function StringListEditor({
   );
 }
 
+// Searchable product picker for a homepage showcase (18K Gold Tone, 9 KT Fine
+// Gold, Silver). Stores an ordered list of product slugs; the storefront
+// resolves them live so price / stock stay current. `candidates` is the set of
+// published products eligible for this showcase (already filtered to the
+// section's category). An empty selection means the storefront auto-fills the
+// showcase from that category — so curating is optional.
+function ProductPickerEditor({
+  slugs,
+  candidates,
+  onChange,
+  max = 8,
+  loading,
+}: {
+  slugs: readonly string[];
+  candidates: PublicProduct[];
+  onChange: (next: string[]) => void;
+  max?: number;
+  loading?: boolean;
+}): JSX.Element {
+  const [query, setQuery] = useState('');
+  const bySlug = new Map(candidates.map((p) => [p.slug, p]));
+  const selectedSet = new Set(slugs);
+  const q = query.trim().toLowerCase();
+  const matches = q
+    ? candidates
+        .filter((p) => !selectedSet.has(p.slug))
+        .filter((p) => p.name.toLowerCase().includes(q) || p.slug.toLowerCase().includes(q))
+        .slice(0, 8)
+    : [];
+  const atMax = slugs.length >= max;
+
+  function add(slug: string): void {
+    if (atMax || selectedSet.has(slug)) return;
+    onChange([...slugs, slug]);
+    setQuery('');
+  }
+  function removeAt(idx: number): void {
+    onChange(slugs.filter((_, i) => i !== idx));
+  }
+  function move(idx: number, delta: -1 | 1): void {
+    const target = idx + delta;
+    if (target < 0 || target >= slugs.length) return;
+    const next = slugs.slice();
+    const tmp = next[idx] as string;
+    next[idx] = next[target] as string;
+    next[target] = tmp;
+    onChange(next);
+  }
+
+  return (
+    <div className="space-y-3">
+      {slugs.length === 0 ? (
+        <p className="text-xs text-ink-500 italic">
+          No products picked — the showcase auto-fills from this category. Search below to curate it.
+        </p>
+      ) : (
+        <ul className="space-y-2">
+          {slugs.map((slug, idx) => {
+            const p = bySlug.get(slug);
+            return (
+              <li
+                key={slug + idx}
+                className="flex items-center gap-3 rounded-md border border-ink-100 bg-ink-25 p-2"
+              >
+                <div className="h-10 w-10 shrink-0 overflow-hidden rounded bg-ink-100">
+                  {p?.images?.[0] && (
+                    <img src={p.images[0]} alt="" className="h-full w-full object-cover" />
+                  )}
+                </div>
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-sm text-ink-900">{p?.name ?? slug}</p>
+                  <p className="truncate text-[11px] text-ink-500">
+                    {p ? slug : `${slug} — not found (unpublished or removed)`}
+                  </p>
+                </div>
+                <div className="flex items-center gap-0.5">
+                  <button
+                    type="button"
+                    onClick={() => move(idx, -1)}
+                    disabled={idx === 0}
+                    className="h-7 w-7 inline-flex items-center justify-center rounded text-ink-500 hover:text-ink-900 hover:bg-ink-100 disabled:opacity-30"
+                    aria-label="Move up"
+                    title="Move up"
+                  >
+                    ↑
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => move(idx, 1)}
+                    disabled={idx === slugs.length - 1}
+                    className="h-7 w-7 inline-flex items-center justify-center rounded text-ink-500 hover:text-ink-900 hover:bg-ink-100 disabled:opacity-30"
+                    aria-label="Move down"
+                    title="Move down"
+                  >
+                    ↓
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => removeAt(idx)}
+                    className="h-7 w-7 inline-flex items-center justify-center rounded text-ink-500 hover:text-danger-700 hover:bg-danger-50"
+                    aria-label="Remove"
+                    title="Remove"
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+
+      <div className="relative">
+        <Input
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder={atMax ? `Max ${max} reached — remove one to add more` : 'Search products to add…'}
+          disabled={atMax}
+          className="h-9"
+        />
+        {q && matches.length > 0 && (
+          <ul className="absolute z-20 mt-1 max-h-64 w-full overflow-auto rounded-md border border-ink-200 bg-ink-0 shadow-lg">
+            {matches.map((p) => (
+              <li key={p.id}>
+                <button
+                  type="button"
+                  onClick={() => add(p.slug)}
+                  className="flex w-full items-center gap-3 px-2 py-1.5 text-left hover:bg-ink-25"
+                >
+                  <div className="h-8 w-8 shrink-0 overflow-hidden rounded bg-ink-100">
+                    {p.images?.[0] && (
+                      <img src={p.images[0]} alt="" className="h-full w-full object-cover" />
+                    )}
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-sm text-ink-900">{p.name}</p>
+                    <p className="truncate text-[11px] text-ink-500">{p.slug}</p>
+                  </div>
+                  <Plus className="h-4 w-4 text-ink-400 shrink-0" />
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+        {q && matches.length === 0 && (
+          <p className="mt-1 text-[11px] text-ink-500">
+            {loading
+              ? 'Loading products…'
+              : candidates.length === 0
+                ? 'No published products in this category yet.'
+                : 'No matches.'}
+          </p>
+        )}
+      </div>
+
+      <div className="flex items-center justify-between">
+        <p className="text-[11px] text-ink-500">
+          Empty = auto-fill from the category · {candidates.length} eligible
+        </p>
+        <p className="text-xs text-ink-500">
+          {slugs.length} / {max}
+        </p>
+      </div>
+    </div>
+  );
+}
+
 // -- Field schemas per section --
 const HERO_SLIDE_FIELDS = [
   { key: 'image', label: 'Banner image', type: 'image', span: 3 },
@@ -2492,21 +2662,6 @@ const REEL_FIELDS = [
   { key: 'slug', label: 'Collection slug', type: 'text', placeholder: 'bridal', span: 2 },
   { key: 'caption', label: 'Caption', type: 'text', span: 3 },
   { key: 'poster', label: 'Poster image URL', type: 'image', span: 3 },
-] as const;
-
-const DEAL_FIELDS = [
-  { key: 'name', label: 'Product name', type: 'text', span: 2 },
-  { key: 'slug', label: 'Product slug', type: 'text', span: 2 },
-  { key: 'category', label: 'Category label', type: 'text', placeholder: 'NECKLACES', span: 1 },
-  { key: 'priceLabel', label: 'Price label', type: 'text', placeholder: '₹29,000', span: 2 },
-  {
-    key: 'badge',
-    label: 'Badge',
-    type: 'select',
-    options: ['NEW', 'SALE', 'OUT'],
-    span: 1,
-  },
-  { key: 'img', label: 'Image URL', type: 'image', span: 3 },
 ] as const;
 
 const TESTIMONIAL_FIELDS = [
@@ -2691,11 +2846,69 @@ function HomepageSectionsTab({
   content: StorefrontContent;
   onPatch: (patch: Partial<StorefrontContent>) => void;
 }): JSX.Element {
+  // Live published products + categories, used to power the showcase product
+  // pickers below. `candidatesFor` resolves a main category slug to its
+  // products (the category + its sub-categories) so each picker only offers
+  // pieces that belong on that showcase.
+  const { data: allProducts = [], isLoading: productsLoading } = useGetPublicProductsQuery();
+  const { data: allCategories = [] } = useGetPublicCollectionsQuery();
+  const candidatesFor = (mainSlug: string): PublicProduct[] => {
+    const main = allCategories.find((c) => c.slug === mainSlug);
+    if (!main) return [];
+    const ids = new Set<string>([
+      main.id,
+      ...allCategories.filter((c) => c.parentId === main.id).map((c) => c.id),
+    ]);
+    return allProducts.filter((p) => ids.has(p.categoryId));
+  };
+
   return (
     <div className="space-y-6">
       {/* Hero video moved to the Hero tab so it lives next to the title /
           subtitle / poster image. Avoids editors hunting through two tabs
           to update what reads as one section on the live site. */}
+
+      {/* Curated product showcases — the three category grids on the homepage.
+          Pick specific pieces (drag to reorder); leave empty to auto-fill from
+          the category. The storefront prices/stock these live. */}
+      <Card
+        title="18K Gold Tone showcase (Top Styles)"
+        desc="Products shown in the homepage 18K Gold Tone grid. Empty = auto-fill from the 18k-gold-tone category. Up to 8 (a 4×2 grid)."
+      >
+        <ProductPickerEditor
+          slugs={content.goldToneFeatured ?? []}
+          candidates={candidatesFor('18k-gold-tone')}
+          onChange={(v) => onPatch({ goldToneFeatured: v })}
+          loading={productsLoading}
+          max={8}
+        />
+      </Card>
+
+      <Card
+        title="9 KT Fine Gold showcase"
+        desc="Products shown in the homepage 9 KT Fine Gold grid. Empty = auto-fill from the 9-k-fine-gold category. Up to 8 (a 4×2 grid)."
+      >
+        <ProductPickerEditor
+          slugs={content.nineKtFeatured ?? []}
+          candidates={candidatesFor('9-k-fine-gold')}
+          onChange={(v) => onPatch({ nineKtFeatured: v })}
+          loading={productsLoading}
+          max={8}
+        />
+      </Card>
+
+      <Card
+        title="Fine Silver showcase"
+        desc="Products shown in the homepage Fine Silver grid. Empty = auto-fill from the 925-sterling-silver category. Up to 8 (a 4×2 grid)."
+      >
+        <ProductPickerEditor
+          slugs={content.silverFeatured ?? []}
+          candidates={candidatesFor('925-sterling-silver')}
+          onChange={(v) => onPatch({ silverFeatured: v })}
+          loading={productsLoading}
+          max={8}
+        />
+      </Card>
 
       <Card title="Browse by category (circular marquee)" desc="Each tile: label, slug, image URL. 6–12 tiles recommended.">
         <ListItemEditor
@@ -2716,17 +2929,6 @@ function HomepageSectionsTab({
           onChange={(v) => onPatch({ reels: v })}
           itemLabel={(it) => it.handle || it.caption?.slice(0, 24) || 'New reel'}
           max={12}
-        />
-      </Card>
-
-      <Card title="Deals of the week" desc="Up to 8 product cards. Each: slug, name, category, price label, badge (NEW/SALE/OUT), image URL.">
-        <ListItemEditor
-          items={content.deals ?? []}
-          fields={DEAL_FIELDS as ReadonlyArray<FieldDef<{ slug: string; name: string; category: string; priceLabel: string; badge: 'NEW' | 'SALE' | 'OUT'; img: string }>>}
-          newItem={() => ({ slug: '', name: '', category: '', priceLabel: '', badge: 'NEW' as const, img: '' })}
-          onChange={(v) => onPatch({ deals: v })}
-          itemLabel={(it) => it.name || it.slug || 'New deal'}
-          max={16}
         />
       </Card>
 

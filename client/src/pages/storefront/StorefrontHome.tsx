@@ -9,6 +9,11 @@ import {
   useGetPublicProductsQuery,
   useGetPublicCollectionsQuery,
 } from '@/features/storefront/storefrontApi';
+import type {
+  PublicProduct,
+  PublicCategory,
+  PublicGoldRateResponse,
+} from '@/features/storefront/storefrontApi';
 import type { DoorCard, TestimonialCard, TrustBadge } from '@/features/storefront/storefrontContentSlice';
 import { storefrontTotalPaise, productMetaLabel } from '@/features/storefront/pricing';
 import { HeroCarousel } from './HeroCarousel';
@@ -54,6 +59,123 @@ const TRUST_ICONS: Record<TrustBadge['icon'], React.ComponentType<{ className?: 
   award: Award,
 };
 
+// One homepage category showcase — centered title, sub-category filter pills,
+// a 4-across × 2-row product grid (max 8) and a "View all" deep-link to the
+// collection. Shared by the 18K Gold Tone, 9 KT Fine Gold and Fine Silver
+// blocks. `products` is already resolved to either the admin's curated CMS
+// picks or the category auto-fill; the sub-category pills filter that set by
+// `categoryId`. Renders nothing when there are no products to show.
+function ProductShowcase({
+  eyebrow,
+  title,
+  mainSlug,
+  subCategories,
+  products,
+  liveRate,
+  categoryNameById,
+}: {
+  eyebrow: string;
+  title: string;
+  mainSlug: string;
+  subCategories: PublicCategory[];
+  products: PublicProduct[];
+  liveRate: PublicGoldRateResponse | undefined;
+  categoryNameById: Map<string, string>;
+}): JSX.Element | null {
+  const [tab, setTab] = useState<string>('ALL');
+  if (products.length === 0) return null;
+  const tabs = [{ id: 'ALL', label: 'All' }, ...subCategories.map((s) => ({ id: s.id, label: s.name }))];
+  const visible = (
+    tab === 'ALL' ? products : products.filter((p) => p.categoryId === tab)
+  ).slice(0, 8);
+  const viewAll =
+    tab === 'ALL' ? `/store/collections/${mainSlug}` : `/store/collections/${mainSlug}?sub=${tab}`;
+  return (
+    <section className="bg-[#FDF8F4] border-b border-[#EFE0D2]/60">
+      <div className="max-w-[1280px] mx-auto px-4 sm:px-6 py-14 sm:py-20">
+        <div className="text-center mb-7 sm:mb-9">
+          <p className="text-eyebrow uppercase text-brand-700">{eyebrow}</p>
+          <h2 className="font-display text-3xl sm:text-[36px] md:text-[44px] leading-tight text-ink-900 mt-2">
+            {title}
+          </h2>
+        </div>
+        {tabs.length > 1 && (
+          <div className="flex flex-wrap items-center justify-center gap-2 sm:gap-3 mb-8 sm:mb-10">
+            {tabs.map((t) => (
+              <button
+                key={t.id}
+                type="button"
+                onClick={() => setTab(t.id)}
+                className={cn(
+                  'h-9 px-4 rounded-md border text-sm transition-colors duration-fast',
+                  tab === t.id
+                    ? 'border-ink-900 bg-ink-900 text-ink-0'
+                    : 'border-ink-200 text-ink-700 hover:border-ink-400 hover:text-ink-900',
+                )}
+              >
+                {t.label}
+              </button>
+            ))}
+          </div>
+        )}
+        {visible.length > 0 ? (
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-x-3 gap-y-8 sm:gap-x-5 sm:gap-y-10">
+            {visible.map((p) => {
+              const soldOut = p.inStock === false;
+              const catLabel = categoryNameById.get(p.categoryId) ?? productMetaLabel(p);
+              return (
+                <Link to={`/store/products/${p.slug}`} key={p.id} className="group block">
+                  <div className="relative aspect-[4/5] overflow-hidden bg-[#FAF3EE] rounded-sm gold-shine-target">
+                    <img
+                      src={p.images[0] ?? ''}
+                      alt={p.name}
+                      className={cn(
+                        'absolute inset-0 h-full w-full object-cover transition-transform duration-slow group-hover:scale-[1.03]',
+                        soldOut && 'grayscale opacity-70',
+                      )}
+                      loading="lazy"
+                    />
+                    {soldOut && (
+                      <span className="absolute top-2 left-2 z-10 bg-ink-900 text-ink-0 text-[10px] uppercase tracking-[0.18em] px-2 py-1 rounded-sm">
+                        Sold out
+                      </span>
+                    )}
+                  </div>
+                  <div className="mt-3 sm:mt-4 space-y-1 px-0.5">
+                    <p className="text-[10px] uppercase tracking-[0.16em] text-ink-500 truncate">{catLabel}</p>
+                    <h3 className="font-display text-base sm:text-[18px] leading-tight text-ink-900 group-hover:text-brand-700 transition-colors truncate">
+                      {p.name}
+                    </h3>
+                    <div className="flex items-center gap-0.5 text-brand-500">
+                      {Array.from({ length: 5 }).map((_, k) => (
+                        <Star key={k} className="h-3 w-3 fill-current" aria-hidden />
+                      ))}
+                    </div>
+                    <p className="text-sm text-ink-900 font-mono tabular-nums pt-0.5">
+                      ₹{(storefrontTotalPaise(p, liveRate?.rates) / 100).toLocaleString('en-IN')}
+                    </p>
+                  </div>
+                </Link>
+              );
+            })}
+          </div>
+        ) : (
+          <p className="text-center text-sm text-ink-500 py-8">No pieces in this style yet.</p>
+        )}
+        <div className="text-center mt-9 sm:mt-12">
+          <Link
+            to={viewAll}
+            className="inline-flex items-center gap-2 h-11 px-7 rounded-full border border-ink-300 text-ink-900 text-sm font-medium hover:bg-ink-900 hover:text-ink-0 transition-colors duration-fast"
+          >
+            View all
+            <ArrowRight className="h-4 w-4" />
+          </Link>
+        </div>
+      </div>
+    </section>
+  );
+}
+
 export function StorefrontHome(): JSX.Element {
   const content = useAppSelector((s) => s.storefrontContent);
   const {
@@ -65,7 +187,9 @@ export function StorefrontHome(): JSX.Element {
     shopByOccasion,
     browseCategories,
     reels,
-    deals,
+    goldToneFeatured,
+    nineKtFeatured,
+    silverFeatured,
     testimonialsRow1,
     testimonialsRow2,
     doorCards,
@@ -92,47 +216,36 @@ export function StorefrontHome(): JSX.Element {
       : cmsRates.updatedAt,
   };
 
-  // Top Styles — featured 18K Gold Tone pieces with sub-category tabs. Pulls
-  // live published products + categories; the gold-tone set is everything in
-  // the "18k-gold-tone" main category and its sub-categories (same resolution
-  // the collection page uses). Each tab is a sub-category; "View all" deep-links
-  // to that collection (by sub-category id, since sub slugs collide per metal).
+  // Homepage product showcases — 18K Gold Tone, 9 KT Fine Gold and Fine Silver.
+  // Each renders the admin's curated CMS picks (ordered product slugs) when set,
+  // and otherwise auto-fills from the matching main category + its sub-categories
+  // (the same resolution the collection page uses). The <ProductShowcase> block
+  // adds the title, sub-category filter pills and "View all" deep-link.
   const { data: allProducts = [] } = useGetPublicProductsQuery();
   const { data: allCategories = [] } = useGetPublicCollectionsQuery();
-  const [topStyleTab, setTopStyleTab] = useState<string>('ALL');
-  const goldToneMain = allCategories.find((c) => c.slug === '18k-gold-tone');
-  const goldToneSubs = goldToneMain
-    ? allCategories.filter((c) => c.parentId === goldToneMain.id)
-    : [];
-  const goldToneCatIds = new Set<string>(
-    goldToneMain ? [goldToneMain.id, ...goldToneSubs.map((s) => s.id)] : [],
-  );
-  const goldToneProducts = allProducts.filter((p) => goldToneCatIds.has(p.categoryId));
-  const topStyleTabs = [{ id: 'ALL', label: 'All' }, ...goldToneSubs.map((s) => ({ id: s.id, label: s.name }))];
-  const topStyleVisible = (
-    topStyleTab === 'ALL' ? goldToneProducts : goldToneProducts.filter((p) => p.categoryId === topStyleTab)
-  ).slice(0, 4);
-  const topStyleViewAll =
-    topStyleTab === 'ALL'
-      ? '/store/collections/18k-gold-tone'
-      : `/store/collections/18k-gold-tone?sub=${topStyleTab}`;
-
-  // Deals of the Week now features real 9 KT Gold pieces (the "9-k-fine-gold"
-  // main category + its sub-categories), capped to the number of cards the
-  // section used to show so the layout stays the same.
-  const nineKtMain = allCategories.find((c) => c.slug === '9-k-fine-gold');
-  const nineKtSubs = nineKtMain ? allCategories.filter((c) => c.parentId === nineKtMain.id) : [];
-  const nineKtCatIds = new Set<string>(nineKtMain ? [nineKtMain.id, ...nineKtSubs.map((s) => s.id)] : []);
-  const dealSlots = deals.length || 8;
-  const nineKtProducts = allProducts.filter((p) => nineKtCatIds.has(p.categoryId)).slice(0, dealSlots);
   const categoryNameById = new Map(allCategories.map((c) => [c.id, c.name]));
+  const productBySlug = new Map(allProducts.map((p) => [p.slug, p]));
 
-  // Fine Silver edit — same treatment as the 9 KT Gold block, for the
-  // "925-sterling-silver" main category + its sub-categories.
-  const silverMain = allCategories.find((c) => c.slug === '925-sterling-silver');
-  const silverSubs = silverMain ? allCategories.filter((c) => c.parentId === silverMain.id) : [];
-  const silverCatIds = new Set<string>(silverMain ? [silverMain.id, ...silverSubs.map((s) => s.id)] : []);
-  const silverProducts = allProducts.filter((p) => silverCatIds.has(p.categoryId)).slice(0, dealSlots);
+  // Resolve a showcase to its product list + sub-categories. Curated slugs win
+  // (in order, dropping any now-unpublished / deleted pieces); empty curation
+  // falls back to the full category set.
+  const resolveShowcase = (
+    mainSlug: string,
+    curatedSlugs: string[] | undefined,
+  ): { products: PublicProduct[]; subs: PublicCategory[] } => {
+    const main = allCategories.find((c) => c.slug === mainSlug);
+    const subs = main ? allCategories.filter((c) => c.parentId === main.id) : [];
+    const ids = new Set<string>(main ? [main.id, ...subs.map((s) => s.id)] : []);
+    const auto = allProducts.filter((p) => ids.has(p.categoryId));
+    const curated = (curatedSlugs ?? [])
+      .map((s) => productBySlug.get(s))
+      .filter((p): p is PublicProduct => Boolean(p));
+    return { products: curated.length ? curated : auto, subs };
+  };
+
+  const goldTone = resolveShowcase('18k-gold-tone', goldToneFeatured);
+  const nineKt = resolveShowcase('9-k-fine-gold', nineKtFeatured);
+  const silver = resolveShowcase('925-sterling-silver', silverFeatured);
 
   return (
     <>
@@ -235,86 +348,18 @@ export function StorefrontHome(): JSX.Element {
         </div>
       </section>
 
-      {/* Top Styles — featured 18K Gold Tone pieces, filterable by sub-category,
-          with a "View all" deep-link to the (optionally sub-filtered) collection. */}
-      {goldToneProducts.length > 0 && (
-        <section className="bg-[#FDF8F4] border-b border-[#EFE0D2]/60">
-          <div className="max-w-[1280px] mx-auto px-4 sm:px-6 py-14 sm:py-20">
-            <div className="text-center mb-7 sm:mb-9">
-              <p className="text-eyebrow uppercase text-brand-700">Top Styles</p>
-            </div>
-            {topStyleTabs.length > 1 && (
-              <div className="flex flex-wrap items-center justify-center gap-2 sm:gap-3 mb-8 sm:mb-10">
-                {topStyleTabs.map((t) => (
-                  <button
-                    key={t.id}
-                    type="button"
-                    onClick={() => setTopStyleTab(t.id)}
-                    className={cn(
-                      'h-9 px-4 rounded-md border text-sm transition-colors duration-fast',
-                      topStyleTab === t.id
-                        ? 'border-ink-900 bg-ink-900 text-ink-0'
-                        : 'border-ink-200 text-ink-700 hover:border-ink-400 hover:text-ink-900',
-                    )}
-                  >
-                    {t.label}
-                  </button>
-                ))}
-              </div>
-            )}
-            {topStyleVisible.length > 0 ? (
-              <div className="grid grid-cols-2 lg:grid-cols-4 gap-x-3 gap-y-8 sm:gap-x-5 sm:gap-y-10">
-                {topStyleVisible.map((p) => {
-                  const meta = productMetaLabel(p);
-                  const soldOut = p.inStock === false;
-                  return (
-                    <Link to={`/store/products/${p.slug}`} key={p.id} className="group block">
-                      <div className="relative aspect-[4/5] overflow-hidden bg-[#FAF3EE] rounded-sm">
-                        <img
-                          src={p.images[0] ?? ''}
-                          alt={p.name}
-                          className={cn(
-                            'absolute inset-0 h-full w-full object-cover transition-transform duration-slow group-hover:scale-[1.03]',
-                            soldOut && 'grayscale opacity-70',
-                          )}
-                          loading="lazy"
-                        />
-                        {soldOut && (
-                          <span className="absolute top-2 left-2 z-10 bg-ink-900 text-ink-0 text-[10px] uppercase tracking-[0.18em] px-2 py-1 rounded-sm">
-                            Sold out
-                          </span>
-                        )}
-                      </div>
-                      <div className="mt-3 sm:mt-4 space-y-1 px-0.5">
-                        <h3 className="font-display text-base sm:text-[18px] leading-tight text-ink-900 group-hover:text-brand-700 transition-colors">
-                          {p.name}
-                        </h3>
-                        <p className="text-[11px] sm:text-xs text-ink-500">
-                          {(p.weightMg / 1000).toFixed(2)} g{meta ? ` · ${meta}` : ''}
-                        </p>
-                        <p className="text-sm text-ink-900 font-mono tabular-nums pt-0.5">
-                          ₹{(storefrontTotalPaise(p, liveRate?.rates) / 100).toLocaleString('en-IN')}
-                        </p>
-                      </div>
-                    </Link>
-                  );
-                })}
-              </div>
-            ) : (
-              <p className="text-center text-sm text-ink-500 py-8">No pieces in this style yet.</p>
-            )}
-            <div className="text-center mt-9 sm:mt-12">
-              <Link
-                to={topStyleViewAll}
-                className="inline-flex items-center gap-2 h-11 px-7 rounded-full border border-ink-300 text-ink-900 text-sm font-medium hover:bg-ink-900 hover:text-ink-0 transition-colors duration-fast"
-              >
-                View all
-                <ArrowRight className="h-4 w-4" />
-              </Link>
-            </div>
-          </div>
-        </section>
-      )}
+      {/* Top Styles — 18K Gold Tone showcase: curated CMS picks (or auto-fill
+          from the category), filterable by sub-category, with a "View all"
+          deep-link to the (optionally sub-filtered) collection. */}
+      <ProductShowcase
+        eyebrow="Top Styles"
+        title="18K Gold Tone"
+        mainSlug="18k-gold-tone"
+        subCategories={goldTone.subs}
+        products={goldTone.products}
+        liveRate={liveRate}
+        categoryNameById={categoryNameById}
+      />
 
       {/* Shop by occasion — 6 tall body-shot tiles with dark gradient overlay
           showing category name + product count. Replaces the older 4-card TOC. */}
@@ -357,91 +402,18 @@ export function StorefrontHome(): JSX.Element {
         </div>
       </section>
 
-      {/* Deals of the week — left editorial card + right 2x4 product grid.
-          Reference: Antisa / WoodMart "Deals" layout. Horizontal scroll on
-          mobile, fixed 5-col / 8-tile grid on desktop. */}
-      <section className="bg-[#FAF3EE] border-y border-[#EFE0D2]/60">
-        <div className="max-w-[1280px] mx-auto px-4 sm:px-6 py-14 sm:py-20 md:py-24 grid grid-cols-1 lg:grid-cols-[320px_1fr] gap-6 sm:gap-8 lg:gap-10 items-stretch">
-          {/* Left: editorial deal card */}
-          <aside className="relative overflow-hidden rounded-md bg-ink-900 text-ink-0 min-h-[420px] lg:min-h-full flex flex-col">
-            <img
-              src="/categories/jew3.jpg"
-              alt=""
-              aria-hidden
-              className="absolute inset-0 h-full w-full object-cover opacity-50"
-            />
-            <div className="absolute inset-0 bg-gradient-to-br from-ink-900/85 via-ink-900/60 to-ink-900/85" aria-hidden />
-            <div className="relative z-10 flex-1 flex flex-col justify-between p-7 sm:p-8 lg:p-10">
-              <div>
-                {/* This section now showcases live 9 KT Gold products, so the
-                    heading is fixed to "9 KT Fine Gold" (the CMS deals labels
-                    on the saved blob are stale and would otherwise override). */}
-                <p className="text-eyebrow uppercase text-brand-300">{L.dealsEyebrow}</p>
-                <h2 className="font-display text-3xl sm:text-[36px] md:text-[40px] leading-[1.1] mt-3 max-w-[14ch]">
-                  9 KT Fine Gold
-                </h2>
-                <p className="mt-4 text-sm text-ink-200/85 leading-relaxed max-w-[28ch]">
-                  Our 9 KT fine-gold edit, hallmarked and priced at the live gold rate.
-                </p>
-              </div>
-              <Link
-                to="/store/collections/9-k-fine-gold"
-                className="mt-8 inline-flex items-center gap-2 self-start h-11 sm:h-12 px-5 sm:px-7 rounded-full bg-brand-400 text-ink-900 text-sm font-medium hover:bg-brand-300 transition-colors duration-fast"
-              >
-                Shop 9 KT gold
-                <ArrowRight className="h-4 w-4" />
-              </Link>
-            </div>
-          </aside>
-
-          {/* Right: 2 x 4 deal product grid (slick-style). Horizontal scroll
-              on mobile, fixed grid on lg+. */}
-          <div className="-mx-4 sm:-mx-6 lg:mx-0">
-            <div className="px-4 sm:px-6 lg:px-0 grid grid-flow-col auto-cols-[68%] sm:auto-cols-[40%] md:auto-cols-[30%] lg:grid-flow-row lg:auto-cols-auto lg:grid-cols-4 lg:grid-rows-2 gap-3 sm:gap-4 lg:gap-5 overflow-x-auto lg:overflow-visible snap-x snap-mandatory lg:snap-none pb-2 lg:pb-0">
-              {nineKtProducts.length === 0 && (
-                <p className="text-sm text-ink-600 py-6">New 9 KT Gold pieces coming soon.</p>
-              )}
-              {nineKtProducts.map((p, i) => {
-                const soldOut = p.inStock === false;
-                const catLabel = categoryNameById.get(p.categoryId) ?? productMetaLabel(p);
-                return (
-                  <Link
-                    key={p.id}
-                    to={`/store/products/${p.slug}`}
-                    className={`group relative flex flex-col bg-ink-0 rounded-md border border-[#EFE0D2]/80 overflow-hidden snap-start lg:snap-align-none animate-fade-in-up-${(i % 6) + 1}`}
-                  >
-                    <div className="relative aspect-square bg-[#FAF3EE] overflow-hidden gold-shine-target">
-                      <img
-                        src={p.images[0] ?? ''}
-                        alt={p.name}
-                        className="absolute inset-0 h-full w-full object-cover group-hover:scale-[1.06] transition-transform duration-slow"
-                        loading="lazy"
-                      />
-                      {soldOut && (
-                        <span className="absolute top-2.5 left-2.5 text-[10px] font-semibold uppercase tracking-[0.14em] px-2 py-1 rounded-sm bg-ink-800 text-ink-0">
-                          OUT-OF-STOCK
-                        </span>
-                      )}
-                    </div>
-                    <div className="flex flex-col gap-1 p-3 sm:p-4">
-                      <p className="text-[10px] uppercase tracking-[0.16em] text-ink-500 truncate">{catLabel}</p>
-                      <h3 className="font-display text-[15px] sm:text-base leading-tight text-ink-900 group-hover:text-brand-700 transition-colors truncate">{p.name}</h3>
-                      <div className="flex items-center gap-0.5 text-brand-500 mt-0.5">
-                        {Array.from({ length: 5 }).map((_, k) => (
-                          <Star key={k} className="h-3 w-3 fill-current" aria-hidden />
-                        ))}
-                      </div>
-                      <p className="text-sm text-ink-900 font-mono tabular-nums mt-0.5">
-                        ₹{(storefrontTotalPaise(p, liveRate?.rates) / 100).toLocaleString('en-IN')}
-                      </p>
-                    </div>
-                  </Link>
-                );
-              })}
-            </div>
-          </div>
-        </div>
-      </section>
+      {/* 9 KT Fine Gold showcase — curated CMS picks (or auto-fill from the
+          category), with sub-category filter pills + "View all". Replaces the
+          old "Deals of the week" left-card layout. */}
+      <ProductShowcase
+        eyebrow="Deals of the week"
+        title="9 KT Fine Gold"
+        mainSlug="9-k-fine-gold"
+        subCategories={nineKt.subs}
+        products={nineKt.products}
+        liveRate={liveRate}
+        categoryNameById={categoryNameById}
+      />
 
       {/* Featured lookbook — 1 big editorial + up to 2 stacked, CMS-managed
           (Website CMS → Homepage sections → Featured lookbook). The first card
@@ -496,84 +468,19 @@ export function StorefrontHome(): JSX.Element {
         </section>
       )}
 
-      {/* Fine Silver — same layout as the 9 KT Gold block above, for the
-          925 Sterling Silver category + its sub-categories. Sits below the
-          Featured lookbook. */}
-      <section className="bg-[#FDF8F4] border-b border-[#EFE0D2]/60">
-        <div className="max-w-[1280px] mx-auto px-4 sm:px-6 py-14 sm:py-20 md:py-24 grid grid-cols-1 lg:grid-cols-[320px_1fr] gap-6 sm:gap-8 lg:gap-10 items-stretch">
-          <aside className="relative overflow-hidden rounded-md bg-ink-900 text-ink-0 min-h-[420px] lg:min-h-full flex flex-col">
-            <img
-              src="/categories/jew3.jpg"
-              alt=""
-              aria-hidden
-              className="absolute inset-0 h-full w-full object-cover opacity-50"
-            />
-            <div className="absolute inset-0 bg-gradient-to-br from-ink-900/85 via-ink-900/60 to-ink-900/85" aria-hidden />
-            <div className="relative z-10 flex-1 flex flex-col justify-between p-7 sm:p-8 lg:p-10">
-              <div>
-                <p className="text-eyebrow uppercase text-brand-300">Sterling silver</p>
-                <h2 className="font-display text-3xl sm:text-[36px] md:text-[40px] leading-[1.1] mt-3 max-w-[14ch]">
-                  Fine Silver
-                </h2>
-                <p className="mt-4 text-sm text-ink-200/85 leading-relaxed max-w-[28ch]">
-                  925 sterling silver, hallmarked — for gifting and daily wear.
-                </p>
-              </div>
-              <Link
-                to="/store/collections/925-sterling-silver"
-                className="mt-8 inline-flex items-center gap-2 self-start h-11 sm:h-12 px-5 sm:px-7 rounded-full bg-brand-400 text-ink-900 text-sm font-medium hover:bg-brand-300 transition-colors duration-fast"
-              >
-                Shop silver
-                <ArrowRight className="h-4 w-4" />
-              </Link>
-            </div>
-          </aside>
-          <div className="-mx-4 sm:-mx-6 lg:mx-0">
-            <div className="px-4 sm:px-6 lg:px-0 grid grid-flow-col auto-cols-[68%] sm:auto-cols-[40%] md:auto-cols-[30%] lg:grid-flow-row lg:auto-cols-auto lg:grid-cols-4 lg:grid-rows-2 gap-3 sm:gap-4 lg:gap-5 overflow-x-auto lg:overflow-visible snap-x snap-mandatory lg:snap-none pb-2 lg:pb-0">
-              {silverProducts.length === 0 && (
-                <p className="text-sm text-ink-600 py-6">New 925 sterling silver pieces coming soon.</p>
-              )}
-              {silverProducts.map((p, i) => {
-                const soldOut = p.inStock === false;
-                const catLabel = categoryNameById.get(p.categoryId) ?? productMetaLabel(p);
-                return (
-                  <Link
-                    key={p.id}
-                    to={`/store/products/${p.slug}`}
-                    className={`group relative flex flex-col bg-ink-0 rounded-md border border-[#EFE0D2]/80 overflow-hidden snap-start lg:snap-align-none animate-fade-in-up-${(i % 6) + 1}`}
-                  >
-                    <div className="relative aspect-square bg-[#FAF3EE] overflow-hidden gold-shine-target">
-                      <img
-                        src={p.images[0] ?? ''}
-                        alt={p.name}
-                        className="absolute inset-0 h-full w-full object-cover group-hover:scale-[1.06] transition-transform duration-slow"
-                        loading="lazy"
-                      />
-                      {soldOut && (
-                        <span className="absolute top-2.5 left-2.5 text-[10px] font-semibold uppercase tracking-[0.14em] px-2 py-1 rounded-sm bg-ink-800 text-ink-0">
-                          OUT-OF-STOCK
-                        </span>
-                      )}
-                    </div>
-                    <div className="flex flex-col gap-1 p-3 sm:p-4">
-                      <p className="text-[10px] uppercase tracking-[0.16em] text-ink-500 truncate">{catLabel}</p>
-                      <h3 className="font-display text-[15px] sm:text-base leading-tight text-ink-900 group-hover:text-brand-700 transition-colors truncate">{p.name}</h3>
-                      <div className="flex items-center gap-0.5 text-brand-500 mt-0.5">
-                        {Array.from({ length: 5 }).map((_, k) => (
-                          <Star key={k} className="h-3 w-3 fill-current" aria-hidden />
-                        ))}
-                      </div>
-                      <p className="text-sm text-ink-900 font-mono tabular-nums mt-0.5">
-                        ₹{(storefrontTotalPaise(p, liveRate?.rates) / 100).toLocaleString('en-IN')}
-                      </p>
-                    </div>
-                  </Link>
-                );
-              })}
-            </div>
-          </div>
-        </div>
-      </section>
+      {/* Fine Silver showcase — same treatment as the 9 KT Gold block, for the
+          925 Sterling Silver category. Curated CMS picks (or auto-fill), with
+          sub-category filter pills + "View all". Sits below the Featured
+          lookbook. */}
+      <ProductShowcase
+        eyebrow="Sterling silver"
+        title="Fine Silver"
+        mainSlug="925-sterling-silver"
+        subCategories={silver.subs}
+        products={silver.products}
+        liveRate={liveRate}
+        categoryNameById={categoryNameById}
+      />
 
       {/* Business story — CMS-editable (Website CMS → Story). Image + editorial
           copy on who we are. Hidden when no title/body is set. */}

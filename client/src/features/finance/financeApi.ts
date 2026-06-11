@@ -156,6 +156,22 @@ export interface DailySales {
     billCount: number;
   }>;
   byDay: Array<{ day: string; revenuePaise: number; billCount: number }>;
+  /** Bill-level detail for the window (POS bills + e-commerce orders) with GST split. */
+  bills: DailySalesBill[];
+}
+
+export interface DailySalesBill {
+  id: string;
+  billNumber: string | null;
+  isEcom: boolean;
+  createdAt: string;
+  subtotalPaise: number;
+  cgstPaise: number;
+  sgstPaise: number;
+  igstPaise: number;
+  totalPaise: number;
+  shopName: string;
+  customerName: string | null;
 }
 
 export interface GoldLoanRow {

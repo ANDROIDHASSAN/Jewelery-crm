@@ -889,6 +889,14 @@ export const StorefrontContentSchema = z.object({
   testimonialsRow2: z.array(TestimonialCardSchema).max(12).optional().default([]),
   doorCards: z.array(DoorCardSchema).max(2).optional().default([]),
   lookbookCards: z.array(LookbookCardSchema).max(3).optional().default([]),
+  // Curated product showcases on the homepage (18K Gold Tone, 9 KT Fine Gold,
+  // 925 Silver). Each holds an ordered list of product slugs the admin picked
+  // in the Website CMS. Empty = the storefront auto-fills that showcase from the
+  // category's published products (the original behaviour). Capped at 8 = the
+  // 4×2 homepage grid.
+  goldToneFeatured: z.array(z.string().min(1).max(160)).max(8).optional().default([]),
+  nineKtFeatured: z.array(z.string().min(1).max(160)).max(8).optional().default([]),
+  silverFeatured: z.array(z.string().min(1).max(160)).max(8).optional().default([]),
   blogs: z.array(BlogPostSchema).max(24).optional().default([]),
   trustBadges: z.array(TrustBadgeSchema).max(6).optional().default([]),
   pressLogos: z.array(z.string().min(1).max(80)).max(10).optional().default([]),

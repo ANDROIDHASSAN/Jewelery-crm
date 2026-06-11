@@ -10,6 +10,7 @@
 import { describe, expect, it } from 'vitest';
 import { applyBps, computeGoldValuePaise, sumPaise } from '../lib/money.js';
 import { computeGst } from '../lib/gst.js';
+import { resolveStateCode, splitTaxByPlaceOfSupply } from '@goldos/shared/bill-math';
 import { BillCreateSchema, PaymentInputSchema } from '@goldos/shared/schemas';
 
 interface MockLine {
@@ -149,5 +150,51 @@ describe('Split-payment validation', () => {
   it('rejects an unknown payment mode', () => {
     const parsed = PaymentInputSchema.safeParse({ mode: 'BITCOIN', amountPaise: 100 });
     expect(parsed.success).toBe(false);
+  });
+});
+
+describe('resolveStateCode — free-text checkout state → GST code', () => {
+  it('maps state names (any case / spacing) to a 2-digit code', () => {
+    expect(resolveStateCode('Haryana')).toBe('06');
+    expect(resolveStateCode('  haryana ')).toBe('06');
+    expect(resolveStateCode('DELHI')).toBe('07');
+    expect(resolveStateCode('Maharashtra')).toBe('27');
+  });
+  it('accepts bare codes, abbreviations and full GSTINs', () => {
+    expect(resolveStateCode('06')).toBe('06');
+    expect(resolveStateCode('6')).toBe('06');
+    expect(resolveStateCode('HR')).toBe('06');
+    expect(resolveStateCode('06ABCDE1234F1Z5')).toBe('06');
+  });
+  it('returns null for blank / unknown values', () => {
+    expect(resolveStateCode('')).toBeNull();
+    expect(resolveStateCode(null)).toBeNull();
+    expect(resolveStateCode('Atlantis')).toBeNull();
+  });
+});
+
+describe('splitTaxByPlaceOfSupply — e-commerce GST split', () => {
+  const HOME = '06'; // Haryana
+
+  it('Haryana customer → CGST + SGST (half each), no IGST', () => {
+    const s = splitTaxByPlaceOfSupply(48_375, 'Haryana', HOME);
+    expect(s.igstPaise).toBe(0);
+    expect(s.cgstPaise + s.sgstPaise).toBe(48_375);
+    // Odd totals split without losing a paisa.
+    expect(s.cgstPaise).toBe(24_187);
+    expect(s.sgstPaise).toBe(24_188);
+  });
+
+  it('out-of-state customer → full IGST, no CGST/SGST', () => {
+    const s = splitTaxByPlaceOfSupply(48_375, 'Delhi', HOME);
+    expect(s.cgstPaise).toBe(0);
+    expect(s.sgstPaise).toBe(0);
+    expect(s.igstPaise).toBe(48_375);
+  });
+
+  it('unresolved / missing state defaults to intra-state (CGST+SGST)', () => {
+    const s = splitTaxByPlaceOfSupply(1_000, null, HOME);
+    expect(s.igstPaise).toBe(0);
+    expect(s.cgstPaise + s.sgstPaise).toBe(1_000);
   });
 });
