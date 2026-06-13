@@ -53,7 +53,7 @@ function startOfFy(d: Date): Date {
 
 interface DayBookVoucher {
   date: string;
-  voucherType: 'SALE' | 'EXPENSE' | 'VENDOR_PAYMENT' | 'BANK' | 'GOLD_LOAN' | 'REPAYMENT' | 'ADVANCE';
+  voucherType: 'SALE' | 'PURCHASE' | 'EXPENSE' | 'VENDOR_PAYMENT' | 'BANK' | 'GOLD_LOAN' | 'REPAYMENT' | 'ADVANCE';
   voucherNumber: string;
   party: string;
   narration: string;
@@ -76,7 +76,7 @@ accountingRouter.get('/day-book', async (req, res, next) => {
 
     const shopWhere = q.shopId ? { shopId: q.shopId } : {};
 
-    const [bills, expenses, vendorPayments, bankTxns, loans, repayments, advances] =
+    const [bills, expenses, vendorPayments, bankTxns, loans, repayments, advances, purchaseOrders] =
       await Promise.all([
         prisma.bill.findMany({
           where: { createdAt: { gte: q.from, lte: q.to }, voidedAt: null, ...shopWhere },
@@ -140,6 +140,16 @@ accountingRouter.get('/day-book', async (req, res, next) => {
           include: { customer: { select: { name: true } } },
           orderBy: { createdAt: 'asc' },
         }),
+        // Received POs → Purchase vouchers (booked on the received date).
+        prisma.purchaseOrder.findMany({
+          where: {
+            status: 'RECEIVED',
+            receivedAt: { gte: q.from, lte: q.to },
+            ...(q.shopId ? { receivedShopId: q.shopId } : {}),
+          },
+          include: { vendor: { select: { name: true } } },
+          orderBy: { receivedAt: 'asc' },
+        }),
       ]);
 
     const vouchers: DayBookVoucher[] = [];
@@ -178,6 +188,36 @@ accountingRouter.get('/day-book', async (req, res, next) => {
           debitAccount: 'Customer / Bank',
           creditAccount: 'GST Payable',
           amountPaise: b.igstPaise,
+        });
+      }
+    }
+
+    for (const po of purchaseOrders) {
+      const date = (po.receivedAt ?? po.createdAt).toISOString();
+      const voucherNumber = `PO-${po.id.slice(-6).toUpperCase()}`;
+      const gstTotal = po.cgstPaise + po.sgstPaise + po.igstPaise;
+      // Purchase of stock — credit the vendor (Sundry Creditor), debit stock.
+      vouchers.push({
+        date,
+        voucherType: 'PURCHASE',
+        voucherNumber,
+        party: po.vendor.name,
+        narration: 'Stock purchase',
+        debitAccount: 'Purchases / Inventory',
+        creditAccount: `Sundry Creditors (Vendor)`,
+        amountPaise: po.totalPaise,
+      });
+      // Input GST paid on the purchase — claimable as ITC.
+      if (gstTotal > 0) {
+        vouchers.push({
+          date,
+          voucherType: 'PURCHASE',
+          voucherNumber,
+          party: po.vendor.name,
+          narration: 'Input GST (ITC) on purchase',
+          debitAccount: 'GST Input Credit (ITC)',
+          creditAccount: `Sundry Creditors (Vendor)`,
+          amountPaise: gstTotal,
         });
       }
     }
@@ -430,6 +470,22 @@ accountingRouter.get('/trial-balance', async (req, res, next) => {
       return acc + Math.max(0, b.totalPaise - paid);
     }, 0);
 
+    // GST Input Credit (ITC) — input GST paid on received purchases, held as
+    // an asset until netted against output GST at filing. Owner-Equity plug
+    // (below) keeps the trial balance balanced.
+    const poInputGstAgg = await prisma.purchaseOrder.aggregate({
+      where: {
+        status: 'RECEIVED',
+        receivedAt: { lte: asOf },
+        ...(q.shopId ? { receivedShopId: q.shopId } : {}),
+      },
+      _sum: { cgstPaise: true, sgstPaise: true, igstPaise: true },
+    });
+    const inputGstCredit =
+      (poInputGstAgg._sum.cgstPaise ?? 0) +
+      (poInputGstAgg._sum.sgstPaise ?? 0) +
+      (poInputGstAgg._sum.igstPaise ?? 0);
+
     // Build the trial-balance rows. Convention: positive = debit, negative
     // would be credit; we store as separate fields for clarity.
     interface TbRow {
@@ -456,6 +512,9 @@ accountingRouter.get('/trial-balance', async (req, res, next) => {
     rows.push({ code: '1110', name: 'Inventory at cost', group: 'Asset', debitPaise: inventoryAtCost, creditPaise: 0 });
     rows.push({ code: '1120', name: 'Sundry Debtors', group: 'Asset', debitPaise: debtorsPaise, creditPaise: 0 });
     rows.push({ code: '1210', name: 'Gold loans receivable', group: 'Asset', debitPaise: goldLoanOutstanding, creditPaise: 0 });
+    if (inputGstCredit > 0) {
+      rows.push({ code: '1230', name: 'GST Input Credit (ITC)', group: 'Asset', debitPaise: inputGstCredit, creditPaise: 0 });
+    }
     rows.push({ code: '1310', name: 'Fixed assets (capital)', group: 'Asset', debitPaise: capitalExpenseTotal, creditPaise: 0 });
     // Liabilities
     rows.push({ code: '2010', name: 'Sundry Creditors (Vendors)', group: 'Liability', debitPaise: 0, creditPaise: vendorDues });
@@ -607,6 +666,15 @@ accountingRouter.get('/balance-sheet', async (req, res, next) => {
     }, 0);
     const inventoryAtCost = itemCostAgg._sum.costPricePaise ?? 0;
     const capExp = capExpAgg._sum.amountPaise ?? 0;
+    // Input GST (ITC) on received purchases — a current asset until netted at filing.
+    const poInputGstAgg = await prisma.purchaseOrder.aggregate({
+      where: { status: 'RECEIVED', receivedAt: { lte: asOf } },
+      _sum: { cgstPaise: true, sgstPaise: true, igstPaise: true },
+    });
+    const inputGstCredit =
+      (poInputGstAgg._sum.cgstPaise ?? 0) +
+      (poInputGstAgg._sum.sgstPaise ?? 0) +
+      (poInputGstAgg._sum.igstPaise ?? 0);
     const grossRevenue =
       (billAgg._sum.totalPaise ?? 0) -
       (billAgg._sum.cgstPaise ?? 0) -
@@ -626,6 +694,7 @@ accountingRouter.get('/balance-sheet', async (req, res, next) => {
       { label: 'Inventory at cost', amountPaise: inventoryAtCost },
       { label: 'Sundry Debtors', amountPaise: debtorsPaise },
       { label: 'Gold loans receivable', amountPaise: goldLoanOutstanding },
+      ...(inputGstCredit > 0 ? [{ label: 'GST Input Credit (ITC)', amountPaise: inputGstCredit }] : []),
     ];
     const currentAssetsTotal = currentAssets.reduce((s, x) => s + x.amountPaise, 0);
     const fixedAssets = [{ label: 'Fixed assets (capital expenditure)', amountPaise: capExp }];

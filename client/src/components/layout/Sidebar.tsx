@@ -11,11 +11,16 @@ import {
   LayoutDashboard,
   UserCog,
   Truck,
+  ClipboardList,
   X,
 } from 'lucide-react';
 import { cn } from '@/lib/cn';
 import { useAppSelector } from '@/app/hooks';
 import { hasAnyPermission } from '@/features/auth/authSlice';
+import { useGetPendingStockRequestCountQuery } from '@/features/stock-requests/stockRequestsApi';
+
+// Route whose nav item carries the live "pending stock requests" badge.
+const STOCK_REQUESTS_PATH = '/admin/inventory/stock-requests';
 
 interface NavItem {
   to: string;
@@ -48,6 +53,7 @@ const sections: NavSection[] = [
     items: [
       { to: '/admin/inventory', label: 'Inventory', icon: Boxes, anyPerm: ['inventory.read', 'inventory.write'] },
       { to: '/admin/inventory/transfers', label: 'Transfers', icon: Truck, anyPerm: ['inventory.read', 'inventory.transfer'] },
+      { to: STOCK_REQUESTS_PATH, label: 'Stock requests', icon: ClipboardList, anyPerm: ['inventory.read', 'inventory.transfer'] },
       // No POS billing here — that lives on the pos.<host> subdomain.
       // This is the read-only owner / accountant monitor across every shop.
       { to: '/admin/counter', label: 'Offline shops', icon: Store, anyPerm: ['pos.monitor'] },
@@ -85,6 +91,15 @@ function SidebarInner({ onNavigate }: { onNavigate?: () => void }): JSX.Element 
   // to the Zelora logo + name).
   const brandName = useAppSelector((s) => s.storefrontContent.brand.name);
   const brandLogo = useAppSelector((s) => s.storefrontContent.brand.logo);
+
+  // Live pending stock-request count for the sidebar badge. Only reviewers
+  // (inventory.transfer) can hit the count endpoint, so skip otherwise.
+  const canReviewRequests = hasAnyPermission(user, ['inventory.transfer']);
+  const { data: pendingReq } = useGetPendingStockRequestCountQuery(undefined, {
+    skip: !canReviewRequests,
+    pollingInterval: 60_000,
+  });
+  const pendingRequestCount = pendingReq?.data.count ?? 0;
 
   // Filter items per section by permissions, then drop any section that ends
   // up empty so we don't render a stranded heading.
@@ -163,6 +178,11 @@ function SidebarInner({ onNavigate }: { onNavigate?: () => void }): JSX.Element 
                         aria-hidden
                       />
                       <span className="truncate">{it.label}</span>
+                      {it.to === STOCK_REQUESTS_PATH && pendingRequestCount > 0 && (
+                        <span className="ml-auto min-w-[18px] h-[18px] rounded-full px-1 text-[10px] font-medium inline-flex items-center justify-center tabular-nums bg-brand-500 text-ink-0">
+                          {pendingRequestCount > 99 ? '99+' : pendingRequestCount}
+                        </span>
+                      )}
                     </>
                   )}
                 </NavLink>

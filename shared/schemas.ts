@@ -12,8 +12,10 @@ import {
   PURCHASE_ORDER_STATUSES,
   GOLD_LOAN_STATUSES,
   TRANSFER_STATUSES,
+  STOCK_REQUEST_STATUSES,
   METAL_TYPES,
   MAKING_CHARGE_MODES,
+  GENDER_TYPES,
   STOREFRONT_SECTIONS,
 } from './constants.js';
 
@@ -336,6 +338,9 @@ export const ItemSchema = z.object({
   // Hybrid stock model — see schema.prisma comment on Item for the long form.
   isSerialized: z.boolean().default(true),
   quantityOnHand: z.number().int().nonnegative().default(1),
+  // Target audience — MEN / WOMEN (null = unspecified / unisex). Powers the
+  // storefront "Shop by Gender" filter.
+  gender: z.enum(GENDER_TYPES).optional().nullable(),
   createdAt: z.coerce.date(),
 });
 
@@ -410,6 +415,9 @@ export const TransferCreateSchema = z
     lines: z.array(TransferLineInputSchema).min(1).max(200).optional(),
     reason: z.string().min(1).max(400),
     notes: z.string().max(1000).optional().nullable(),
+    // When set, this transfer fulfils a POS stock request — the server marks
+    // that request FULFILLED and links it to the new transfer.
+    stockRequestId: CuidSchema.optional(),
   })
   .refine((v) => v.fromShopId !== v.toShopId, {
     message: 'fromShopId and toShopId must differ',
@@ -422,6 +430,59 @@ export const TransferCreateSchema = z
 
 export const TransferRejectSchema = z.object({
   rejectionReason: z.string().min(1).max(400),
+});
+
+// --- Stock request (replenishment indent) ---
+// A POS/shop user requests stock by category (sub or main) OR collection, with
+// a quantity per line. The admin reviews and fulfils via a transfer.
+
+export const StockRequestStatusSchema = z.enum(STOCK_REQUEST_STATUSES);
+
+export const StockRequestLineInputSchema = z
+  .object({
+    categoryId: CuidSchema.optional().nullable(),
+    collectionId: CuidSchema.optional().nullable(),
+    quantity: z.number().int().positive().max(10_000).default(1),
+    note: z.string().max(400).optional().nullable(),
+  })
+  .refine((v) => Boolean(v.categoryId) !== Boolean(v.collectionId), {
+    message: 'Each line must target exactly one of categoryId or collectionId',
+    path: ['categoryId'],
+  });
+
+export const StockRequestCreateSchema = z.object({
+  // Optional — defaults to the caller's assigned shop (req.user.shopId) when
+  // omitted. Admins requesting on behalf of a shop can pass it explicitly.
+  shopId: CuidSchema.optional(),
+  note: z.string().max(1000).optional().nullable(),
+  lines: z.array(StockRequestLineInputSchema).min(1).max(50),
+});
+
+export const StockRequestReviewSchema = z.object({
+  reviewNote: z.string().max(400).optional().nullable(),
+});
+
+export const StockRequestLineSchema = z.object({
+  id: CuidSchema,
+  requestId: CuidSchema,
+  categoryId: CuidSchema.nullable(),
+  collectionId: CuidSchema.nullable(),
+  quantity: z.number().int().positive(),
+  note: z.string().nullable(),
+});
+
+export const StockRequestSchema = z.object({
+  id: CuidSchema,
+  tenantId: CuidSchema,
+  shopId: CuidSchema,
+  status: StockRequestStatusSchema,
+  note: z.string().nullable(),
+  requestedByUserId: z.string().nullable(),
+  reviewedByUserId: z.string().nullable(),
+  reviewNote: z.string().nullable(),
+  fulfilledTransferId: z.string().nullable(),
+  createdAt: z.coerce.date(),
+  reviewedAt: z.coerce.date().nullable(),
 });
 
 export const TransferLineSchema = z.object({
@@ -501,6 +562,8 @@ export const PurchaseOrderItemInputSchema = z.object({
   makingChargeMode: z.enum(MAKING_CHARGE_MODES).optional().nullable(),
   makingChargePerGramPaise: PaiseSchema.optional().nullable(),
   isSerialized: z.boolean().optional(),
+  // Target audience captured on the PO line — copied onto the Item on receive.
+  gender: z.enum(GENDER_TYPES).optional().nullable(),
   collectionIds: z.array(CuidSchema).max(50).optional(),
   diamonds: z.array(ItemDiamondSchema).max(50).optional(),
 });
@@ -508,6 +571,16 @@ export const PurchaseOrderItemInputSchema = z.object({
 export const PurchaseOrderCreateSchema = z.object({
   vendorId: CuidSchema,
   items: z.array(PurchaseOrderItemInputSchema).min(1).max(200),
+});
+
+// Purchase (input) GST entered against a PO's vendor invoice. One total per PO:
+// intraState → cgst + sgst, interState → igst. The service zeroes the unused
+// side based on `interState`.
+export const PurchaseOrderGstSchema = z.object({
+  interState: z.boolean(),
+  cgstPaise: PaiseSchema.default(0),
+  sgstPaise: PaiseSchema.default(0),
+  igstPaise: PaiseSchema.default(0),
 });
 
 export const WastageInputSchema = z.object({

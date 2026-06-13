@@ -37,6 +37,17 @@ export interface TopProductRow {
 export interface TopCategoryRow {
   categoryId: string;
   name: string;
+  // Only populated for the sub-category view — the main category this
+  // sub-category sits under (null when the sub IS a top-level category).
+  parentName?: string | null;
+  qty: number;
+  orderCount: number;
+  revenuePaise: number;
+}
+
+export interface TopCollectionRow {
+  collectionId: string;
+  name: string;
   qty: number;
   orderCount: number;
   revenuePaise: number;
@@ -310,7 +321,7 @@ export const analyticsApi = baseApi.injectEndpoints({
       providesTags: ['StaffReport'],
     }),
     getTopProducts: b.query<
-      { data: TopProductRow[]; groupBy?: 'product' | 'category' },
+      { data: TopProductRow[]; groupBy?: 'product' | 'category' | 'subcategory' | 'collection' },
       { from?: string; to?: string; limit?: number } | void
     >({
       query: (params) => ({ url: '/analytics/top-products', params: params ?? undefined }),
@@ -325,6 +336,30 @@ export const analyticsApi = baseApi.injectEndpoints({
       query: (params) => ({
         url: '/analytics/top-products',
         params: { ...(params ?? {}), groupBy: 'category' },
+      }),
+      providesTags: ['SalesReport'],
+    }),
+    // Sub-category best sellers — rolls product sales up to the LEAF category
+    // (the sub under the main). Same endpoint with groupBy=subcategory.
+    getTopSubcategories: b.query<
+      { data: TopCategoryRow[]; groupBy: 'subcategory' },
+      { from?: string; to?: string; limit?: number } | void
+    >({
+      query: (params) => ({
+        url: '/analytics/top-products',
+        params: { ...(params ?? {}), groupBy: 'subcategory' },
+      }),
+      providesTags: ['SalesReport'],
+    }),
+    // Collection best sellers — rolls sales up by the curated Collection(s) a
+    // piece belongs to. A piece can be in several, so revenues may overlap.
+    getTopCollections: b.query<
+      { data: TopCollectionRow[]; groupBy: 'collection' },
+      { from?: string; to?: string; limit?: number } | void
+    >({
+      query: (params) => ({
+        url: '/analytics/top-products',
+        params: { ...(params ?? {}), groupBy: 'collection' },
       }),
       providesTags: ['SalesReport'],
     }),
@@ -419,6 +454,8 @@ export const {
   useGetStaffReportQuery,
   useGetTopProductsQuery,
   useGetTopCategoriesQuery,
+  useGetTopSubcategoriesQuery,
+  useGetTopCollectionsQuery,
   useGetShopPerformanceQuery,
   useGetInventoryValuationQuery,
   useGetCustomerAcquisitionQuery,

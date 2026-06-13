@@ -60,6 +60,9 @@ export const PERMISSIONS = [
   { key: 'inventory.transfer', module: 'inventory', action: 'transfer',
     label: 'Transfer stock between shops',
     description: 'Move items from one branch to another.' },
+  { key: 'inventory.stock_request', module: 'inventory', action: 'stock_request',
+    label: 'Request stock from admin',
+    description: 'Ask the admin to send stock to this shop (by category / collection).' },
   { key: 'inventory.wastage', module: 'inventory', action: 'wastage',
     label: 'Record wastage / melt items',
     description: 'Log items melted, lost, or damaged in display.' },
@@ -286,6 +289,7 @@ export const ROLE_DEFAULT_PERMISSIONS: Record<RoleSlug, PermissionKey[]> = {
     'inventory.read',
     'inventory.write',
     'inventory.transfer',
+    'inventory.stock_request',
     'ecommerce.read',
     'ecommerce.product_write',
     'ecommerce.order_fulfil',
@@ -309,6 +313,8 @@ export const ROLE_DEFAULT_PERMISSIONS: Record<RoleSlug, PermissionKey[]> = {
     'pos.cash_drawer',
     // Read-only stock so cashier can lookup items, but no edits.
     'inventory.read',
+    // Raise stock requests (replenishment indents) to the admin.
+    'inventory.stock_request',
   ],
 };
 
@@ -388,6 +394,12 @@ export type Purity = (typeof PURITY_VALUES)[number];
 // (which only have a bps value) keep their current behaviour.
 export const MAKING_CHARGE_MODES = ['PERCENTAGE', 'PER_GRAM'] as const;
 export type MakingChargeMode = (typeof MAKING_CHARGE_MODES)[number];
+
+// Target audience for a piece. Drives the storefront "Shop by Gender" filter.
+// Stored as a nullable column on Item / Product / PurchaseOrderItem — null
+// means unspecified (treated as unisex; shown under neither Men nor Women).
+export const GENDER_TYPES = ['MEN', 'WOMEN'] as const;
+export type GenderType = (typeof GENDER_TYPES)[number];
 
 // Storefront homepage sections a product can be featured in. One product (one
 // inventory record) can belong to several at once. M3 FR#1. The exact list is a
@@ -490,6 +502,12 @@ export type GoldLoanStatus = (typeof GOLD_LOAN_STATUSES)[number];
 // COMPLETED (received at destination). REJECTED is terminal from PENDING.
 export const TRANSFER_STATUSES = ['PENDING', 'APPROVED', 'COMPLETED', 'REJECTED'] as const;
 export type TransferStatus = (typeof TRANSFER_STATUSES)[number];
+
+// Stock request (replenishment indent) lifecycle. A POS/shop user files a
+// PENDING request; the admin FULFILs it (creating a transfer) or REJECTs it.
+// The requester can CANCEL a still-PENDING request.
+export const STOCK_REQUEST_STATUSES = ['PENDING', 'FULFILLED', 'REJECTED', 'CANCELLED'] as const;
+export type StockRequestStatus = (typeof STOCK_REQUEST_STATUSES)[number];
 
 // --------------------------------------------------------------------------
 // POS — offline shop operations

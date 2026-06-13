@@ -43,9 +43,14 @@ model Tenant {
   loyaltyMaxRedeemPct    Int @default(20)       // max % of subtotal payable by points
   loyaltyExpiryDays      Int @default(365)
   // Sale-wide "Buy 1 Get 1 Free" toggle for the Season Sale. When on, every
-  // item in the Season Sale pool advertises B1G1 on the storefront. Per-item
-  // % / ₹ discounts are independent of this flag.
+  // item in the Season Sale pool advertises B1G1 on the storefront.
   seasonSaleBogo         Boolean @default(false)
+  // Sale-wide discount applied uniformly to EVERY item in the Season Sale —
+  // set once, applies to all. PERCENT uses bps (10% = 1000); FLAT uses paise.
+  // (Per-item SaleItem.discount* columns are legacy and no longer read.)
+  seasonSaleDiscountType      SaleDiscountType @default(PERCENT)
+  seasonSaleDiscountBps       Int              @default(0)
+  seasonSaleDiscountFlatPaise Int              @default(0)
 
   shops             Shop[]
   users             User[]
@@ -89,6 +94,7 @@ model Tenant {
   productSections     ProductSection[]
   coupons             CouponCode[]
   loyaltyTransactions LoyaltyTransaction[]
+  stockRequests       StockRequest[]
 
   @@index([ownerEmail])
 }
@@ -131,6 +137,7 @@ model Shop {
   invitations      UserInvitation[]
   transfersFrom    Transfer[]        @relation("TransferFromShop")
   transfersTo      Transfer[]        @relation("TransferToShop")
+  stockRequests    StockRequest[]
 
   @@index([tenantId])
   @@index([tenantId, isActive])
@@ -396,6 +403,7 @@ model Category {
   children Category[] @relation("CategoryTree")
   items    Item[]
   products Product[]
+  stockRequestLines StockRequestLine[]
 
   @@index([tenantId])
   // Sub-category (and main-category) names must be unique within their parent.
@@ -448,6 +456,10 @@ model Item {
   //     reaches 0.
   isSerialized    Boolean        @default(true)
   quantityOnHand  Int            @default(1)
+  // Target audience for the piece — "MEN" / "WOMEN" (null = unspecified /
+  // unisex). Drives the storefront "Shop by Gender" filter; mirrored onto the
+  // linked storefront Product.
+  gender          String?
   createdAt       DateTime       @default(now())
 
   tenant            Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
@@ -485,6 +497,7 @@ model Collection {
 
   tenant Tenant           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   items  ItemCollection[]
+  stockRequestLines StockRequestLine[]
 
   @@unique([tenantId, slug])
   @@index([tenantId])
@@ -636,6 +649,8 @@ model Transfer {
   fromShop Shop           @relation("TransferFromShop", fields: [fromShopId], references: [id])
   toShop   Shop           @relation("TransferToShop", fields: [toShopId], references: [id])
   lines    TransferLine[]
+  // Set when this transfer was created to fulfil a POS stock request.
+  fulfilsRequest StockRequest? @relation("TransferFulfilsRequest")
 
   @@index([tenantId])
   @@index([tenantId, status])
@@ -659,6 +674,63 @@ model TransferLine {
 
   @@unique([transferId, itemId])
   @@index([itemId])
+}
+
+// --------------------------------------------------------------------------
+// Stock request (replenishment indent) — a POS/shop user asks the admin for
+// stock by category / sub-category / collection + quantity. The admin reviews
+// and FULFILS it by creating a Transfer (destined to the requesting shop),
+// which links back here and flips the request to FULFILLED.
+// --------------------------------------------------------------------------
+
+enum StockRequestStatus {
+  PENDING
+  FULFILLED
+  REJECTED
+  CANCELLED
+}
+
+model StockRequest {
+  id                  String             @id @default(cuid())
+  tenantId            String
+  // Requesting shop = destination of the eventual fulfilling transfer.
+  shopId              String
+  status              StockRequestStatus @default(PENDING)
+  note                String?
+  requestedByUserId   String?
+  reviewedByUserId    String?
+  // Admin note when rejecting / fulfilling.
+  reviewNote          String?
+  // The transfer created to fulfil this request (set on FULFILLED).
+  fulfilledTransferId String?            @unique
+  createdAt           DateTime           @default(now())
+  reviewedAt          DateTime?
+
+  tenant            Tenant             @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  shop              Shop               @relation(fields: [shopId], references: [id])
+  fulfilledTransfer Transfer?          @relation("TransferFulfilsRequest", fields: [fulfilledTransferId], references: [id])
+  lines             StockRequestLine[]
+
+  @@index([tenantId])
+  @@index([tenantId, status])
+  @@index([tenantId, shopId])
+  @@index([tenantId, createdAt])
+}
+
+model StockRequestLine {
+  id           String  @id @default(cuid())
+  requestId    String
+  // Each line targets EITHER a category (sub or main) OR a collection.
+  categoryId   String?
+  collectionId String?
+  quantity     Int     @default(1)
+  note         String?
+
+  request    StockRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
+  category   Category?    @relation(fields: [categoryId], references: [id])
+  collection Collection?  @relation(fields: [collectionId], references: [id])
+
+  @@index([requestId])
 }
 
 model Vendor {
@@ -710,12 +782,26 @@ model PurchaseOrder {
   totalPaise Int                 @default(0)
   createdAt  DateTime            @default(now())
 
+  // Purchase (input) GST entered against the vendor's invoice. One total per
+  // PO: CGST+SGST for an intra-state vendor, or IGST for inter-state. Feeds the
+  // finance module as Input Tax Credit (ITC) once the PO is received.
+  cgstPaise     Int     @default(0)
+  sgstPaise     Int     @default(0)
+  igstPaise     Int     @default(0)
+  gstInterState Boolean @default(false) // true = IGST entry, false = CGST+SGST
+
+  // Destination captured on receive — where the stock actually landed.
+  // Nullable for legacy POs received before this was tracked.
+  receivedShopId String?
+  receivedAt     DateTime?
+
   tenant Tenant              @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   vendor Vendor              @relation(fields: [vendorId], references: [id])
   items  PurchaseOrderItem[]
 
   @@index([tenantId])
   @@index([tenantId, vendorId])
+  @@index([tenantId, status, receivedAt])
 }
 
 model PurchaseOrderItem {
@@ -749,6 +835,9 @@ model PurchaseOrderItem {
   makingChargeMode String?
   makingChargePerGramPaise Int?
   isSerialized     Boolean @default(true)
+  // Target audience captured on the PO line ("MEN" / "WOMEN"); copied onto the
+  // Item when the PO is received. Null = unspecified / unisex.
+  gender           String?
   collectionIds    Json    @default("[]")
   diamondsJson     Json    @default("[]")
   // qty > 1 → lot item (isSerialized=false, quantityOnHand=quantity) on receive.
@@ -1383,6 +1472,9 @@ model Product {
   // silver / lab-grown diamond pieces that don't carry HUID.
   bisHuid          String?
   hallmarkedAt     DateTime?
+  // Target audience mirrored from the linked Item — "MEN" / "WOMEN" (null =
+  // unspecified / unisex). Powers the storefront "Shop by Gender" filter.
+  gender           String?
   isPublished      Boolean   @default(false)
   // Optional one-to-one bridge to the inventory Item the storefront card
   // mirrors. When set, the storefront query reads the linked Item's

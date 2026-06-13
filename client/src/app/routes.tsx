@@ -18,6 +18,7 @@ import { StorefrontLayout } from '@/features/storefront/StorefrontLayout';
 import { DashboardPage } from '@/pages/DashboardPage';
 import { InventoryPage } from '@/pages/InventoryPage';
 import { TransfersPage } from '@/pages/TransfersPage';
+import { StockRequestsPage } from '@/pages/StockRequestsPage';
 import { PrintLabelsPage } from '@/pages/PrintLabelsPage';
 import { FinancePage } from '@/pages/FinancePage';
 import { CrmPage } from '@/pages/CrmPage';
@@ -37,6 +38,7 @@ import { RepairsPage } from '@/pos-app/RepairsPage';
 import { AdvancesPage } from '@/pos-app/AdvancesPage';
 import { CashDrawerPage } from '@/pos-app/CashDrawerPage';
 import { PastBillsPage } from '@/pos-app/PastBillsPage';
+import { StockRequestPage } from '@/pos-app/StockRequestPage';
 
 import { StorefrontHome } from '@/pages/storefront/StorefrontHome';
 import { CollectionPage } from '@/pages/storefront/CollectionPage';
@@ -85,6 +87,7 @@ const posRoutes = [
       { path: 'advances', element: <AdvancesPage /> },
       { path: 'cash', element: <CashDrawerPage /> },
       { path: 'bills', element: <PastBillsPage /> },
+      { path: 'stock-request', element: <StockRequestPage /> },
       { path: 'settings', element: <SettingsPage /> },
     ],
   },
@@ -163,6 +166,7 @@ const MAIN_HOST_ROUTES = [
       { path: 'inventory', element: <RequirePermission any={['inventory.read', 'inventory.write']}><InventoryPage /></RequirePermission> },
       { path: 'inventory/print-labels', element: <RequirePermission any={['inventory.read', 'inventory.write']}><PrintLabelsPage /></RequirePermission> },
       { path: 'inventory/transfers', element: <RequirePermission any={['inventory.read', 'inventory.transfer']}><TransfersPage /></RequirePermission> },
+      { path: 'inventory/stock-requests', element: <RequirePermission any={['inventory.read', 'inventory.transfer']}><StockRequestsPage /></RequirePermission> },
       // Offline-shops monitor: read-only window into every shop's POS
       // (sessions, bills, variances, cashiers). The actual billing surface
       // lives on the POS subdomain — no /admin/pos route by design.

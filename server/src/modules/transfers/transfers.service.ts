@@ -81,6 +81,7 @@ export async function getTransfer(id: string) {
               id: true, sku: true, name: true, weightMg: true,
               purityCaratX100: true, status: true, shopId: true,
               images: true, isSerialized: true, quantityOnHand: true,
+              costPricePaise: true,
               category: { select: { id: true, name: true } },
             },
           },
@@ -190,6 +191,22 @@ export async function createTransfer(input: TransferCreate, userId?: string) {
       lines: true,
     },
   });
+
+  // If this transfer fulfils a POS stock request, link + close it. Scoped to
+  // PENDING so a re-submit can't re-fulfil an already-handled request (tenant
+  // scoping is applied by the prisma extension).
+  if (input.stockRequestId) {
+    await prisma.stockRequest.updateMany({
+      where: { id: input.stockRequestId, status: 'PENDING' },
+      data: {
+        status: 'FULFILLED',
+        fulfilledTransferId: transfer.id,
+        reviewedByUserId: userId ?? null,
+        reviewedAt: new Date(),
+      },
+    });
+  }
+
   return transfer;
 }
 
@@ -447,7 +464,16 @@ export async function rejectTransfer(id: string, rejectionReason: string, userId
 // active transfer. Lot rows can appear in multiple concurrent transfers since
 // each transfer just locks against quantityOnHand — UI surfaces the per-line
 // quantity check so we don't have to gate the lot row entirely.
-export async function listTransferableItems(opts: { shopId: string; cursor?: string; limit?: number }) {
+// Hard ceiling for the non-paginated `all` mode used by the transfer composer
+// (bulk add by category/collection + scan need the whole eligible set at once).
+const ALL_MODE_CAP = 5000;
+
+export async function listTransferableItems(opts: {
+  shopId: string;
+  cursor?: string;
+  limit?: number;
+  all?: boolean;
+}) {
   const take = Math.min(opts.limit ?? DEFAULT_PAGE_LIMIT, MAX_PAGE_LIMIT);
   const lockedSerializedIds = (
     await prisma.transferLine.findMany({
@@ -465,18 +491,56 @@ export async function listTransferableItems(opts: { shopId: string; cursor?: str
     ...(lockedSerializedIds.length > 0 ? { id: { notIn: lockedSerializedIds } } : {}),
   };
 
+  const select = {
+    id: true, sku: true, name: true, weightMg: true,
+    purityCaratX100: true, costPricePaise: true, images: true,
+    isSerialized: true, quantityOnHand: true, categoryId: true,
+    category: { select: { id: true, name: true, parentId: true } },
+    collections: { select: { collectionId: true } },
+  } satisfies Prisma.ItemSelect;
+
+  // Flatten the nested category/collections into the simple shape the transfer
+  // composer consumes (parent id + names + a plain collection-id array).
+  type Row = Prisma.ItemGetPayload<{ select: typeof select }>;
+  const shape = (it: Row) => ({
+    id: it.id,
+    sku: it.sku,
+    name: it.name,
+    weightMg: it.weightMg,
+    purityCaratX100: it.purityCaratX100,
+    costPricePaise: it.costPricePaise,
+    images: it.images,
+    isSerialized: it.isSerialized,
+    quantityOnHand: it.quantityOnHand,
+    categoryId: it.categoryId,
+    categoryName: it.category?.name ?? null,
+    parentCategoryId: it.category?.parentId ?? null,
+    collectionIds: it.collections.map((c) => c.collectionId),
+  });
+
+  // Composer mode — return everything eligible at this shop (no pagination) so
+  // bulk add and scan operate over the full set. Bounded by ALL_MODE_CAP.
+  if (opts.all) {
+    const rows = await prisma.item.findMany({
+      where,
+      orderBy: { createdAt: 'desc' },
+      take: ALL_MODE_CAP,
+      select,
+    });
+    return { data: rows.map(shape), page: { nextCursor: undefined, hasMore: false } };
+  }
+
   const items = await prisma.item.findMany({
     where,
     orderBy: { createdAt: 'desc' },
     take: take + 1,
     ...(opts.cursor ? { cursor: { id: opts.cursor }, skip: 1 } : {}),
-    select: {
-      id: true, sku: true, name: true, weightMg: true,
-      purityCaratX100: true, costPricePaise: true, images: true,
-      isSerialized: true, quantityOnHand: true,
-    },
+    select,
   });
   const hasMore = items.length > take;
   const page = items.slice(0, take);
-  return { data: page, page: { nextCursor: hasMore ? page.at(-1)?.id : undefined, hasMore } };
+  return {
+    data: page.map(shape),
+    page: { nextCursor: hasMore ? page.at(-1)?.id : undefined, hasMore },
+  };
 }

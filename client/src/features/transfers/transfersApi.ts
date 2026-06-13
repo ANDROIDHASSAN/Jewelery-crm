@@ -22,6 +22,8 @@ export interface TransferItemRef {
   images: string[];
   isSerialized: boolean;
   quantityOnHand: number;
+  // Per-piece cost — drives the line value + totals in the detail sheet.
+  costPricePaise: number;
   category: { id: string; name: string };
 }
 
@@ -72,6 +74,13 @@ export interface TransferableItem {
   // quantity input in the transfer composer.
   isSerialized: boolean;
   quantityOnHand: number;
+  // Category + collection metadata — power the bulk "add by category /
+  // sub-category / collection" quick-add controls in the composer.
+  categoryId: string;
+  categoryName: string | null;
+  // Parent (main) category id; null when the item sits on a main category.
+  parentCategoryId: string | null;
+  collectionIds: string[];
 }
 
 export const transfersApi = baseApi.injectEndpoints({
@@ -93,8 +102,14 @@ export const transfersApi = baseApi.injectEndpoints({
       query: (id) => `/transfers/${id}`,
       providesTags: (_r, _e, id) => [{ type: 'Transfer', id }],
     }),
-    getTransferableItems: b.query<ApiList<TransferableItem>, { shopId: string; cursor?: string }>({
-      query: (params) => ({ url: '/transfers/transferable-items', params }),
+    getTransferableItems: b.query<
+      ApiList<TransferableItem>,
+      { shopId: string; cursor?: string; all?: boolean }
+    >({
+      query: ({ all, ...params }) => ({
+        url: '/transfers/transferable-items',
+        params: { ...params, ...(all ? { all: 'true' } : {}) },
+      }),
       // Tied to Item tag so a sale/new-item correctly busts the eligible pool.
       providesTags: [{ type: 'Item', id: 'TRANSFERABLE' }],
     }),
@@ -103,6 +118,9 @@ export const transfersApi = baseApi.injectEndpoints({
       invalidatesTags: [
         { type: 'Transfer', id: 'LIST' },
         { type: 'Item', id: 'TRANSFERABLE' },
+        // A transfer may fulfil a stock request — refresh its list + badge.
+        { type: 'StockRequest', id: 'LIST' },
+        { type: 'StockRequest', id: 'PENDING_COUNT' },
       ],
     }),
     approveTransfer: b.mutation<ApiOne<TransferDetail>, string>({

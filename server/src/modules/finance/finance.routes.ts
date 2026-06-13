@@ -911,7 +911,7 @@ financeRouter.get(
         // kept only for jewellers whose CA insists on it.
         format: z.enum(['csv', 'xml']).optional().default('csv'),
       }).parse(req.query);
-      const [bills, expenses, vendorPayments] = await Promise.all([
+      const [bills, expenses, vendorPayments, purchaseOrders] = await Promise.all([
         prisma.bill.findMany({
           where: { createdAt: { gte: q.from, lte: q.to } },
           select: {
@@ -940,6 +940,22 @@ financeRouter.get(
           where: { paidAt: { gte: q.from, lte: q.to } },
           include: { vendor: { select: { name: true } } },
           orderBy: { paidAt: 'asc' },
+        }),
+        // Received purchase orders → Purchase vouchers (Dr Purchases + Input
+        // GST, Cr the vendor as Sundry Creditor). Booked on the received date.
+        prisma.purchaseOrder.findMany({
+          where: { status: 'RECEIVED', receivedAt: { gte: q.from, lte: q.to } },
+          select: {
+            id: true,
+            createdAt: true,
+            receivedAt: true,
+            totalPaise: true,
+            cgstPaise: true,
+            sgstPaise: true,
+            igstPaise: true,
+            vendor: { select: { name: true } },
+          },
+          orderBy: { receivedAt: 'asc' },
         }),
       ]);
 
@@ -981,9 +997,21 @@ financeRouter.get(
         rows.push([date, 'Payment', voucher, v.vendor.name, r(v.amountPaise), '', v.notes ?? 'Vendor payment']);
         rows.push([date, 'Payment', voucher, 'Bank / Cash', '', r(v.amountPaise), v.notes ?? '']);
       }
+      for (const po of purchaseOrders) {
+        const date = (po.receivedAt ?? po.createdAt).toISOString().slice(0, 10);
+        const voucher = `PO-${po.id.slice(-6)}`;
+        const taxable = po.totalPaise; // cost is GST-exclusive; GST is on top
+        const gstTotal = po.cgstPaise + po.sgstPaise + po.igstPaise;
+        const creditor = `Sundry Creditors — ${po.vendor.name}`;
+        rows.push([date, 'Purchase', voucher, 'Purchase A/c', r(taxable), '', `Purchase from ${po.vendor.name}`]);
+        if (po.cgstPaise > 0) rows.push([date, 'Purchase', voucher, 'Input CGST', r(po.cgstPaise), '', 'CGST on purchase']);
+        if (po.sgstPaise > 0) rows.push([date, 'Purchase', voucher, 'Input SGST', r(po.sgstPaise), '', 'SGST on purchase']);
+        if (po.igstPaise > 0) rows.push([date, 'Purchase', voucher, 'Input IGST', r(po.igstPaise), '', 'IGST on purchase']);
+        rows.push([date, 'Purchase', voucher, creditor, '', r(taxable + gstTotal), 'Vendor invoice']);
+      }
 
       if (q.format === 'xml') {
-        const xml = buildTallyXml({ bills, expenses, vendorPayments });
+        const xml = buildTallyXml({ bills, expenses, vendorPayments, purchaseOrders });
         res.setHeader('Content-Type', 'application/xml; charset=utf-8');
         res.setHeader(
           'Content-Disposition',
@@ -1021,6 +1049,7 @@ function buildTallyXml(args: {
   bills: Array<{ billNumber: string; createdAt: Date; totalPaise: number; cgstPaise: number; sgstPaise: number; igstPaise: number }>;
   expenses: Array<{ id: string; category: string; amountPaise: number; paidAt: Date; notes: string | null; classification: string }>;
   vendorPayments: Array<{ id: string; amountPaise: number; paidAt: Date; notes: string | null; vendor: { name: string } }>;
+  purchaseOrders: Array<{ id: string; createdAt: Date; receivedAt: Date | null; totalPaise: number; cgstPaise: number; sgstPaise: number; igstPaise: number; vendor: { name: string } }>;
 }): string {
   const rupees = (paise: number): string => (paise / 100).toFixed(2);
   // Tally expects YYYYMMDD with no separators.
@@ -1126,6 +1155,55 @@ function buildTallyXml(args: {
     </VOUCHER>`);
   }
 
+  // Purchases — debit Purchase A/c + Input GST ledgers, credit the vendor
+  // (Sundry Creditor). Mirrors the sales voucher but with the signs flipped.
+  for (const po of args.purchaseOrders) {
+    const date = ymd(po.receivedAt ?? po.createdAt);
+    const taxablePaise = po.totalPaise;
+    const creditor = `Sundry Creditors — ${po.vendor.name}`;
+    const entries: string[] = [];
+    entries.push(`<ALLLEDGERENTRIES.LIST>
+        <LEDGERNAME>${xe('Purchase A/c')}</LEDGERNAME>
+        <ISDEEMEDPOSITIVE>Yes</ISDEEMEDPOSITIVE>
+        <AMOUNT>${rupees(taxablePaise)}</AMOUNT>
+      </ALLLEDGERENTRIES.LIST>`);
+    if (po.cgstPaise > 0) {
+      entries.push(`<ALLLEDGERENTRIES.LIST>
+        <LEDGERNAME>${xe('Input CGST')}</LEDGERNAME>
+        <ISDEEMEDPOSITIVE>Yes</ISDEEMEDPOSITIVE>
+        <AMOUNT>${rupees(po.cgstPaise)}</AMOUNT>
+      </ALLLEDGERENTRIES.LIST>`);
+    }
+    if (po.sgstPaise > 0) {
+      entries.push(`<ALLLEDGERENTRIES.LIST>
+        <LEDGERNAME>${xe('Input SGST')}</LEDGERNAME>
+        <ISDEEMEDPOSITIVE>Yes</ISDEEMEDPOSITIVE>
+        <AMOUNT>${rupees(po.sgstPaise)}</AMOUNT>
+      </ALLLEDGERENTRIES.LIST>`);
+    }
+    if (po.igstPaise > 0) {
+      entries.push(`<ALLLEDGERENTRIES.LIST>
+        <LEDGERNAME>${xe('Input IGST')}</LEDGERNAME>
+        <ISDEEMEDPOSITIVE>Yes</ISDEEMEDPOSITIVE>
+        <AMOUNT>${rupees(po.igstPaise)}</AMOUNT>
+      </ALLLEDGERENTRIES.LIST>`);
+    }
+    const gstTotal = po.cgstPaise + po.sgstPaise + po.igstPaise;
+    entries.push(`<ALLLEDGERENTRIES.LIST>
+        <LEDGERNAME>${xe(creditor)}</LEDGERNAME>
+        <ISDEEMEDPOSITIVE>No</ISDEEMEDPOSITIVE>
+        <AMOUNT>-${rupees(taxablePaise + gstTotal)}</AMOUNT>
+      </ALLLEDGERENTRIES.LIST>`);
+    vouchers.push(`<VOUCHER VCHTYPE="Purchase" ACTION="Create">
+      <DATE>${date}</DATE>
+      <VOUCHERTYPENAME>Purchase</VOUCHERTYPENAME>
+      <VOUCHERNUMBER>PO-${xe(po.id.slice(-6))}</VOUCHERNUMBER>
+      <NARRATION>${xe(`Purchase from ${po.vendor.name}`)}</NARRATION>
+      <PARTYLEDGERNAME>${xe(creditor)}</PARTYLEDGERNAME>
+      ${entries.join('\n      ')}
+    </VOUCHER>`);
+  }
+
   return `<?xml version="1.0" encoding="UTF-8"?>
 <ENVELOPE>
   <HEADER><TALLYREQUEST>Import Data</TALLYREQUEST></HEADER>
@@ -1180,13 +1258,41 @@ financeRouter.get('/gst-summary', async (req, res, next) => {
     const ecomCgstPaise = sumPaise(ecomSplits.map((s) => s.cgstPaise));
     const ecomSgstPaise = sumPaise(ecomSplits.map((s) => s.sgstPaise));
     const ecomIgstPaise = sumPaise(ecomSplits.map((s) => s.igstPaise));
+
+    // Input GST (ITC) — GST paid on purchases. Counted only for RECEIVED POs
+    // (ITC is claimable once goods are received), bucketed by receivedAt and
+    // narrowed to the destination shop when a shop filter is applied.
+    const inputAgg = await prisma.purchaseOrder.aggregate({
+      where: {
+        status: 'RECEIVED',
+        receivedAt: { gte: from, lt: to },
+        ...(q.shopId ? { receivedShopId: q.shopId } : {}),
+      },
+      _sum: { cgstPaise: true, sgstPaise: true, igstPaise: true },
+    });
+    const inputCgstPaise = inputAgg._sum.cgstPaise ?? 0;
+    const inputSgstPaise = inputAgg._sum.sgstPaise ?? 0;
+    const inputIgstPaise = inputAgg._sum.igstPaise ?? 0;
+    const inputGstPaise = inputCgstPaise + inputSgstPaise + inputIgstPaise;
+
+    const outputCgstPaise = sumPaise(bills.map((b) => b.cgstPaise)) + ecomCgstPaise;
+    const outputSgstPaise = sumPaise(bills.map((b) => b.sgstPaise)) + ecomSgstPaise;
+    const outputIgstPaise = sumPaise(bills.map((b) => b.igstPaise)) + ecomIgstPaise;
+    const outputGstPaise = outputCgstPaise + outputSgstPaise + outputIgstPaise;
+
     res.json({
       data: {
         month: q.month,
-        cgstPaise: sumPaise(bills.map((b) => b.cgstPaise)) + ecomCgstPaise,
-        sgstPaise: sumPaise(bills.map((b) => b.sgstPaise)) + ecomSgstPaise,
-        igstPaise: sumPaise(bills.map((b) => b.igstPaise)) + ecomIgstPaise,
+        cgstPaise: outputCgstPaise,
+        sgstPaise: outputSgstPaise,
+        igstPaise: outputIgstPaise,
         ecomIgstPaise,
+        // Input GST (purchases) and the net liability after ITC.
+        inputCgstPaise,
+        inputSgstPaise,
+        inputIgstPaise,
+        inputGstPaise,
+        netGstPayablePaise: outputGstPaise - inputGstPaise,
         taxableRevenuePaise:
           sumPaise(bills.map((b) => b.totalPaise)) + sumPaise(ecomOrders.map((o) => o.totalPaise)),
         billCount: bills.length + ecomOrders.length,

@@ -8,7 +8,13 @@ import { readGoldRatePaise } from '../../lib/redis.js';
 import { computeGoldValuePaise } from '../../lib/money.js';
 import { taxableFromInclusivePaise } from '@goldos/shared/bill-math';
 import { getTenantId } from '../../lib/async-context.js';
-import type { ItemInput, VendorInput, PurchaseOrderCreate, AddStock } from '@goldos/shared/types';
+import type {
+  ItemInput,
+  VendorInput,
+  PurchaseOrderCreate,
+  PurchaseOrderGst,
+  AddStock,
+} from '@goldos/shared/types';
 
 // Kebab-case slug for the storefront Product mirror. Pulls a-z0-9 + dashes,
 // collapses runs, trims edges. Falls back to "item" so a degenerate name
@@ -36,6 +42,7 @@ type ItemForMirror = {
   makingChargeBps: number | null;
   costPricePaise: number;
   sellingPricePaise: number | null;
+  gender: string | null;
 };
 
 // Resolve the storefront Product price fields from an inventory Item. A fixed
@@ -111,6 +118,7 @@ async function createProductMirror(tenantId: string, item: ItemForMirror): Promi
       basePricePaise: pricing.basePricePaise,
       fixedPricePaise: pricing.fixedPricePaise,
       stoneChargePaise,
+      gender: item.gender ?? null,
       isPublished: true,
     },
   });
@@ -321,6 +329,7 @@ export async function updateItem(id: string, patch: Partial<ItemInput>, performe
   if (itemPatch.images !== undefined) mirrorPatch.images = { set: itemPatch.images };
   if (itemPatch.weightMg !== undefined) mirrorPatch.weightMg = itemPatch.weightMg;
   if (itemPatch.purityCaratX100 !== undefined) mirrorPatch.purityCaratX100 = itemPatch.purityCaratX100;
+  if (itemPatch.gender !== undefined) mirrorPatch.gender = itemPatch.gender;
   if (itemPatch.makingChargeBps !== undefined && itemPatch.makingChargeBps !== null) {
     mirrorPatch.makingChargeBps = itemPatch.makingChargeBps;
   }
@@ -1125,7 +1134,7 @@ export async function computeValuation(opts: { shopId?: string }) {
   };
 }
 
-export async function computeLowStock(threshold: number) {
+export async function computeLowStock(threshold: number, includeSerialized = false) {
   // (1) Per-bucket aggregate: counts IN_STOCK pieces per (shopId, categoryId)
   //     so the UI can keep the "Bridal at Karnal — 1 piece left" summary
   //     header. Lot rows contribute SUM(quantityOnHand); serialized rows
@@ -1172,10 +1181,20 @@ export async function computeLowStock(threshold: number) {
   //   C. Any IN_STOCK item (serialized OR lot) that lives in a low bucket.
   //      Keeps the historical "design X at shop Y running thin" semantics
   //      for serialized SKUs where each piece is its own row.
+  //   D. (opt-in via `includeSerialized`) Every IN_STOCK serialized piece at or
+  //      below the threshold. A unique piece is always qty 1 while in stock, so
+  //      this effectively lists each one-of-a-kind piece individually — which
+  //      floods the list for a large catalogue, hence it's off by default and
+  //      surfaced behind the "Include one-of-a-kind pieces" toggle. We do NOT
+  //      add SOLD serialized rows here: a sold unique piece isn't a restock
+  //      signal and there could be thousands in history.
   const orClauses: Prisma.ItemWhereInput[] = [
     { isSerialized: false, quantityOnHand: { lte: threshold } },
     { isSerialized: false, status: 'SOLD' },
   ];
+  if (includeSerialized) {
+    orClauses.push({ isSerialized: true, status: 'IN_STOCK', quantityOnHand: { lte: threshold } });
+  }
   if (lowBuckets.length > 0) {
     orClauses.push({
       status: 'IN_STOCK',
@@ -1328,6 +1347,7 @@ export async function createPurchaseOrder(input: PurchaseOrderCreate) {
           makingChargeMode: i.makingChargeMode ?? null,
           makingChargePerGramPaise: i.makingChargePerGramPaise ?? null,
           isSerialized: i.isSerialized ?? true,
+          gender: i.gender ?? null,
           collectionIds: (i.collectionIds ?? []) as Prisma.InputJsonValue,
           diamondsJson: (i.diamonds ?? []) as Prisma.InputJsonValue,
         })),
@@ -1444,6 +1464,7 @@ export async function receivePurchaseOrder(
             status: 'IN_STOCK',
             isSerialized: !isLot,
             quantityOnHand: qty,
+            gender: (line.gender as string | null) ?? null,
             // Diamonds (4Cs) recorded at PO time
             ...(rawDiamonds.length > 0 ? {
               diamonds: {
@@ -1505,11 +1526,37 @@ export async function receivePurchaseOrder(
     }
     return tx.purchaseOrder.update({
       where: { id: poId },
-      data: { status: 'RECEIVED' },
+      // Record where the stock landed so the PO detail view can show
+      // "received into {shop} on {date}" and finance can attribute input GST
+      // (ITC) to the right shop/period.
+      data: { status: 'RECEIVED', receivedShopId: shopId, receivedAt: new Date() },
       include: { items: true, vendor: { select: { id: true, name: true } } },
     });
   });
   void writeAudit('PurchaseOrder', poId, 'RECEIVE', po, updated, userId);
+  return updated;
+}
+
+// Set the purchase (input) GST on a PO. One total per PO: intra-state stores
+// CGST+SGST and zeroes IGST; inter-state stores IGST and zeroes CGST+SGST.
+// This is the GST the business paid the vendor — finance treats it as Input
+// Tax Credit (ITC) once the PO is received.
+export async function setPurchaseOrderGst(poId: string, gst: PurchaseOrderGst, userId?: string) {
+  const tenantId = getTenantId();
+  if (!tenantId) throw new Error('tenantId missing');
+  const before = await prisma.purchaseOrder.findUnique({ where: { id: poId } });
+  if (!before) throw new NotFoundError('Purchase order not found');
+  const updated = await prisma.purchaseOrder.update({
+    where: { id: poId },
+    data: {
+      gstInterState: gst.interState,
+      cgstPaise: gst.interState ? 0 : gst.cgstPaise,
+      sgstPaise: gst.interState ? 0 : gst.sgstPaise,
+      igstPaise: gst.interState ? gst.igstPaise : 0,
+    },
+    include: { items: true, vendor: { select: { id: true, name: true } } },
+  });
+  void writeAudit('PurchaseOrder', poId, 'GST_UPDATE', before, updated, userId);
   return updated;
 }
 

@@ -30,6 +30,11 @@ transfersRouter.get('/transferable-items', async (req, res, next) => {
         shopId: z.string().min(1),
         cursor: z.string().optional(),
         limit: z.coerce.number().int().positive().max(100).optional(),
+        // Composer mode — return the full eligible set (bulk add + scan).
+        all: z
+          .enum(['true', 'false'])
+          .optional()
+          .transform((v) => v === 'true'),
       })
       .parse(req.query);
     res.json(await svc.listTransferableItems(q));

@@ -30,7 +30,7 @@ import {
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { uploadImageToCloudinary, isCloudinaryConfigured, cloudinaryThumb } from '@/lib/cloudinary';
-import type { Item, Collection, SaleItemRow, SaleDiscountType } from '@goldos/shared/types';
+import type { Item, Collection, SaleItemRow } from '@goldos/shared/types';
 import {
   DIAMOND_SHAPES,
   DIAMOND_CUTS,
@@ -55,7 +55,6 @@ import {
   useUpdateSaleConfigMutation,
   useGetSaleItemsQuery,
   useAddItemsToSaleMutation,
-  useUpdateSaleItemDiscountMutation,
   useRemoveItemFromSaleMutation,
   useLazyGetSkuSuggestionQuery,
   useDeleteItemMutation,
@@ -72,8 +71,11 @@ import {
   useGetPurchaseOrdersQuery,
   useCreatePurchaseOrderMutation,
   useReceivePurchaseOrderMutation,
+  useSetPurchaseOrderGstMutation,
   useGetAuditLogQuery,
   useUpdateCategoryMakingChargeMutation,
+  type PurchaseOrderRow,
+  type SaleConfig,
 } from '@/features/inventory/inventoryApi';
 import { useCreateTransferMutation } from '@/features/transfers/transfersApi';
 import { useGetShopsQuery } from '@/features/shops/shopsApi';
@@ -1049,7 +1051,15 @@ function LowStockTab(): JSX.Element {
   // 30s poll so the restock list catches sale-driven drains without the
   // owner having to refresh — same cadence as the analytics + POS catalogue.
   const [threshold, setThreshold] = useState(3);
-  const { data, isLoading } = useGetLowStockQuery({ threshold }, { pollingInterval: 30_000 });
+  // Each one-of-a-kind (serialized) piece is always qty 1 in stock, so listing
+  // them individually means every unique piece shows. On by default so the
+  // restock list reflects all stock; merchants with large catalogues can turn
+  // it off to fall back to the category-level "running low" summary.
+  const [includeSerialized, setIncludeSerialized] = useState(true);
+  const { data, isLoading } = useGetLowStockQuery(
+    { threshold, includeSerialized },
+    { pollingInterval: 30_000 },
+  );
   const { data: catRes } = useGetCategoriesQuery();
   const { data: shopsRes } = useGetShopsQuery();
   // editTarget + addStockTarget reuse the same dialogs the Items tab opens,
@@ -1081,18 +1091,30 @@ function LowStockTab(): JSX.Element {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center gap-3 text-sm">
-        <label className="text-ink-700">Alert threshold (units per SKU)</label>
-        <input
-          type="number"
-          min={0}
-          max={50}
-          value={threshold}
-          onChange={(e) => setThreshold(Math.max(0, Number(e.target.value) || 0))}
-          className="h-9 w-20 px-2 rounded-md border border-ink-200 font-mono text-sm focus:outline-none focus:border-brand-500"
-        />
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-sm">
+        <div className="flex items-center gap-3">
+          <label className="text-ink-700">Alert threshold (units per SKU)</label>
+          <input
+            type="number"
+            min={0}
+            max={50}
+            value={threshold}
+            onChange={(e) => setThreshold(Math.max(0, Number(e.target.value) || 0))}
+            className="h-9 w-20 px-2 rounded-md border border-ink-200 font-mono text-sm focus:outline-none focus:border-brand-500"
+          />
+        </div>
+        <label className="inline-flex items-center gap-2 text-ink-700 cursor-pointer select-none">
+          <input
+            type="checkbox"
+            checked={includeSerialized}
+            onChange={(e) => setIncludeSerialized(e.target.checked)}
+            className="h-4 w-4 rounded border-ink-300 text-brand-500 focus:ring-brand-500"
+          />
+          Include one-of-a-kind pieces
+        </label>
         <span className="text-ink-500 text-xs">
-          Lot SKUs at or below this count appear here; sold-out (0) items always do.
+          Bulk lots at or below the threshold appear here; sold-out (0) lots always do. Unique
+          pieces (always 1 in stock) are listed only when the toggle is on.
         </span>
       </div>
 
@@ -1772,25 +1794,102 @@ function SaleItemsManageTab(): JSX.Element {
   const [updateConfig, { isLoading: savingConfig }] = useUpdateSaleConfigMutation();
   const [addOpen, setAddOpen] = useState(false);
   const items = data?.data ?? [];
-  const bogoEnabled = configData?.data.bogoEnabled ?? false;
+  const cfg = configData?.data;
+  const bogoEnabled = cfg?.bogoEnabled ?? false;
 
-  const toggleBogo = (next: boolean): void => {
-    updateConfig({ bogoEnabled: next })
-      .unwrap()
-      .catch(() => toast.error('Could not update Buy 1 Get 1 setting'));
+  // Local mirror of the UNIVERSAL discount, synced from the server config. One
+  // % / ₹ value applied to every item in the sale (no per-item discounts).
+  const [discType, setDiscType] = useState<'PERCENT' | 'FLAT'>('PERCENT');
+  const [discAmount, setDiscAmount] = useState('0');
+  useEffect(() => {
+    if (!cfg) return;
+    const t = cfg.discountType === 'FLAT' ? 'FLAT' : 'PERCENT';
+    setDiscType(t);
+    setDiscAmount(t === 'FLAT' ? String(cfg.discountFlatPaise / 100) : String(cfg.discountBps / 100));
+  }, [cfg?.discountType, cfg?.discountBps, cfg?.discountFlatPaise]);
+
+  const toBps = (a: string): number => {
+    const n = parseFloat(a);
+    return Number.isFinite(n) ? Math.max(0, Math.min(9000, Math.round(n * 100))) : 0;
   };
+  const toPaise = (a: string): number => {
+    const n = parseFloat(a);
+    return Number.isFinite(n) ? Math.max(0, Math.round(n * 100)) : 0;
+  };
+
+  // The config is a single PUT (replaces all fields), so merge a patch over the
+  // current local state — toggling BOGO keeps the discount, and vice-versa.
+  const saveConfig = (patch: Partial<SaleConfig>): void => {
+    const body: SaleConfig = {
+      bogoEnabled,
+      discountType: discType,
+      discountBps: discType === 'PERCENT' ? toBps(discAmount) : 0,
+      discountFlatPaise: discType === 'FLAT' ? toPaise(discAmount) : 0,
+      ...patch,
+    };
+    updateConfig(body)
+      .unwrap()
+      .catch(() => toast.error('Could not update sale settings'));
+  };
+
+  const commitDiscount = (nextType: 'PERCENT' | 'FLAT', nextAmount: string): void =>
+    saveConfig({
+      discountType: nextType,
+      discountBps: nextType === 'PERCENT' ? toBps(nextAmount) : 0,
+      discountFlatPaise: nextType === 'FLAT' ? toPaise(nextAmount) : 0,
+    });
 
   return (
     <div className="space-y-4">
       <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-3">
         <p className="text-sm text-ink-500 max-w-2xl">
-          Items added here appear in the storefront&apos;s <strong>Season Sales</strong> section (below Top Styles). Set a
-          discount per item — the storefront shows the original price struck through, the discounted price and a
-          &quot;Flat&nbsp;X% off&quot; badge. Items stay a single inventory record; removing one only drops it from the sale.
+          Items added here appear in the storefront&apos;s <strong>Season Sales</strong> section (below Top Styles). The
+          discount below applies to <strong>every</strong> item in the sale — the storefront shows the original price
+          struck through, the discounted price and a &quot;Flat&nbsp;X% off&quot; badge. Items stay a single inventory
+          record; removing one only drops it from the sale.
         </p>
         <Button onClick={() => setAddOpen(true)} className="self-start shrink-0">
           <Plus className="h-4 w-4" /> Add items
         </Button>
+      </div>
+
+      {/* Universal discount — set once, applied to every item in the Season Sale. */}
+      <div className="rounded-md border border-ink-100 bg-ink-0 p-3">
+        <p className="text-sm font-medium text-ink-900">Sale discount — applies to every item</p>
+        <p className="text-xs text-ink-500 mb-2.5">
+          Set it once here; it&apos;s applied to all Season Sale pieces on the storefront and at checkout.
+        </p>
+        <div className="flex items-center gap-1.5">
+          <select
+            value={discType}
+            onChange={(e) => {
+              const next = e.target.value as 'PERCENT' | 'FLAT';
+              setDiscType(next);
+              commitDiscount(next, discAmount);
+            }}
+            className="h-9 rounded-md border border-ink-200 px-2 text-sm focus:border-brand-400 focus:outline-none"
+            aria-label="Sale discount type"
+          >
+            <option value="PERCENT">% off</option>
+            <option value="FLAT">₹ off</option>
+          </select>
+          {discType === 'FLAT' && <span className="text-sm text-ink-500">₹</span>}
+          <input
+            type="number"
+            min={0}
+            step={discType === 'FLAT' ? 1 : 0.5}
+            value={discAmount}
+            onChange={(e) => setDiscAmount(e.target.value)}
+            onBlur={() => commitDiscount(discType, discAmount)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') e.currentTarget.blur();
+            }}
+            className="h-9 w-28 rounded-md border border-ink-200 px-2 text-right text-sm tabular-nums focus:border-brand-400 focus:outline-none"
+            aria-label="Sale discount amount"
+          />
+          <span className="text-sm text-ink-500">{discType === 'PERCENT' ? '% off' : 'off'}</span>
+          {savingConfig && <span className="ml-1 text-[11px] text-ink-400">saving…</span>}
+        </div>
       </div>
 
       {/* Sale-wide Buy 1 Get 1 — applies to every item in the Season Sale. */}
@@ -1799,14 +1898,14 @@ function SaleItemsManageTab(): JSX.Element {
           type="checkbox"
           checked={bogoEnabled}
           disabled={savingConfig}
-          onChange={(e) => toggleBogo(e.target.checked)}
+          onChange={(e) => saveConfig({ bogoEnabled: e.target.checked })}
           className="mt-0.5 h-4 w-4 rounded border-ink-300 text-brand-600 focus:ring-brand-500"
         />
         <div>
           <p className="text-sm font-medium text-ink-900">Buy 1 Get 1 Free — whole sale</p>
           <p className="text-xs text-ink-500">
             When on, every item in the Season Sale shows a &quot;Buy&nbsp;1 Get&nbsp;1 Free&quot; badge on the storefront.
-            Per-item % / ₹ discounts still apply on top.
+            The % / ₹ discount above still applies on top.
           </p>
         </div>
       </label>
@@ -1816,7 +1915,7 @@ function SaleItemsManageTab(): JSX.Element {
         <EmptyState
           eyebrow="No items on sale"
           title="Start a season sale"
-          body="Add items and give each a discount. They'll show up in the Season Sales section on your storefront."
+          body="Add items to the sale, then set one discount above — it applies to all of them on your storefront."
         />
       )}
       {items.length > 0 && (
@@ -1831,39 +1930,10 @@ function SaleItemsManageTab(): JSX.Element {
   );
 }
 
-// One sale row: thumbnail + name/SKU, an offer-type selector (% off / ₹ off /
-// BOGO) with the matching value input, and a remove button. The value is held
-// locally and committed on blur / Enter so typing doesn't fire a request per
-// keystroke. Changing the type commits immediately.
+// One sale row: thumbnail + name/SKU + a remove button. The discount is the
+// sale-wide universal one (set above), so rows are membership only.
 function SaleItemRowCard({ item }: { item: SaleItemRow }): JSX.Element {
-  const [updateOffer, { isLoading: saving }] = useUpdateSaleItemDiscountMutation();
   const [removeItem] = useRemoveItemFromSaleMutation();
-  // Per-item offer is now % / ₹ only (BOGO is a sale-wide toggle). Coerce any
-  // legacy per-item BOGO row to PERCENT so the dropdown stays consistent.
-  const initialType: SaleDiscountType = item.discountType === 'FLAT' ? 'FLAT' : 'PERCENT';
-  const [type, setType] = useState<SaleDiscountType>(initialType);
-  // The amount input mirrors whichever value the current type uses: % for
-  // PERCENT, ₹ for FLAT.
-  const [amount, setAmount] = useState<string>(
-    initialType === 'FLAT' ? String(item.discountFlatPaise / 100) : String(item.discountBps / 100),
-  );
-
-  const push = (next: SaleDiscountType, amt: string): void => {
-    const n = parseFloat(amt);
-    const bps = next === 'PERCENT' && Number.isFinite(n) ? Math.max(0, Math.min(9000, Math.round(n * 100))) : 0;
-    const flat = next === 'FLAT' && Number.isFinite(n) ? Math.max(0, Math.round(n * 100)) : 0;
-    updateOffer({ itemId: item.id, discountType: next, discountBps: bps, discountFlatPaise: flat })
-      .unwrap()
-      .catch(() => toast.error('Could not update offer'));
-  };
-
-  const onTypeChange = (next: SaleDiscountType): void => {
-    setType(next);
-    // Reset the amount to this type's stored value so the field is sensible.
-    const a = next === 'FLAT' ? String(item.discountFlatPaise / 100) : next === 'PERCENT' ? String(item.discountBps / 100) : '';
-    setAmount(a);
-    push(next, a);
-  };
 
   const remove = (): void => {
     if (!window.confirm(`Remove "${item.name ?? item.sku}" from the sale?`)) return;
@@ -1887,37 +1957,6 @@ function SaleItemRowCard({ item }: { item: SaleItemRow }): JSX.Element {
         <p className="truncate text-sm text-ink-900">{item.name ?? 'Unnamed item'}</p>
         <p className="text-xs text-ink-500">{item.sku}</p>
       </div>
-      <div className="flex items-center gap-1.5">
-        <select
-          value={type}
-          onChange={(e) => onTypeChange(e.target.value as SaleDiscountType)}
-          className="h-9 rounded-md border border-ink-200 px-2 text-sm focus:border-brand-400 focus:outline-none"
-          aria-label={`Offer type for ${item.name ?? item.sku}`}
-        >
-          <option value="PERCENT">% off</option>
-          <option value="FLAT">₹ off</option>
-        </select>
-        {type !== 'BOGO' && (
-          <>
-            {type === 'FLAT' && <span className="text-sm text-ink-500">₹</span>}
-            <input
-              type="number"
-              min={0}
-              step={type === 'FLAT' ? 1 : 0.5}
-              value={amount}
-              onChange={(e) => setAmount(e.target.value)}
-              onBlur={() => push(type, amount)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') e.currentTarget.blur();
-              }}
-              className="h-9 w-24 rounded-md border border-ink-200 px-2 text-right text-sm tabular-nums focus:border-brand-400 focus:outline-none"
-              aria-label={`Offer amount for ${item.name ?? item.sku}`}
-            />
-            <span className="text-sm text-ink-500">{type === 'PERCENT' ? '% off' : 'off'}</span>
-          </>
-        )}
-        {saving && <span className="text-[11px] text-ink-400">saving…</span>}
-      </div>
       <button
         type="button"
         onClick={remove}
@@ -1931,15 +1970,13 @@ function SaleItemRowCard({ item }: { item: SaleItemRow }): JSX.Element {
 }
 
 // Item picker for the season sale — mirrors AddItemsModal but posts to the sale
-// pool. An optional starting discount applies to every item added in this batch
-// (each can still be tuned individually afterwards).
+// pool. Membership only; the discount is the sale-wide universal one set on the
+// Season Sales tab.
 function AddSaleItemsModal({ onClose }: { onClose: () => void }): JSX.Element {
   const { data: allItems } = useGetItemsQuery({});
   const [addItems, { isLoading: adding }] = useAddItemsToSaleMutation();
   const [selectedItemIds, setSelectedItemIds] = useState<Set<string>>(new Set());
   const [searchTerm, setSearchTerm] = useState('');
-  const [type, setType] = useState<SaleDiscountType>('PERCENT');
-  const [amount, setAmount] = useState('10');
 
   const items = (allItems?.data ?? []).filter(
     (item) =>
@@ -1949,11 +1986,8 @@ function AddSaleItemsModal({ onClose }: { onClose: () => void }): JSX.Element {
 
   const handleAdd = async (): Promise<void> => {
     if (selectedItemIds.size === 0) return void toast.error('Select at least one item');
-    const n = parseFloat(amount);
-    const discountBps = type === 'PERCENT' && Number.isFinite(n) ? Math.max(0, Math.min(9000, Math.round(n * 100))) : 0;
-    const discountFlatPaise = type === 'FLAT' && Number.isFinite(n) ? Math.max(0, Math.round(n * 100)) : 0;
     try {
-      await addItems({ itemIds: Array.from(selectedItemIds), discountType: type, discountBps, discountFlatPaise }).unwrap();
+      await addItems({ itemIds: Array.from(selectedItemIds) }).unwrap();
       toast.success(`Added ${selectedItemIds.size} item(s) to the sale`);
       onClose();
     } catch (err) {
@@ -1979,27 +2013,9 @@ function AddSaleItemsModal({ onClose }: { onClose: () => void }): JSX.Element {
           </button>
         </div>
 
-        <div className="flex items-end gap-3 px-4 pt-3">
-          <Field label="Offer">
-            <select value={type} onChange={(e) => setType(e.target.value as SaleDiscountType)} className={fieldCls}>
-              <option value="PERCENT">% off</option>
-              <option value="FLAT">₹ off</option>
-            </select>
-          </Field>
-          {type !== 'BOGO' && (
-            <Field label={type === 'PERCENT' ? 'Discount %' : 'Amount ₹'}>
-              <input
-                type="number"
-                min={0}
-                step={type === 'FLAT' ? 1 : 0.5}
-                value={amount}
-                onChange={(e) => setAmount(e.target.value)}
-                className={fieldCls}
-              />
-            </Field>
-          )}
-          <p className="pb-2 text-xs text-ink-500">Applied to each item added now; tune individually after.</p>
-        </div>
+        <p className="px-4 pt-3 text-xs text-ink-500">
+          The sale-wide discount (set on the Season Sales tab) applies to every item you add.
+        </p>
 
         <div className="flex-1 overflow-y-auto p-4 space-y-3">
           <input
@@ -2610,6 +2626,7 @@ function VendorsTab(): JSX.Element {
 // Purchase orders tab.
 
 function PurchaseOrdersTab(): JSX.Element {
+  const navigate = useNavigate();
   const { data, isLoading } = useGetPurchaseOrdersQuery();
   const { data: shopsRes } = useGetShopsQuery();
   const { data: catsRes } = useGetCategoriesQuery();
@@ -2620,6 +2637,8 @@ function PurchaseOrdersTab(): JSX.Element {
   // never see this UI. (Previously this used `window.prompt` which is
   // unstylable and a UX dead-end on tablets.)
   const [receiveTargetPo, setReceiveTargetPo] = useState<string | null>(null);
+  // Clicking a PO row opens a detail drawer (line items, destination, GST).
+  const [detailPoId, setDetailPoId] = useState<string | null>(null);
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
   const allRows = data?.data ?? [];
@@ -2637,9 +2656,18 @@ function PurchaseOrdersTab(): JSX.Element {
 
   async function performReceive(poId: string, shopId: string): Promise<void> {
     try {
-      await receivePO({ id: poId, shopId, categoryId: cats[0]!.id }).unwrap();
+      const res = await receivePO({ id: poId, shopId, categoryId: cats[0]!.id }).unwrap();
       toast.success('PO received — items added to stock');
       setReceiveTargetPo(null);
+      // Mirror the "Add item" flow: now that the PO's pieces have entered stock
+      // (same SKUs as the lines), jump straight to the label printer so their
+      // tags can be printed immediately, without hunting for them in the list.
+      // The receive mutation invalidates Item.LIST, so the print page's own
+      // getItems query picks up the freshly-created items.
+      const skus = (res.data?.items ?? []).map((i) => i.itemSku).filter(Boolean);
+      if (skus.length > 0) {
+        navigate('/admin/inventory/print-labels', { state: { skus } });
+      }
     } catch (err) {
       const message =
         (err as { data?: { error?: { message?: string } } }).data?.error?.message ??
@@ -2660,6 +2688,10 @@ function PurchaseOrdersTab(): JSX.Element {
     // Multi-shop → open picker.
     setReceiveTargetPo(poId);
   }
+
+  // Re-derive the open PO from the live list so the drawer reflects fresh data
+  // after a GST save or receive (both invalidate the list).
+  const detailPo = allRows.find((p) => p.id === detailPoId) ?? null;
 
   return (
     <>
@@ -2715,7 +2747,11 @@ function PurchaseOrdersTab(): JSX.Element {
             </thead>
             <tbody className="divide-y divide-ink-100">
               {rows.map((po) => (
-                <tr key={po.id}>
+                <tr
+                  key={po.id}
+                  onClick={() => setDetailPoId(po.id)}
+                  className="cursor-pointer hover:bg-ink-25 transition-colors duration-fast"
+                >
                   <td className="px-5 py-3 font-mono text-xs">{po.id.slice(-8)}</td>
                   <td className="px-5 py-3 text-ink-900">{po.vendor?.name ?? '—'}</td>
                   <td className="px-5 py-3 font-mono text-xs">
@@ -2736,7 +2772,10 @@ function PurchaseOrdersTab(): JSX.Element {
                         size="sm"
                         variant="secondary"
                         disabled={receiving}
-                        onClick={() => void handleReceive(po.id)}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          void handleReceive(po.id);
+                        }}
                       >
                         Receive
                       </Button>
@@ -2757,6 +2796,18 @@ function PurchaseOrdersTab(): JSX.Element {
         receiving={receiving}
         onPick={(shopId) => {
           if (receiveTargetPo) void performReceive(receiveTargetPo, shopId);
+        }}
+      />
+      <PoDetailSheet
+        open={!!detailPo}
+        po={detailPo}
+        shops={shops}
+        categories={cats as CategoryRow[]}
+        receiving={receiving}
+        onClose={() => setDetailPoId(null)}
+        onReceive={(poId) => {
+          setDetailPoId(null);
+          void handleReceive(poId);
         }}
       />
     </>
@@ -2822,6 +2873,275 @@ function ReceivePoShopPicker({
         </SheetBody>
       </SheetContent>
     </Sheet>
+  );
+}
+
+// ----------------------------------------------------------------------------
+// PO detail drawer — opened by clicking a PO row. Shows the line items, where
+// the stock was received into, and a purchase-GST editor (input tax credit).
+
+function PoDetailSheet({
+  open,
+  po,
+  shops,
+  categories,
+  receiving,
+  onClose,
+  onReceive,
+}: {
+  open: boolean;
+  po: PurchaseOrderRow | null;
+  shops: { id: string; name: string; isActive: boolean }[];
+  categories: CategoryRow[];
+  receiving: boolean;
+  onClose: () => void;
+  onReceive: (poId: string) => void;
+}): JSX.Element {
+  return (
+    <Sheet open={open} onOpenChange={(o) => !o && onClose()}>
+      <SheetContent className="!max-w-2xl">
+        <SheetHeader>
+          <SheetTitle>Purchase order {po ? po.id.slice(-8) : ''}</SheetTitle>
+        </SheetHeader>
+        <SheetBody>
+          {/* Keyed by id so the GST editor state re-initialises when a
+              different PO is opened or the row refetches after a save. */}
+          {po && (
+            <PoDetailContent
+              key={po.id}
+              po={po}
+              shops={shops}
+              categories={categories}
+              receiving={receiving}
+              onReceive={onReceive}
+            />
+          )}
+        </SheetBody>
+      </SheetContent>
+    </Sheet>
+  );
+}
+
+function PoDetailContent({
+  po,
+  shops,
+  categories,
+  receiving,
+  onReceive,
+}: {
+  po: PurchaseOrderRow;
+  shops: { id: string; name: string; isActive: boolean }[];
+  categories: CategoryRow[];
+  receiving: boolean;
+  onReceive: (poId: string) => void;
+}): JSX.Element {
+  const [setGst, { isLoading: savingGst }] = useSetPurchaseOrderGstMutation();
+  const [interState, setInterState] = useState(po.gstInterState);
+  const [cgst, setCgst] = useState(po.cgstPaise ? String(po.cgstPaise / 100) : '');
+  const [sgst, setSgst] = useState(po.sgstPaise ? String(po.sgstPaise / 100) : '');
+  const [igst, setIgst] = useState(po.igstPaise ? String(po.igstPaise / 100) : '');
+
+  const catById = useMemo(() => new Map(categories.map((c) => [c.id, c])), [categories]);
+  const metalOf = (catId: string | null): MetalTypeLiteral | undefined => {
+    if (!catId) return undefined;
+    const c = catById.get(catId);
+    if (!c) return undefined;
+    const main = c.parentId ? catById.get(c.parentId) : c;
+    return (main ?? c).metalType;
+  };
+  const catName = (catId: string | null): string => (catId ? catById.get(catId)?.name ?? '—' : '—');
+
+  const toPaise = (v: string): number => Math.round((parseFloat(v) || 0) * 100);
+  const gstPreviewPaise = interState ? toPaise(igst) : toPaise(cgst) + toPaise(sgst);
+
+  const receivedShopName = po.receivedShopId
+    ? shops.find((s) => s.id === po.receivedShopId)?.name ?? 'Unknown shop'
+    : null;
+
+  async function saveGst(): Promise<void> {
+    try {
+      await setGst({
+        id: po.id,
+        interState,
+        cgstPaise: interState ? 0 : toPaise(cgst),
+        sgstPaise: interState ? 0 : toPaise(sgst),
+        igstPaise: interState ? toPaise(igst) : 0,
+      }).unwrap();
+      toast.success('Purchase GST saved');
+    } catch (err) {
+      const message =
+        (err as { data?: { error?: { message?: string } } }).data?.error?.message ?? 'Could not save GST.';
+      toast.error(message);
+    }
+  }
+
+  return (
+    <div className="space-y-5 text-sm">
+      {/* Header facts */}
+      <div className="grid grid-cols-2 gap-3">
+        <div>
+          <p className="text-eyebrow uppercase text-ink-500">Vendor</p>
+          <p className="text-ink-900">{po.vendor?.name ?? '—'}</p>
+        </div>
+        <div>
+          <p className="text-eyebrow uppercase text-ink-500">Status</p>
+          <Badge tone={po.status === 'DRAFT' ? 'neutral' : po.status === 'RECEIVED' ? 'success' : 'info'}>
+            {po.status.toLowerCase()}
+          </Badge>
+        </div>
+        <div>
+          <p className="text-eyebrow uppercase text-ink-500">Created</p>
+          <p className="text-ink-900">
+            {new Date(po.createdAt).toLocaleDateString('en-IN', { dateStyle: 'medium' })}
+          </p>
+        </div>
+        <div>
+          <p className="text-eyebrow uppercase text-ink-500">Items total</p>
+          <Money paise={po.totalPaise} className="font-mono text-ink-900" />
+        </div>
+      </div>
+
+      {/* Where they went */}
+      <div className="rounded-md border border-ink-100 bg-ink-25 px-4 py-3">
+        <p className="text-eyebrow uppercase text-ink-500 mb-1">Where they went</p>
+        {po.status === 'RECEIVED' ? (
+          receivedShopName ? (
+            <p className="text-ink-900">
+              Received into <span className="font-medium">{receivedShopName}</span>
+              {po.receivedAt
+                ? ` on ${new Date(po.receivedAt).toLocaleDateString('en-IN', { dateStyle: 'medium' })}`
+                : ''}
+            </p>
+          ) : (
+            <p className="text-ink-700">Received (destination not recorded for this older PO).</p>
+          )
+        ) : po.status === 'CANCELLED' ? (
+          <p className="text-ink-700">Cancelled — never received into stock.</p>
+        ) : (
+          <div className="flex items-center justify-between gap-3">
+            <p className="text-ink-700">Not received yet — items aren&apos;t in stock.</p>
+            <Button size="sm" variant="secondary" disabled={receiving} onClick={() => onReceive(po.id)}>
+              Receive
+            </Button>
+          </div>
+        )}
+      </div>
+
+      {/* Line items */}
+      <div>
+        <p className="text-eyebrow uppercase text-ink-500 mb-2">Line items · {po.items.length}</p>
+        <div className="overflow-x-auto rounded-md border border-ink-100">
+          <table className="w-full text-sm min-w-[640px]">
+            <thead className="text-eyebrow uppercase text-ink-500 bg-ink-25">
+              <tr>
+                <th className="text-left px-3 py-2">SKU</th>
+                <th className="text-left px-3 py-2">Name</th>
+                <th className="text-left px-3 py-2">Category</th>
+                <th className="text-right px-3 py-2">Weight</th>
+                <th className="text-left px-3 py-2">Purity</th>
+                <th className="text-right px-3 py-2">Qty</th>
+                <th className="text-right px-3 py-2">Cost</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-ink-100">
+              {po.items.map((it) => (
+                <tr key={it.id}>
+                  <td className="px-3 py-2 font-mono text-xs text-ink-900">{it.itemSku}</td>
+                  <td className="px-3 py-2 text-ink-700 max-w-[160px] truncate">{it.name ?? '—'}</td>
+                  <td className="px-3 py-2 text-ink-700">{catName(it.categoryId)}</td>
+                  <td className="px-3 py-2 text-right"><Weight mg={it.weightMg} /></td>
+                  <td className="px-3 py-2"><Purity x100={it.purity} metalType={metalOf(it.categoryId)} /></td>
+                  <td className="px-3 py-2 text-right font-mono tabular-nums">{it.quantity ?? 1}</td>
+                  <td className="px-3 py-2 text-right"><Money paise={it.costPaise} className="font-mono tabular-nums" /></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {/* Purchase GST (input tax credit) */}
+      <div className="rounded-md border border-ink-100 p-4 space-y-3">
+        <div>
+          <p className="text-eyebrow uppercase text-ink-500">Purchase GST (input tax credit)</p>
+          <p className="text-xs text-ink-500 mt-0.5">
+            GST charged on the vendor&apos;s invoice. Counted as ITC in Finance once the PO is received.
+          </p>
+        </div>
+
+        {/* Intra / inter toggle */}
+        <div className="inline-flex rounded-md border border-ink-200 overflow-hidden">
+          <button
+            type="button"
+            onClick={() => setInterState(false)}
+            className={cn(
+              'px-3 h-9 text-sm transition-colors duration-fast',
+              !interState ? 'bg-brand-500 text-white' : 'bg-ink-0 text-ink-700 hover:bg-ink-25',
+            )}
+          >
+            Intra-state (CGST + SGST)
+          </button>
+          <button
+            type="button"
+            onClick={() => setInterState(true)}
+            className={cn(
+              'px-3 h-9 text-sm border-l border-ink-200 transition-colors duration-fast',
+              interState ? 'bg-brand-500 text-white' : 'bg-ink-0 text-ink-700 hover:bg-ink-25',
+            )}
+          >
+            Inter-state (IGST)
+          </button>
+        </div>
+
+        {interState ? (
+          <Field label="IGST (₹)">
+            <input
+              type="number"
+              step="0.01"
+              min="0"
+              value={igst}
+              onChange={(e) => setIgst(e.target.value)}
+              className={fieldCls}
+              placeholder="0.00"
+            />
+          </Field>
+        ) : (
+          <div className="grid grid-cols-2 gap-3">
+            <Field label="CGST (₹)">
+              <input
+                type="number"
+                step="0.01"
+                min="0"
+                value={cgst}
+                onChange={(e) => setCgst(e.target.value)}
+                className={fieldCls}
+                placeholder="0.00"
+              />
+            </Field>
+            <Field label="SGST (₹)">
+              <input
+                type="number"
+                step="0.01"
+                min="0"
+                value={sgst}
+                onChange={(e) => setSgst(e.target.value)}
+                className={fieldCls}
+                placeholder="0.00"
+              />
+            </Field>
+          </div>
+        )}
+
+        <div className="flex items-center justify-between border-t border-ink-100 pt-3">
+          <span className="text-ink-700">Invoice total incl GST</span>
+          <Money paise={po.totalPaise + gstPreviewPaise} className="font-mono text-ink-900" />
+        </div>
+
+        <Button type="button" className="w-full" disabled={savingGst} onClick={() => void saveGst()}>
+          {savingGst ? 'Saving…' : 'Save GST'}
+        </Button>
+      </div>
+    </div>
   );
 }
 
@@ -3043,6 +3363,7 @@ function AddItemDialog({ open, onClose }: { open: boolean; onClose: () => void }
     makingMode: 'PERCENTAGE' as 'PERCENTAGE' | 'PER_GRAM',
     makingChargePct: '',
     makingPerGramRupees: '',
+    gender: '' as '' | 'MEN' | 'WOMEN',
   });
   // Images and publish-to-website live alongside the form but outside the
   // text/select state object so the upload UI can update images without
@@ -3209,6 +3530,7 @@ function AddItemDialog({ open, onClose }: { open: boolean; onClose: () => void }
         // tracking N interchangeable pieces with an integer counter).
         isSerialized,
         quantityOnHand,
+        gender: form.gender || null,
         publishToWebsite,
         collectionIds,
         diamonds: diamondRowsToInput(diamonds),
@@ -3246,7 +3568,7 @@ function AddItemDialog({ open, onClose }: { open: boolean; onClose: () => void }
                   const val = e.target.value;
                   if (!val) return;
                   const it = existingItems.find((i) => i.id === val) as
-                    | (Item & { description?: string | null })
+                    | (Item & { description?: string | null; gender?: 'MEN' | 'WOMEN' | null })
                     | undefined;
                   if (it) {
                     setForm({
@@ -3266,6 +3588,7 @@ function AddItemDialog({ open, onClose }: { open: boolean; onClose: () => void }
                       makingMode: 'PERCENTAGE',
                       makingChargePct: it.makingChargeBps ? String(it.makingChargeBps / 100) : '',
                       makingPerGramRupees: '',
+                      gender: (it.gender ?? '') as '' | 'MEN' | 'WOMEN',
                     });
                     setImages(it.images ?? []);
                     toast.success(`Copied details from ${it.sku}`);
@@ -3535,6 +3858,17 @@ function AddItemDialog({ open, onClose }: { open: boolean; onClose: () => void }
                 />
               </Field>
             </div>
+            <Field label="Gender">
+              <select
+                value={form.gender}
+                onChange={(e) => setForm({ ...form, gender: e.target.value as '' | 'MEN' | 'WOMEN' })}
+                className={fieldCls}
+              >
+                <option value="">— Not specified</option>
+                <option value="WOMEN">Women</option>
+                <option value="MEN">Men</option>
+              </select>
+            </Field>
             {(metalType === 'GOLD' || metalType === 'SILVER' || metalType === 'OTHER' || metalType === 'STAINLESS_STEEL') && (
               <PriceCalcHelper
                 metalType={metalType}
@@ -3708,6 +4042,7 @@ function EditItemDialog({
     makingChargePct: item.makingChargeBps ? String(item.makingChargeBps / 100) : '',
     makingPerGramRupees:
       item.makingChargePerGramPaise != null ? String(item.makingChargePerGramPaise / 100) : '',
+    gender: ((item.gender as 'MEN' | 'WOMEN' | null) ?? '') as '' | 'MEN' | 'WOMEN',
   });
   const [images, setImages] = useState<string[]>(item.images ?? []);
   const [collectionIds, setCollectionIds] = useState<string[]>(itemExt.collectionIds ?? []);
@@ -3740,6 +4075,7 @@ function EditItemDialog({
       makingChargePct: item.makingChargeBps ? String(item.makingChargeBps / 100) : '',
       makingPerGramRupees:
         item.makingChargePerGramPaise != null ? String(item.makingChargePerGramPaise / 100) : '',
+      gender: ((item.gender as 'MEN' | 'WOMEN' | null) ?? '') as '' | 'MEN' | 'WOMEN',
     });
     setImages(item.images ?? []);
     setCollectionIds(itemExt.collectionIds ?? []);
@@ -3829,6 +4165,7 @@ function EditItemDialog({
           makingChargeBps: making.makingChargeBps,
           makingChargeMode: making.makingChargeMode,
           makingChargePerGramPaise: making.makingChargePerGramPaise,
+          gender: form.gender || null,
           collectionIds,
           diamonds: diamondRowsToInput(diamonds),
           publishToWebsite,
@@ -4043,6 +4380,17 @@ function EditItemDialog({
                 />
               </Field>
             </div>
+            <Field label="Gender">
+              <select
+                value={form.gender}
+                onChange={(e) => setForm({ ...form, gender: e.target.value as '' | 'MEN' | 'WOMEN' })}
+                className={fieldCls}
+              >
+                <option value="">— Not specified</option>
+                <option value="WOMEN">Women</option>
+                <option value="MEN">Men</option>
+              </select>
+            </Field>
 
             {(metalType === 'GOLD' || metalType === 'SILVER' || metalType === 'OTHER' || metalType === 'STAINLESS_STEEL') && (
               <PriceCalcHelper
@@ -4575,6 +4923,8 @@ interface POLine {
   makingMode?: 'PERCENTAGE' | 'PER_GRAM';
   makingPerGramRupees?: string;
   isSerialized?: boolean;
+  /** Target audience for the new piece ("MEN" / "WOMEN"); copied to the Item on receive. */
+  gender?: 'MEN' | 'WOMEN';
   collectionIds?: string[];
   diamonds?: DiamondRow[];
 }
@@ -5138,6 +5488,18 @@ function POLineEditor({
             </div>
           </div>
 
+          {/* Gender — copied onto the Item on receive; powers the storefront filter. */}
+          <div>
+            <span className="text-[11px] uppercase tracking-wider text-ink-500 block mb-1">Gender</span>
+            <select value={line.gender ?? ''}
+              onChange={(e) => onPatch(index, { gender: (e.target.value || undefined) as 'MEN' | 'WOMEN' | undefined })}
+              className={fieldCls}>
+              <option value="">— Not specified</option>
+              <option value="WOMEN">Women</option>
+              <option value="MEN">Men</option>
+            </select>
+          </div>
+
           {/* Making charge mode */}
           <div>
             <span className="text-[11px] uppercase tracking-wider text-ink-500 block mb-1">Making charge override</span>
@@ -5269,6 +5631,7 @@ function CreatePODialog({ open, onClose }: { open: boolean; onClose: () => void 
             ? Math.round(stoneRaw * 1000)
             : undefined,
         isSerialized: l.isSerialized ?? true,
+        gender: l.gender ?? undefined,
         collectionIds: l.collectionIds ?? [],
         diamonds: l.diamonds ? diamondRowsToInput(l.diamonds) : [],
       };

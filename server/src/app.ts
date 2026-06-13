@@ -27,6 +27,7 @@ import { rolesRouter } from './modules/roles/roles.routes.js';
 import { shopsRouter } from './modules/shops/shops.routes.js';
 import { inventoryRouter } from './modules/inventory/inventory.routes.js';
 import { transfersRouter } from './modules/transfers/transfers.routes.js';
+import { stockRequestsRouter } from './modules/stock-requests/stock-requests.routes.js';
 import { posRouter } from './modules/pos/pos.routes.js';
 import { posFeaturesRouter } from './modules/pos/pos-features.routes.js';
 import { counterRouter } from './modules/counter/counter.routes.js';
@@ -114,6 +115,15 @@ export function createApp(): express.Express {
     '/transfers',
     requireAnyPermission('inventory.read', 'inventory.transfer'),
     transfersRouter,
+  );
+
+  // Stock requests (replenishment indents). POS cashiers file them
+  // (inventory.stock_request); reviewers manage them (inventory.transfer).
+  // Per-route gates + shop-scoping live inside the router.
+  protectedRouter.use(
+    '/stock-requests',
+    requireAnyPermission('inventory.read', 'inventory.transfer', 'inventory.stock_request'),
+    stockRequestsRouter,
   );
 
   // POS — two routers, two audiences:

@@ -32,6 +32,8 @@ import {
   useGetStaffReportQuery,
   useGetTopProductsQuery,
   useGetTopCategoriesQuery,
+  useGetTopSubcategoriesQuery,
+  useGetTopCollectionsQuery,
   useGetShopPerformanceQuery,
   useGetInventoryValuationQuery,
   useGetCustomerAcquisitionQuery,
@@ -601,27 +603,86 @@ function StaffSection(): JSX.Element {
 // 5. Top-selling products
 // =====================================================================
 
+type TopView = 'category' | 'subcategory' | 'product' | 'collection';
+
+// Per-view copy + behaviour. `secondaryLabel` non-null → the table/CSV show an
+// extra column (the main category a product / sub-category sits under).
+const TOP_VIEWS: Record<
+  TopView,
+  { toggle: string; singular: string; plural: string; chartTitle: string; primaryCol: string; secondaryLabel: string | null }
+> = {
+  category: {
+    toggle: 'By category',
+    singular: 'category',
+    plural: 'categories',
+    chartTitle: 'Top-selling categories',
+    primaryCol: 'Category',
+    secondaryLabel: null,
+  },
+  subcategory: {
+    toggle: 'Sub-category',
+    singular: 'sub-category',
+    plural: 'sub-categories',
+    chartTitle: 'Top-selling sub-categories',
+    primaryCol: 'Sub-category',
+    secondaryLabel: 'Main category',
+  },
+  product: {
+    toggle: 'By product',
+    singular: 'product',
+    plural: 'products',
+    chartTitle: 'Top-selling products',
+    primaryCol: 'Product',
+    secondaryLabel: 'Main category',
+  },
+  collection: {
+    toggle: 'Collection',
+    singular: 'collection',
+    plural: 'collections',
+    chartTitle: 'Top-selling collections',
+    primaryCol: 'Collection',
+    secondaryLabel: null,
+  },
+};
+
 function TopProductsSection(): JSX.Element {
   const [from, setFrom] = useState(daysAgo(30));
   const [to, setTo] = useState(today());
   const [search, setSearch] = useState('');
-  // Category view is the primary focus per the client (M3 FR#3); product view
-  // is a drill-down.
-  const [view, setView] = useState<'category' | 'product'>('category');
+  // Category view is the primary focus per the client (M3 FR#3); the others are
+  // drill-downs / alternate cuts.
+  const [view, setView] = useState<TopView>('category');
+  const cfg = TOP_VIEWS[view];
   const range = {
     from: new Date(from).toISOString(),
     to: new Date(`${to}T23:59:59.999Z`).toISOString(),
     limit: 20,
   };
   const catQ = useGetTopCategoriesQuery(range, { skip: view !== 'category' });
+  const subQ = useGetTopSubcategoriesQuery(range, { skip: view !== 'subcategory' });
   const prodQ = useGetTopProductsQuery(range, { skip: view !== 'product' });
-  const isLoading = view === 'category' ? catQ.isLoading : prodQ.isLoading;
+  const colQ = useGetTopCollectionsQuery(range, { skip: view !== 'collection' });
+  const activeQ =
+    view === 'category' ? catQ : view === 'subcategory' ? subQ : view === 'product' ? prodQ : colQ;
+  const isLoading = activeQ.isLoading;
 
-  // Normalise both shapes to a common row for the chart/table.
+  // Normalise every shape to a common row for the chart/table. `sub` is the
+  // optional secondary column (main category for product / sub-category views).
   const allRows = useMemo(() => {
-    if (view === 'category') {
-      return (catQ.data?.data ?? []).map((r) => ({
+    if (view === 'category' || view === 'subcategory') {
+      const data = (view === 'category' ? catQ.data : subQ.data)?.data ?? [];
+      return data.map((r) => ({
         id: r.categoryId,
+        name: r.name,
+        sub: view === 'subcategory' ? r.parentName ?? null : null,
+        qty: r.qty,
+        orderCount: r.orderCount,
+        revenuePaise: r.revenuePaise,
+      }));
+    }
+    if (view === 'collection') {
+      return (colQ.data?.data ?? []).map((r) => ({
+        id: r.collectionId,
         name: r.name,
         sub: null as string | null,
         qty: r.qty,
@@ -637,21 +698,20 @@ function TopProductsSection(): JSX.Element {
       orderCount: r.orderCount,
       revenuePaise: r.revenuePaise,
     }));
-  }, [view, catQ.data, prodQ.data]);
+  }, [view, catQ.data, subQ.data, prodQ.data, colQ.data]);
   const rows = useTableSearch(allRows, (r) => [r.name, r.sub ?? ''], search);
-  const noun = view === 'category' ? 'category' : 'product';
 
   function handleCsv(): void {
-    downloadCsv(`top-${noun}-${from}-to-${to}.csv`, [
-      [`Top ${noun === 'category' ? 'categories' : 'products'}`, `${from} → ${to}`],
+    downloadCsv(`top-${cfg.singular}-${from}-to-${to}.csv`, [
+      [`Top ${cfg.plural}`, `${from} → ${to}`],
       [],
-      view === 'category'
-        ? ['Rank', 'Category', 'Qty sold', 'Orders', 'Revenue (₹)']
-        : ['Rank', 'Product', 'Main category', 'Qty sold', 'Orders', 'Revenue (₹)'],
+      cfg.secondaryLabel
+        ? ['Rank', cfg.primaryCol, cfg.secondaryLabel, 'Qty sold', 'Orders', 'Revenue (₹)']
+        : ['Rank', cfg.primaryCol, 'Qty sold', 'Orders', 'Revenue (₹)'],
       ...rows.map((r, i) =>
-        view === 'category'
-          ? [i + 1, r.name, r.qty, r.orderCount, paiseToRupeeString(r.revenuePaise)]
-          : [i + 1, r.name, r.sub ?? '', r.qty, r.orderCount, paiseToRupeeString(r.revenuePaise)],
+        cfg.secondaryLabel
+          ? [i + 1, r.name, r.sub ?? '', r.qty, r.orderCount, paiseToRupeeString(r.revenuePaise)]
+          : [i + 1, r.name, r.qty, r.orderCount, paiseToRupeeString(r.revenuePaise)],
       ),
     ]);
   }
@@ -661,22 +721,18 @@ function TopProductsSection(): JSX.Element {
       <FilterRow>
         <DateInput label="From" value={from} onChange={setFrom} />
         <DateInput label="To" value={to} onChange={setTo} />
-        <div className="sm:col-span-2 flex items-end justify-end gap-2">
-          <div className="flex rounded-md border border-ink-200 p-0.5 text-xs">
-            <button
-              type="button"
-              onClick={() => setView('category')}
-              className={`h-8 px-3 rounded font-medium transition-colors ${view === 'category' ? 'bg-brand-500 text-ink-0' : 'text-ink-600 hover:bg-ink-50'}`}
-            >
-              By category
-            </button>
-            <button
-              type="button"
-              onClick={() => setView('product')}
-              className={`h-8 px-3 rounded font-medium transition-colors ${view === 'product' ? 'bg-brand-500 text-ink-0' : 'text-ink-600 hover:bg-ink-50'}`}
-            >
-              By product
-            </button>
+        <div className="sm:col-span-2 flex flex-wrap items-end justify-end gap-2">
+          <div className="flex flex-wrap rounded-md border border-ink-200 p-0.5 text-xs">
+            {(Object.keys(TOP_VIEWS) as TopView[]).map((v) => (
+              <button
+                key={v}
+                type="button"
+                onClick={() => setView(v)}
+                className={`h-8 px-3 rounded font-medium transition-colors ${view === v ? 'bg-brand-500 text-ink-0' : 'text-ink-600 hover:bg-ink-50'}`}
+              >
+                {TOP_VIEWS[v].toggle}
+              </button>
+            ))}
           </div>
           <Button variant="outline" size="sm" onClick={handleCsv} disabled={rows.length === 0}>
             <Download className="h-4 w-4" /> CSV
@@ -684,10 +740,7 @@ function TopProductsSection(): JSX.Element {
         </div>
       </FilterRow>
 
-      <ChartCard
-        title={view === 'category' ? 'Top-selling categories' : 'Top-selling products'}
-        eyebrow="Catalogue"
-      >
+      <ChartCard title={cfg.chartTitle} eyebrow="Catalogue">
         {isLoading ? (
           <p className="text-sm text-ink-500">Loading…</p>
         ) : rows.length === 0 ? (
@@ -701,20 +754,27 @@ function TopProductsSection(): JSX.Element {
         )}
       </ChartCard>
 
+      {view === 'collection' && rows.length > 0 && (
+        <p className="text-xs text-ink-500">
+          A piece can belong to several collections, so collection revenues overlap and may add up to
+          more than total sales. Pieces not linked to a stock item appear under “No collection”.
+        </p>
+      )}
+
       <TableToolbar
         query={search}
         onQueryChange={setSearch}
-        searchPlaceholder={`Search top ${noun === 'category' ? 'categories' : 'products'}…`}
+        searchPlaceholder={`Search top ${cfg.plural}…`}
         count={rows.length}
-        countLabel={rows.length === 1 ? noun : `${noun === 'category' ? 'categories' : 'products'}`}
+        countLabel={rows.length === 1 ? cfg.singular : cfg.plural}
       />
       <section className="rounded-md border border-ink-100 bg-ink-0 overflow-x-auto">
         <table className="w-full text-sm min-w-[640px]">
           <thead className="text-eyebrow uppercase text-ink-500 bg-ink-25">
             <tr>
               <th className="text-left px-4 py-2.5">Rank</th>
-              <th className="text-left px-4 py-2.5">{view === 'category' ? 'Category' : 'Product'}</th>
-              {view === 'product' && <th className="text-left px-4 py-2.5">Main category</th>}
+              <th className="text-left px-4 py-2.5">{cfg.primaryCol}</th>
+              {cfg.secondaryLabel && <th className="text-left px-4 py-2.5">{cfg.secondaryLabel}</th>}
               <th className="text-right px-4 py-2.5">Qty</th>
               <th className="text-right px-4 py-2.5">Orders</th>
               <th className="text-right px-4 py-2.5">Revenue</th>
@@ -725,7 +785,7 @@ function TopProductsSection(): JSX.Element {
               <tr key={r.id}>
                 <td className="px-4 py-2 font-mono text-xs text-ink-500">#{i + 1}</td>
                 <td className="px-4 py-2 text-ink-900">{r.name}</td>
-                {view === 'product' && (
+                {cfg.secondaryLabel && (
                   <td className="px-4 py-2 text-ink-600">{r.sub ?? '—'}</td>
                 )}
                 <td className="px-4 py-2 text-right tabular-nums">{r.qty}</td>

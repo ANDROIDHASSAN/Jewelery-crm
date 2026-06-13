@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
-import { Heart, Truck, RotateCcw, RefreshCw, Sparkles, Award, Banknote, ChevronDown, Minus, Plus, X } from 'lucide-react';
+import { Heart, Truck, RotateCcw, RefreshCw, Sparkles, Award, Banknote, ChevronDown, ChevronLeft, ChevronRight, Minus, Plus, X } from 'lucide-react';
 import * as Dialog from '@radix-ui/react-dialog';
 import { toast } from 'sonner';
 import { Money } from '@/components/ui/money';
@@ -232,28 +232,51 @@ export function ProductDetailPage(): JSX.Element {
         <span className="text-ink-800">{product.name}</span>
       </nav>
 
-      <div className="grid grid-cols-1 lg:grid-cols-[58%_1fr] gap-8 sm:gap-10 lg:gap-16">
-        {/* Gallery */}
-        <section className="lg:flex lg:gap-4">
-          {/* Thumbnails — vertical on desktop */}
-          <div className="order-2 lg:order-1 mt-3 lg:mt-0 grid grid-cols-4 lg:grid-cols-1 lg:flex-col gap-2 sm:gap-3 lg:w-[80px]">
-            {product.images.map((src, i) => (
-              <button
-                key={src}
-                onClick={() => setImgIdx(i)}
-                className={cn(
-                  'aspect-square overflow-hidden bg-[#FAF3EE] rounded-sm transition-all',
-                  i === imgIdx ? 'ring-1 ring-brand-500 ring-offset-2 ring-offset-[#FDF8F4]' : 'opacity-70 hover:opacity-100',
-                )}
-                aria-label={`View image ${i + 1}`}
-              >
-                <img src={src} alt="" className="h-full w-full object-cover" />
-              </button>
-            ))}
-          </div>
-          <div className="order-1 lg:order-2 flex-1 aspect-square overflow-hidden bg-[#FAF3EE] rounded-sm">
+      <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,690px)_1fr] gap-8 sm:gap-10 lg:gap-14">
+        {/* Gallery — main image is a 690×690 square (shrinks responsively on
+            narrow screens); prev/next slide buttons, thumbnails in a strip below. */}
+        <section className="mx-auto w-full max-w-[690px] lg:mx-0">
+          <div className="relative aspect-square overflow-hidden bg-[#FAF3EE] rounded-sm">
             <img src={product.images[imgIdx]} alt={product.name} className="h-full w-full object-cover" />
+            {product.images.length > 1 && (
+              <>
+                <button
+                  type="button"
+                  onClick={() => setImgIdx((i) => (i - 1 + product.images.length) % product.images.length)}
+                  className="absolute left-2 top-1/2 -translate-y-1/2 h-9 w-9 inline-flex items-center justify-center rounded-full bg-ink-0/80 text-ink-800 shadow-sm backdrop-blur hover:bg-ink-0 transition-colors"
+                  aria-label="Previous image"
+                >
+                  <ChevronLeft className="h-5 w-5" />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setImgIdx((i) => (i + 1) % product.images.length)}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 h-9 w-9 inline-flex items-center justify-center rounded-full bg-ink-0/80 text-ink-800 shadow-sm backdrop-blur hover:bg-ink-0 transition-colors"
+                  aria-label="Next image"
+                >
+                  <ChevronRight className="h-5 w-5" />
+                </button>
+              </>
+            )}
           </div>
+          {/* Thumbnails — horizontal strip below the main image */}
+          {product.images.length > 1 && (
+            <div className="mt-3 flex gap-2 sm:gap-3 overflow-x-auto pb-1">
+              {product.images.map((src, i) => (
+                <button
+                  key={src}
+                  onClick={() => setImgIdx(i)}
+                  className={cn(
+                    'h-16 w-16 sm:h-20 sm:w-20 shrink-0 aspect-square overflow-hidden bg-[#FAF3EE] rounded-sm transition-all',
+                    i === imgIdx ? 'ring-1 ring-brand-500 ring-offset-2 ring-offset-[#FDF8F4]' : 'opacity-70 hover:opacity-100',
+                  )}
+                  aria-label={`View image ${i + 1}`}
+                >
+                  <img src={src} alt="" className="h-full w-full object-cover" />
+                </button>
+              ))}
+            </div>
+          )}
         </section>
 
         {/* Info */}

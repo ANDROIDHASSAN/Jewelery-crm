@@ -59,6 +59,8 @@ export interface PublicProduct {
    */
   sizes?: { label: string; weightMg: number }[] | null;
   categoryId: string;
+  /** Target audience — drives the storefront "Shop by Gender" filter. Null = unspecified/unisex. */
+  gender: 'MEN' | 'WOMEN' | null;
   /** Metal type from the linked category — gates gold vs silver vs non-precious price calc. */
   metalType: 'GOLD' | 'SILVER' | 'DIAMOND' | 'PLATINUM' | 'STAINLESS_STEEL' | 'OTHER' | null;
   /** BIS Hallmark Unique ID (6-char). Null for non-gold pieces. */
@@ -89,6 +91,14 @@ export interface PublicCategory {
   slug: string;
   /** parent category id when this is a sub-category, null for main categories. */
   parentId: string | null;
+}
+
+/** A curated inventory Collection (cross-category grouping) for "Shop by Collection". */
+export interface PublicCollection {
+  id: string;
+  name: string;
+  slug: string;
+  description: string | null;
 }
 
 export interface PublicGoldRate {
@@ -190,6 +200,13 @@ export const storefrontApi = baseApi.injectEndpoints({
       query: () => ({ url: '/website/collections' }),
       transformResponse: (raw: { data: PublicCategory[] }) => raw.data,
       providesTags: [{ type: 'Category', id: 'PUBLIC' }],
+    }),
+    // Curated inventory collections (cross-category groupings) for the "Shop by
+    // Collection" menu. Only collections with ≥1 published product are returned.
+    getPublicCollectionsList: build.query<PublicCollection[], void>({
+      query: () => ({ url: '/website/collections-list' }),
+      transformResponse: (raw: { data: PublicCollection[] }) => raw.data,
+      providesTags: [{ type: 'Category', id: 'PUBLIC_COLLECTIONS' }],
     }),
     getCollectionItems: build.query<PublicProduct[], string>({
       query: (slug) => ({ url: `/website/collections/${slug}/items` }),
@@ -473,6 +490,7 @@ export const {
   useGetPublicProductsQuery,
   useGetPublicSaleItemsQuery,
   useGetPublicCollectionsQuery,
+  useGetPublicCollectionsListQuery,
   useGetCollectionItemsQuery,
   useCreateEnquiryMutation,
   useIdentifyCustomerMutation,

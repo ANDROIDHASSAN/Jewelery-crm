@@ -271,86 +271,182 @@ analyticsRouter.get('/top-products', async (req, res, next) => {
         from: z.coerce.date().optional(),
         to: z.coerce.date().optional(),
         limit: z.coerce.number().int().positive().max(50).default(10),
-        // 'product' (default) = item-wise best sellers; 'category' = roll up by
-        // the product's MAIN category (M3 FR#3 — client wants the main-category
-        // view as the primary focus).
-        groupBy: z.enum(['product', 'category']).default('product'),
+        // Roll-up dimension:
+        //   'product'     (default) — item-wise best sellers
+        //   'category'    — roll up to the product's MAIN category (M3 FR#3)
+        //   'subcategory' — roll up to the product's LEAF category (the sub
+        //                   under the main; a product sitting directly in a
+        //                   main category buckets under that main itself)
+        //   'collection'  — roll up by the curated Collection(s) the product's
+        //                   linked inventory Item belongs to. A piece can be in
+        //                   several collections, so its sales count toward each
+        //                   (collection revenues overlap and may exceed total).
+        groupBy: z.enum(['product', 'category', 'subcategory', 'collection']).default('product'),
       })
       .parse(req.query);
-    const where = q.from || q.to ? { order: { createdAt: { gte: q.from, lte: q.to } } } : undefined;
-    const grouped = await prisma.orderItem.groupBy({
-      by: ['productId'],
-      where,
-      _sum: { qty: true, pricePaise: true },
-      _count: { _all: true },
-      orderBy: { _sum: { qty: 'desc' } },
-      // For category roll-ups we need every product, not just the top N, so the
-      // category totals are complete; product view keeps the cheap top-N take.
-      ...(q.groupBy === 'category' ? {} : { take: q.limit }),
-    });
-    const productIds = grouped.map((g) => g.productId);
-    const products = await prisma.product.findMany({
-      where: { id: { in: productIds } },
-      select: {
-        id: true,
-        name: true,
-        slug: true,
-        basePricePaise: true,
-        category: {
-          select: { id: true, name: true, parentId: true, parent: { select: { id: true, name: true } } },
-        },
-      },
-    });
+
+    // OrderItem is NOT in TENANT_SCOPED_MODELS, so the Prisma extension does not
+    // auto-inject tenantId here — and $queryRaw bypasses it entirely. We MUST
+    // scope through the parent Order's tenantId explicitly or this leaks across
+    // tenants.
+    const tenantId = getTenantId();
+    if (!tenantId) return noTenant(res);
+
+    // Revenue counts only orders that became real sales — exclude abandoned
+    // (PENDING) and CANCELLED / RETURNED orders. Revenue is SUM(unit × qty):
+    // OrderItem.pricePaise is the PER-UNIT price (subtotal is pricePaise × qty
+    // at checkout), so a plain SUM(pricePaise) undercounts any multi-qty line.
+    const conds: Prisma.Sql[] = [
+      Prisma.sql`o."tenantId" = ${tenantId}`,
+      Prisma.sql`o.status::text NOT IN ('PENDING', 'CANCELLED', 'RETURNED')`,
+    ];
+    if (q.from) conds.push(Prisma.sql`o."createdAt" >= ${q.from}`);
+    if (q.to) conds.push(Prisma.sql`o."createdAt" <= ${q.to}`);
+    const whereSql = Prisma.join(conds, ' AND ');
+
+    const perProduct = await prisma.$queryRaw<
+      Array<{ productId: string; qty: number; revenuePaise: bigint; orderCount: number }>
+    >(Prisma.sql`
+      SELECT oi."productId"                       AS "productId",
+             SUM(oi.qty)::int                     AS qty,
+             SUM(oi."pricePaise" * oi.qty)::bigint AS "revenuePaise",
+             COUNT(*)::int                        AS "orderCount"
+      FROM "OrderItem" oi
+      JOIN "Order" o ON o.id = oi."orderId"
+      WHERE ${whereSql}
+      GROUP BY oi."productId"
+      ORDER BY qty DESC
+    `);
+
+    const productIds = perProduct.map((r) => r.productId);
+    const products = productIds.length
+      ? await prisma.product.findMany({
+          where: { id: { in: productIds } },
+          select: {
+            id: true,
+            name: true,
+            slug: true,
+            category: {
+              select: { id: true, name: true, parentId: true, parent: { select: { id: true, name: true } } },
+            },
+          },
+        })
+      : [];
     const productById = new Map(products.map((p) => [p.id, p]));
 
-    if (q.groupBy === 'category') {
-      // Roll up product sales into their MAIN category bucket.
-      const byCat = new Map<
-        string,
-        { categoryId: string; name: string; qty: number; orderCount: number; revenuePaise: number }
-      >();
-      for (const g of grouped) {
-        const p = productById.get(g.productId);
-        const main = p?.category?.parent ?? p?.category ?? null;
-        const id = main?.id ?? 'uncategorized';
-        const agg = byCat.get(id) ?? {
-          categoryId: id,
-          name: main?.name ?? 'Uncategorised',
-          qty: 0,
-          orderCount: 0,
-          revenuePaise: 0,
-        };
-        agg.qty += g._sum.qty ?? 0;
-        agg.orderCount += g._count._all;
-        agg.revenuePaise += g._sum.pricePaise ?? 0;
-        byCat.set(id, agg);
-      }
-      const data = Array.from(byCat.values())
-        .sort((a, b) => b.qty - a.qty)
+    if (q.groupBy === 'product') {
+      const data = perProduct
+        .map((r) => {
+          const p = productById.get(r.productId);
+          const main = p?.category?.parent ?? p?.category ?? null;
+          return {
+            productId: r.productId,
+            name: p?.name ?? 'Unknown',
+            slug: p?.slug ?? '',
+            // Surface the main category alongside each product too, so the
+            // product view can show which category a best-seller belongs to.
+            mainCategoryId: main?.id ?? null,
+            mainCategoryName: main?.name ?? null,
+            qty: r.qty,
+            orderCount: r.orderCount,
+            revenuePaise: Number(r.revenuePaise),
+          };
+        })
         .slice(0, q.limit);
-      res.json({ data, groupBy: 'category' });
+      res.json({ groupBy: 'product', data });
       return;
     }
 
-    res.json({
-      groupBy: 'product',
-      data: grouped.map((g) => {
-        const p = productById.get(g.productId);
-        const main = p?.category?.parent ?? p?.category ?? null;
-        return {
-          productId: g.productId,
-          name: p?.name ?? 'Unknown',
-          slug: p?.slug ?? '',
-          // Surface the main category alongside each product too, so the
-          // product view can show which category a best-seller belongs to.
-          mainCategoryId: main?.id ?? null,
-          mainCategoryName: main?.name ?? null,
-          qty: g._sum.qty ?? 0,
-          orderCount: g._count._all,
-          revenuePaise: g._sum.pricePaise ?? 0,
-        };
-      }),
-    });
+    if (q.groupBy === 'collection') {
+      // Collections live on the inventory Item (ItemCollection), bridged via
+      // Product.linkedItem — fetch them only for this view, keyed by productId.
+      const colRows = await prisma.product.findMany({
+        where: { id: { in: productIds } },
+        select: {
+          id: true,
+          linkedItem: {
+            select: { collections: { select: { collection: { select: { id: true, name: true } } } } },
+          },
+        },
+      });
+      const colsByProduct = new Map(
+        colRows.map((r) => [r.id, r.linkedItem?.collections.map((c) => c.collection) ?? []]),
+      );
+      // One product → many collections: add its sales to every collection it
+      // belongs to. Pieces with no linked item / no collection fall in a single
+      // "No collection" bucket.
+      const byCol = new Map<
+        string,
+        { collectionId: string; name: string; qty: number; orderCount: number; revenuePaise: number }
+      >();
+      const NONE = '__none__';
+      for (const r of perProduct) {
+        const cols = colsByProduct.get(r.productId) ?? [];
+        const targets = cols.length ? cols : [{ id: NONE, name: 'No collection' }];
+        for (const col of targets) {
+          const agg = byCol.get(col.id) ?? {
+            collectionId: col.id,
+            name: col.name,
+            qty: 0,
+            orderCount: 0,
+            revenuePaise: 0,
+          };
+          agg.qty += r.qty;
+          agg.orderCount += r.orderCount;
+          agg.revenuePaise += Number(r.revenuePaise);
+          byCol.set(col.id, agg);
+        }
+      }
+      const data = Array.from(byCol.values())
+        .sort((a, b) => b.qty - a.qty)
+        .slice(0, q.limit);
+      res.json({ data, groupBy: 'collection' });
+      return;
+    }
+
+    // 'category' (main) | 'subcategory' (leaf) — roll product sales up to the
+    // chosen category level.
+    const byCat = new Map<
+      string,
+      {
+        categoryId: string;
+        name: string;
+        parentName: string | null;
+        qty: number;
+        orderCount: number;
+        revenuePaise: number;
+      }
+    >();
+    for (const r of perProduct) {
+      const p = productById.get(r.productId);
+      const cat = p?.category ?? null;
+      // main view → parent (or the category itself if it has no parent);
+      // sub view → the leaf category as-is.
+      const target = q.groupBy === 'category' ? cat?.parent ?? cat : cat;
+      const id = target?.id ?? 'uncategorized';
+      const agg = byCat.get(id) ?? {
+        categoryId: id,
+        name: target?.name ?? 'Uncategorised',
+        // Only meaningful for the sub-category view — the main it sits under.
+        parentName: cat?.parent?.name ?? null,
+        qty: 0,
+        orderCount: 0,
+        revenuePaise: 0,
+      };
+      agg.qty += r.qty;
+      agg.orderCount += r.orderCount;
+      agg.revenuePaise += Number(r.revenuePaise);
+      byCat.set(id, agg);
+    }
+    const data = Array.from(byCat.values())
+      .sort((a, b) => b.qty - a.qty)
+      .slice(0, q.limit)
+      .map((c) =>
+        q.groupBy === 'subcategory'
+          ? c
+          : { categoryId: c.categoryId, name: c.name, qty: c.qty, orderCount: c.orderCount, revenuePaise: c.revenuePaise },
+      );
+    res.json({ data, groupBy: q.groupBy });
   } catch (err) {
     next(err);
   }

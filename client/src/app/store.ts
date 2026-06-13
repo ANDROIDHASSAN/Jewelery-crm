@@ -92,6 +92,7 @@ export const baseApi = createApi({
     'Vendor',
     'PurchaseOrder',
     'Transfer',
+    'StockRequest',
     'StockValuation',
     'Bill',
     'Payment',

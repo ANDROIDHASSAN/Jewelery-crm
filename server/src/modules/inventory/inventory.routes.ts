@@ -4,6 +4,7 @@ import {
   ItemInputSchema,
   VendorInputSchema,
   PurchaseOrderCreateSchema,
+  PurchaseOrderGstSchema,
   WastageInputSchema,
   AddStockSchema,
 } from '@goldos/shared/schemas';
@@ -412,17 +413,13 @@ inventoryRouter.delete(
   },
 );
 
-// ── Season Sale items (single tenant-wide sale pool w/ per-item offer) ──
-// Mirrors the collection-items endpoints but on the SaleItem table, which also
-// carries a per-item offer: PERCENT (% off), FLAT (₹ off) or BOGO (buy-1-get-1).
+// ── Season Sale items (single tenant-wide sale pool) ──
+// Mirrors the collection-items endpoints but on the SaleItem table. The sale
+// discount is universal (one % / ₹ value set via /sale-config) and applies to
+// every item in the pool; SaleItem rows are membership only.
 // The storefront renders these in the "Season Sales" section + on the PDP.
-const SaleOfferBody = z.object({
-  discountType: z.enum(['PERCENT', 'FLAT', 'BOGO']).default('PERCENT'),
-  discountBps: z.number().int().min(0).max(9000).default(0),
-  discountFlatPaise: z.number().int().min(0).max(100_000_00).default(0),
-});
 
-// Sale-wide config (currently just the Buy-1-Get-1 toggle). Stored on the
+// Sale-wide config — the Buy-1-Get-1 toggle plus the universal discount. Stored on the
 // tenant since the Season Sale is a single tenant-wide pool.
 inventoryRouter.get('/sale-config', async (_req, res, next) => {
   try {
@@ -430,9 +427,22 @@ inventoryRouter.get('/sale-config', async (_req, res, next) => {
     if (!tenantId) throw new Error('tenantId missing');
     const tenant = await prisma.tenant.findUnique({
       where: { id: tenantId },
-      select: { seasonSaleBogo: true },
+      select: {
+        seasonSaleBogo: true,
+        seasonSaleDiscountType: true,
+        seasonSaleDiscountBps: true,
+        seasonSaleDiscountFlatPaise: true,
+      },
     });
-    res.json({ data: { bogoEnabled: tenant?.seasonSaleBogo ?? false } });
+    res.json({
+      data: {
+        bogoEnabled: tenant?.seasonSaleBogo ?? false,
+        // Universal discount — set once, applied to every item in the sale.
+        discountType: tenant?.seasonSaleDiscountType ?? 'PERCENT',
+        discountBps: tenant?.seasonSaleDiscountBps ?? 0,
+        discountFlatPaise: tenant?.seasonSaleDiscountFlatPaise ?? 0,
+      },
+    });
   } catch (err) {
     next(err);
   }
@@ -442,9 +452,26 @@ inventoryRouter.put('/sale-config', requirePermission('inventory.write'), async 
   try {
     const tenantId = getTenantId();
     if (!tenantId) throw new Error('tenantId missing');
-    const { bogoEnabled } = z.object({ bogoEnabled: z.boolean() }).parse(req.body);
-    await prisma.tenant.update({ where: { id: tenantId }, data: { seasonSaleBogo: bogoEnabled } });
-    res.json({ data: { bogoEnabled } });
+    const body = z
+      .object({
+        bogoEnabled: z.boolean(),
+        // Universal discount (BOGO is the separate toggle above). Capped to
+        // match the per-item bounds the storefront pricing assumed.
+        discountType: z.enum(['PERCENT', 'FLAT']).default('PERCENT'),
+        discountBps: z.number().int().min(0).max(9000).default(0),
+        discountFlatPaise: z.number().int().min(0).max(100_000_00).default(0),
+      })
+      .parse(req.body);
+    await prisma.tenant.update({
+      where: { id: tenantId },
+      data: {
+        seasonSaleBogo: body.bogoEnabled,
+        seasonSaleDiscountType: body.discountType,
+        seasonSaleDiscountBps: body.discountBps,
+        seasonSaleDiscountFlatPaise: body.discountFlatPaise,
+      },
+    });
+    res.json({ data: body });
   } catch (err) {
     next(err);
   }
@@ -487,20 +514,16 @@ inventoryRouter.get('/sale-items', async (_req, res, next) => {
   }
 });
 
-// Add items to the sale (default 0% discount; tweak per-item afterwards).
-// Skips items already on sale so re-adding never resets an existing discount.
+// Add items to the sale. Membership only — the discount is the sale-wide
+// universal one set via /sale-config, applied to every item on the storefront.
+// Skips items already in the sale.
 inventoryRouter.post(
   '/sale-items',
   requirePermission('inventory.write'),
   async (req, res, next) => {
     try {
-      const { itemIds, ...offer } = z
-        .object({
-          itemIds: z.array(z.string().min(1)).min(1),
-          discountType: z.enum(['PERCENT', 'FLAT', 'BOGO']).default('PERCENT'),
-          discountBps: z.number().int().min(0).max(9000).default(0),
-          discountFlatPaise: z.number().int().min(0).max(100_000_00).default(0),
-        })
+      const { itemIds } = z
+        .object({ itemIds: z.array(z.string().min(1)).min(1) })
         .parse(req.body);
       const tenantId = getTenantId();
       if (!tenantId) throw new Error('tenantId missing');
@@ -509,31 +532,13 @@ inventoryRouter.post(
       for (const itemId of itemIds) {
         const existing = await prisma.saleItem.findUnique({ where: { itemId } });
         if (!existing) {
-          await prisma.saleItem.create({ data: { tenantId, itemId, ...offer } });
+          await prisma.saleItem.create({ data: { tenantId, itemId } });
           added += 1;
         }
       }
       res.status(201).json({
         data: { message: `Added ${added} items to the sale`, added, skipped: itemIds.length - added },
       });
-    } catch (err) {
-      next(err);
-    }
-  },
-);
-
-// Update an item's sale offer (type + values).
-inventoryRouter.patch(
-  '/sale-items/:itemId',
-  requirePermission('inventory.write'),
-  async (req, res, next) => {
-    try {
-      const offer = SaleOfferBody.parse(req.body);
-      const updated = await prisma.saleItem.update({
-        where: { itemId: req.params['itemId']! },
-        data: offer,
-      });
-      res.json({ data: updated });
     } catch (err) {
       next(err);
     }
@@ -570,7 +575,15 @@ inventoryRouter.get('/valuation', async (req, res, next) => {
 inventoryRouter.get('/low-stock', async (req, res, next) => {
   try {
     const threshold = Number(req.query['threshold'] ?? 3);
-    res.json({ data: await svc.computeLowStock(Number.isFinite(threshold) ? threshold : 3) });
+    // When true, one-of-a-kind (serialized) pieces are listed individually in
+    // the restock list, not just rolled up by category bucket.
+    const includeSerialized = req.query['includeSerialized'] === 'true';
+    res.json({
+      data: await svc.computeLowStock(
+        Number.isFinite(threshold) ? threshold : 3,
+        includeSerialized,
+      ),
+    });
   } catch (err) {
     next(err);
   }
@@ -641,6 +654,17 @@ inventoryRouter.post('/purchase-orders/:id/receive', requirePermission('inventor
       .object({ shopId: z.string().min(1), categoryId: z.string().min(1) })
       .parse(req.body);
     const po = await svc.receivePurchaseOrder(req.params['id']!, body.shopId, body.categoryId, req.user?.userId);
+    res.json({ data: po });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Set/update the purchase (input) GST on a PO — feeds finance as ITC.
+inventoryRouter.patch('/purchase-orders/:id/gst', requirePermission('inventory.purchase_order'), async (req, res, next) => {
+  try {
+    const body = PurchaseOrderGstSchema.parse(req.body);
+    const po = await svc.setPurchaseOrderGst(req.params['id']!, body, req.user?.userId);
     res.json({ data: po });
   } catch (err) {
     next(err);

@@ -41,7 +41,9 @@ export function GstSection(): JSX.Element {
       ['CGST', paiseToRupeeString(gst.cgstPaise)],
       ['SGST', paiseToRupeeString(gst.sgstPaise)],
       ['IGST', paiseToRupeeString(gst.igstPaise)],
-      ['Total GST', paiseToRupeeString(total)],
+      ['Output GST (sales)', paiseToRupeeString(total)],
+      ['Input GST (ITC, purchases)', paiseToRupeeString(gst.inputGstPaise)],
+      ['Net GST payable', paiseToRupeeString(gst.netGstPayablePaise)],
       ['Taxable revenue', paiseToRupeeString(gst.taxableRevenuePaise)],
       ['Bills', gst.billCount],
       [],
@@ -83,10 +85,24 @@ export function GstSection(): JSX.Element {
 
       <div id="gst-print" className="space-y-4 sm:space-y-6">
         <section className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
-          <MetricCard label="Total GST" value={gst ? <Money paise={total} /> : '—'} tone="warning" />
+          <MetricCard label="Output GST (sales)" value={gst ? <Money paise={total} /> : '—'} />
           <MetricCard label="CGST" value={gst ? <Money paise={gst.cgstPaise} /> : '—'} />
           <MetricCard label="SGST" value={gst ? <Money paise={gst.sgstPaise} /> : '—'} />
           <MetricCard label="IGST" value={gst ? <Money paise={gst.igstPaise} /> : '—'} />
+        </section>
+
+        {/* Input GST (ITC from purchases) → net liability owed after credit. */}
+        <section className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
+          <MetricCard
+            label="Input GST (ITC)"
+            value={gst ? <Money paise={gst.inputGstPaise} /> : '—'}
+            tone="success"
+          />
+          <MetricCard
+            label="Net GST payable"
+            value={gst ? <Money paise={gst.netGstPayablePaise} /> : '—'}
+            tone="warning"
+          />
         </section>
 
         <section className="grid grid-cols-1 lg:grid-cols-3 gap-3 sm:gap-4">

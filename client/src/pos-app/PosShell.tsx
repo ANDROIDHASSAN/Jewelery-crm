@@ -31,6 +31,7 @@ import {
   Hand,
   LogOut,
   Menu,
+  PackagePlus,
   Settings,
   Wifi,
   WifiOff,
@@ -41,6 +42,7 @@ import { useAppDispatch, useAppSelector } from '@/app/hooks';
 import { signOutAndClear } from '@/features/auth/authActions';
 import { useGetOpenSessionQuery, useListParkedQuery, useListRepairsQuery } from './posFeaturesApi';
 import { useGetShopsQuery } from '@/features/shops/shopsApi';
+import { useGetStockRequestsQuery } from '@/features/stock-requests/stockRequestsApi';
 import { GoldRateTicker } from './GoldRateTicker';
 import { PosSidebar, type PosSidebarNavItem } from './PosSidebar';
 import { isPosHost } from '@/app/routes';
@@ -117,6 +119,11 @@ export function PosShell(): JSX.Element {
     r.status === 'INTAKE' || r.status === 'IN_WORKSHOP' || r.status === 'READY',
   ).length ?? 0;
 
+  // Pending stock requests for this shop (server auto-scopes to the cashier's
+  // shop) — drives the sidebar badge.
+  const { data: stockReqData } = useGetStockRequestsQuery({ status: 'PENDING' }, { pollingInterval: 60_000 });
+  const pendingStockRequests = stockReqData?.data.length ?? 0;
+
   // Headline 22K rate for the top-bar pill.
   const { data: rateData } = useGetGoldRateQuery(undefined, { pollingInterval: 60_000 });
   const rate22K = rateData?.data.find((r) => r.purity === 2200);
@@ -129,6 +136,13 @@ export function PosShell(): JSX.Element {
     { to: '/pos/advances', icon: Banknote, label: 'Advances', description: 'Bookings & receipts' },
     { to: '/pos/cash', icon: Calculator, label: 'Cash drawer', description: 'Open till · day close' },
     { to: '/pos/bills', icon: ClipboardList, label: 'Past bills', description: 'Search & reprint' },
+    {
+      to: '/pos/stock-request',
+      icon: PackagePlus,
+      label: 'Stock request',
+      badge: pendingStockRequests,
+      description: 'Ask admin for stock',
+    },
   ];
 
   // Close drawer on route change + Esc.

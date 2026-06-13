@@ -174,6 +174,7 @@ websiteRouter.get('/collections/:slug/items', async (req, res, next) => {
             status: true,
             isSerialized: true,
             quantityOnHand: true,
+            gender: true,
             makingChargeMode: true,
             makingChargePerGramPaise: true,
             category: { select: { metalType: true } },
@@ -198,6 +199,7 @@ websiteRouter.get('/collections/:slug/items', async (req, res, next) => {
         // immediately, even if the Product mirror's own categoryId is stale.
         categoryId: linkedItem?.categoryId ?? rest.categoryId,
         inStock,
+        gender: linkedItem?.gender ?? rest.gender ?? null,
         sku: linkedItem?.sku ?? null,
         metalType: linkedItem?.category?.metalType ?? null,
         makingChargeMode: linkedItem?.makingChargeMode ?? null,
@@ -211,15 +213,34 @@ websiteRouter.get('/collections/:slug/items', async (req, res, next) => {
   }
 });
 
+// Public list of inventory Collections (curated cross-category groupings) for
+// the storefront "Shop by Collection" menu. Only collections that contain at
+// least one published product are returned, so the menu never links to an
+// empty page. Items within a collection are fetched via /collections/:slug/items.
+websiteRouter.get('/collections-list', async (req, res, next) => {
+  try {
+    const tenantId = await tenantFromQueryOrFirst(req);
+    const collections = await rawPrisma.collection.findMany({
+      where: {
+        tenantId,
+        items: { some: { item: { storefrontProduct: { isPublished: true } } } },
+      },
+      orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }],
+      select: { id: true, name: true, slug: true, description: true },
+    });
+    res.json({ data: collections, page: { hasMore: false } });
+  } catch (err) {
+    next(err);
+  }
+});
+
 const STOREFRONT_SECTION_VALUES = ['NEW_ARRIVAL', 'BEST_SELLER', 'FEATURED', 'TRENDING', 'DEAL'];
 
 websiteRouter.get('/products', async (req, res, next) => {
   try {
     const tenantId = await tenantFromQueryOrFirst(req);
-    // Sale-wide Buy-1-Get-1 flag — applies to every item in the Season Sale.
-    const saleBogo =
-      (await rawPrisma.tenant.findUnique({ where: { id: tenantId }, select: { seasonSaleBogo: true } }))
-        ?.seasonSaleBogo ?? false;
+    // Universal Season Sale config (BOGO + the one % / ₹ discount).
+    const saleCfg = await fetchSeasonSaleConfig(tenantId);
     // Optional ?section=BEST_SELLER filters to products featured in that
     // homepage section (one product can be in several — still one record).
     const section =
@@ -245,6 +266,7 @@ websiteRouter.get('/products', async (req, res, next) => {
             status: true,
             isSerialized: true,
             quantityOnHand: true,
+            gender: true,
             makingChargeMode: true,
             makingChargePerGramPaise: true,
             category: { select: { metalType: true } },
@@ -258,6 +280,9 @@ websiteRouter.get('/products', async (req, res, next) => {
         },
       },
     });
+    // Stamp the sale-wide universal discount onto each sale member so the
+    // `sale` payload below reflects the one tenant-level offer.
+    applyUniversalDiscount(products, saleCfg);
     // Compute a single `inStock` boolean per product. Products without a
     // linked Item (legacy, admin-created from the e-commerce tab) default to
     // in-stock — those have no inventory backing in v1, so we can't tell.
@@ -276,6 +301,10 @@ websiteRouter.get('/products', async (req, res, next) => {
         // immediately, even if the Product mirror's own categoryId is stale.
         categoryId: linkedItem?.categoryId ?? rest.categoryId,
         inStock,
+        // Target audience — prefer the linked item's value (back-office source
+        // of truth), falling back to the mirrored Product column. Powers the
+        // storefront "Shop by Gender" filter.
+        gender: linkedItem?.gender ?? rest.gender ?? null,
         // SKU from the linked inventory item (null for legacy products)
         sku: linkedItem?.sku ?? null,
         // Expose metalType so the storefront can gate gold vs silver/non-precious
@@ -310,7 +339,7 @@ websiteRouter.get('/products', async (req, res, next) => {
               type: linkedItem.saleItem.discountType,
               discountBps: linkedItem.saleItem.discountBps,
               discountFlatPaise: linkedItem.saleItem.discountFlatPaise,
-              bogo: saleBogo,
+              bogo: saleCfg.bogo,
             }
           : null,
       };
@@ -322,15 +351,20 @@ websiteRouter.get('/products', async (req, res, next) => {
 });
 
 // Public Season Sale feed — the published products whose linked inventory item
-// is in the tenant's Season Sale pool, each carrying its discount (basis points).
-// Same enrichment as /products (inStock, metalType, making charge) plus
-// `discountBps` so the storefront can render the struck price + "% off" badge.
+// is in the tenant's Season Sale pool. The discount is UNIVERSAL: one % / ₹
+// value (plus the BOGO toggle) on the tenant, applied identically to every
+// item, so the storefront renders the same struck price + badge across the pool.
 websiteRouter.get('/sale-items', async (req, res, next) => {
   try {
     const tenantId = await tenantFromQueryOrFirst(req);
-    const saleBogo =
-      (await rawPrisma.tenant.findUnique({ where: { id: tenantId }, select: { seasonSaleBogo: true } }))
-        ?.seasonSaleBogo ?? false;
+    const cfg = await fetchSeasonSaleConfig(tenantId);
+    // The same offer is attached to every sale item.
+    const universalSale = {
+      type: cfg.discountType,
+      discountBps: cfg.discountBps,
+      discountFlatPaise: cfg.discountFlatPaise,
+      bogo: cfg.bogo,
+    };
     const products = await rawPrisma.product.findMany({
       where: {
         tenantId,
@@ -351,9 +385,6 @@ websiteRouter.get('/sale-items', async (req, res, next) => {
             category: { select: { metalType: true } },
             saleItem: {
               select: {
-                discountType: true,
-                discountBps: true,
-                discountFlatPaise: true,
                 sortOrder: true,
                 createdAt: true,
               },
@@ -380,9 +411,8 @@ websiteRouter.get('/sale-items', async (req, res, next) => {
           metalType: linkedItem?.category?.metalType ?? null,
           makingChargeMode: linkedItem?.makingChargeMode ?? null,
           makingChargePerGramPaise: linkedItem?.makingChargePerGramPaise ?? null,
-          sale: s
-            ? { type: s.discountType, discountBps: s.discountBps, discountFlatPaise: s.discountFlatPaise, bogo: saleBogo }
-            : null,
+          // Universal offer — same for every item in the sale.
+          sale: s ? universalSale : null,
           _sortOrder: s?.sortOrder ?? 0,
           _addedAt: s?.createdAt ?? rest.createdAt,
         };
@@ -530,6 +560,53 @@ type PriceableProduct = {
     saleItem?: { discountType: string; discountBps: number; discountFlatPaise: number } | null;
   } | null;
 };
+
+// The Season Sale discount is UNIVERSAL — one % / ₹ value (plus the BOGO
+// toggle) on the tenant, applied to every item in the sale pool. Fetched once
+// per request; the per-item SaleItem row is now membership-only.
+async function fetchSeasonSaleConfig(tenantId: string): Promise<{
+  bogo: boolean;
+  discountType: 'PERCENT' | 'FLAT' | 'BOGO';
+  discountBps: number;
+  discountFlatPaise: number;
+}> {
+  const t = await rawPrisma.tenant.findUnique({
+    where: { id: tenantId },
+    select: {
+      seasonSaleBogo: true,
+      seasonSaleDiscountType: true,
+      seasonSaleDiscountBps: true,
+      seasonSaleDiscountFlatPaise: true,
+    },
+  });
+  return {
+    bogo: t?.seasonSaleBogo ?? false,
+    discountType: t?.seasonSaleDiscountType ?? 'PERCENT',
+    discountBps: t?.seasonSaleDiscountBps ?? 0,
+    discountFlatPaise: t?.seasonSaleDiscountFlatPaise ?? 0,
+  };
+}
+
+// Stamp the universal discount onto each fetched product's membership row, so
+// the existing per-item code (computeLinePricePaise + `sale` payloads) reads
+// the same sale-wide values for every item without further changes.
+function applyUniversalDiscount(
+  products: Array<{
+    linkedItem?: {
+      saleItem?: { discountType: 'PERCENT' | 'FLAT' | 'BOGO'; discountBps: number; discountFlatPaise: number } | null;
+    } | null;
+  }>,
+  cfg: { discountType: 'PERCENT' | 'FLAT' | 'BOGO'; discountBps: number; discountFlatPaise: number },
+): void {
+  for (const p of products) {
+    const si = p.linkedItem?.saleItem;
+    if (si) {
+      si.discountType = cfg.discountType;
+      si.discountBps = cfg.discountBps;
+      si.discountFlatPaise = cfg.discountFlatPaise;
+    }
+  }
+}
 
 // Apply a Season Sale offer to a PRE-GST line price. PERCENT scales the base
 // (a % off pre-GST == the same % off the GST-inclusive price). FLAT is a ₹ off
@@ -702,10 +779,11 @@ websiteRouter.post('/checkout/pricing', async (req, res, next) => {
     const byId = new Map(products.map((p) => [p.id, p]));
     const bySlug = new Map(products.map((p) => [p.slug, p]));
 
-    // Sale-wide Buy-1-Get-1 flag.
-    const saleBogo =
-      (await rawPrisma.tenant.findUnique({ where: { id: tenantId }, select: { seasonSaleBogo: true } }))
-        ?.seasonSaleBogo ?? false;
+    // Universal Season Sale config — stamp its discount onto sale members so
+    // checkout prices match the storefront's struck price.
+    const saleCfg = await fetchSeasonSaleConfig(tenantId);
+    const saleBogo = saleCfg.bogo;
+    applyUniversalDiscount(products, saleCfg);
 
     // Live rates
     const purities = [2400, 2200, 1800, 1400, 0] as const;
@@ -950,6 +1028,10 @@ websiteRouter.post('/orders', async (req, res, next) => {
     });
     const byId = new Map(products.map((p) => [p.id, p]));
     const bySlug = new Map(products.map((p) => [p.slug, p]));
+    // Universal Season Sale config — stamp its discount onto sale members so the
+    // order is priced at the same struck price shown on the storefront.
+    const saleCfg = await fetchSeasonSaleConfig(tenantId);
+    applyUniversalDiscount(products, saleCfg);
     // Build a resolved item list — every line carries the canonical id we'll
     // write to OrderItem, plus the selected size label (sized pieces) so we can
     // price + record the line off that size's weight.
@@ -1032,9 +1114,7 @@ websiteRouter.post('/orders', async (req, res, next) => {
 
     // ── Sale-wide Buy-1-Get-1 — free the cheaper of each pair across eligible
     // (Season-Sale) units. Applied before coupon/loyalty. ────────────────────
-    const saleBogoForOrder =
-      (await rawPrisma.tenant.findUnique({ where: { id: tenantId }, select: { seasonSaleBogo: true } }))
-        ?.seasonSaleBogo ?? false;
+    const saleBogoForOrder = saleCfg.bogo;
     const bogoUnitsForOrder: number[] = [];
     if (saleBogoForOrder) {
       for (const { product, qty, pricePaise } of pricedItems) {

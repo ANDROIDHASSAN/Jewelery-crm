@@ -56,6 +56,12 @@ export interface GstSummary {
   cgstPaise: number;
   sgstPaise: number;
   igstPaise: number;
+  // Input GST (ITC) paid on received purchases, and net liability after credit.
+  inputCgstPaise: number;
+  inputSgstPaise: number;
+  inputIgstPaise: number;
+  inputGstPaise: number;
+  netGstPayablePaise: number;
   taxableRevenuePaise: number;
   billCount: number;
 }

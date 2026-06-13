@@ -21,6 +21,16 @@ export interface AddStockResult {
   newItemIds?: string[];
 }
 
+// Sale-wide Season Sale config: the Buy-1-Get-1 toggle plus the single
+// universal discount applied to every item in the sale. discountType is
+// PERCENT (discountBps) or FLAT (discountFlatPaise) — BOGO is the toggle.
+export interface SaleConfig {
+  bogoEnabled: boolean;
+  discountType: SaleDiscountType;
+  discountBps: number;
+  discountFlatPaise: number;
+}
+
 export interface ItemMovementRow {
   id: string;
   itemId: string;
@@ -43,8 +53,27 @@ export interface PurchaseOrderRow {
   status: 'DRAFT' | 'PLACED' | 'PARTIAL' | 'RECEIVED' | 'CANCELLED';
   totalPaise: number;
   createdAt: string;
+  // Purchase (input) GST entered against the vendor invoice.
+  cgstPaise: number;
+  sgstPaise: number;
+  igstPaise: number;
+  gstInterState: boolean;
+  // Where the stock landed on receive (null for legacy / unreceived POs).
+  receivedShopId: string | null;
+  receivedAt: string | null;
   vendor: { id: string; name: string };
-  items: Array<{ id: string; itemSku: string; weightMg: number; purity: number; costPaise: number }>;
+  items: Array<{
+    id: string;
+    itemSku: string;
+    categoryId: string | null;
+    name: string | null;
+    weightMg: number;
+    purity: number;
+    costPaise: number;
+    quantity: number;
+    makingChargeBps: number | null;
+    sellingPricePaise: number | null;
+  }>;
 }
 
 export interface AuditLogRow {
@@ -250,35 +279,32 @@ export const inventoryApi = baseApi.injectEndpoints({
       invalidatesTags: (_, __, { collectionId }) => [{ type: 'Item', id: collectionId }],
     }),
     // Sale-wide config — currently the Buy-1-Get-1 toggle (applies to all items).
-    getSaleConfig: b.query<ApiOne<{ bogoEnabled: boolean }>, void>({
+    // Sale-wide config — Buy-1-Get-1 toggle + the UNIVERSAL discount (one % / ₹
+    // value applied to every item in the Season Sale).
+    getSaleConfig: b.query<ApiOne<SaleConfig>, void>({
       query: () => '/inventory/sale-config',
       providesTags: [{ type: 'SaleItem', id: 'CONFIG' }],
     }),
-    updateSaleConfig: b.mutation<ApiOne<{ bogoEnabled: boolean }>, { bogoEnabled: boolean }>({
+    updateSaleConfig: b.mutation<ApiOne<SaleConfig>, SaleConfig>({
       query: (body) => ({ url: '/inventory/sale-config', method: 'PUT', body }),
-      invalidatesTags: [{ type: 'SaleItem', id: 'CONFIG' }],
+      // The universal discount changes every sale item's price, so refresh the
+      // list too (and the config).
+      invalidatesTags: [
+        { type: 'SaleItem', id: 'CONFIG' },
+        { type: 'SaleItem', id: 'LIST' },
+      ],
     }),
-    // Season Sale items — single tenant-wide sale pool with a per-item discount.
+    // Season Sale items — single tenant-wide sale pool. Membership only; the
+    // discount is the universal one in SaleConfig.
     getSaleItems: b.query<ApiList<SaleItemRow>, void>({
       query: () => '/inventory/sale-items',
       providesTags: [{ type: 'SaleItem', id: 'LIST' }],
     }),
     addItemsToSale: b.mutation<
       ApiOne<{ message: string; added: number; skipped: number }>,
-      { itemIds: string[]; discountType?: SaleDiscountType; discountBps?: number; discountFlatPaise?: number }
+      { itemIds: string[] }
     >({
       query: (body) => ({ url: '/inventory/sale-items', method: 'POST', body }),
-      invalidatesTags: [{ type: 'SaleItem', id: 'LIST' }],
-    }),
-    updateSaleItemDiscount: b.mutation<
-      ApiOne<{ itemId: string }>,
-      { itemId: string; discountType: SaleDiscountType; discountBps: number; discountFlatPaise: number }
-    >({
-      query: ({ itemId, ...offer }) => ({
-        url: `/inventory/sale-items/${itemId}`,
-        method: 'PATCH',
-        body: offer,
-      }),
       invalidatesTags: [{ type: 'SaleItem', id: 'LIST' }],
     }),
     removeItemFromSale: b.mutation<void, string>({
@@ -293,7 +319,10 @@ export const inventoryApi = baseApi.injectEndpoints({
       query: (params) => ({ url: '/inventory/valuation', params }),
       providesTags: ['StockValuation'],
     }),
-    getLowStock: b.query<ApiOne<LowStockRow>, { threshold?: number } | void>({
+    getLowStock: b.query<
+      ApiOne<LowStockRow>,
+      { threshold?: number; includeSerialized?: boolean } | void
+    >({
       query: (params) => ({ url: '/inventory/low-stock', params: params ?? undefined }),
       providesTags: ['StockValuation'],
     }),
@@ -331,6 +360,17 @@ export const inventoryApi = baseApi.injectEndpoints({
         { type: 'Item', id: 'LIST' },
         'StockValuation',
       ],
+    }),
+    setPurchaseOrderGst: b.mutation<
+      ApiOne<PurchaseOrderRow>,
+      { id: string; interState: boolean; cgstPaise: number; sgstPaise: number; igstPaise: number }
+    >({
+      query: ({ id, ...body }) => ({
+        url: `/inventory/purchase-orders/${id}/gst`,
+        method: 'PATCH',
+        body,
+      }),
+      invalidatesTags: [{ type: 'PurchaseOrder', id: 'LIST' }],
     }),
     updateVendor: b.mutation<ApiOne<Vendor>, { id: string; patch: Partial<VendorInput> }>({
       query: ({ id, patch }) => ({ url: `/inventory/vendors/${id}`, method: 'PATCH', body: patch }),
@@ -401,7 +441,6 @@ export const {
   useUpdateSaleConfigMutation,
   useGetSaleItemsQuery,
   useAddItemsToSaleMutation,
-  useUpdateSaleItemDiscountMutation,
   useRemoveItemFromSaleMutation,
   useLazyGetSkuSuggestionQuery,
   useUpdateCategoryMakingChargeMutation,
@@ -413,6 +452,7 @@ export const {
   useGetPurchaseOrdersQuery,
   useCreatePurchaseOrderMutation,
   useReceivePurchaseOrderMutation,
+  useSetPurchaseOrderGstMutation,
   useUpdateVendorMutation,
   useDeleteVendorMutation,
   useGetAuditLogQuery,

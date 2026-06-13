@@ -28,6 +28,8 @@ const TITLES: Record<string, { title: string; subtitle: string }> = {
   '18k': { title: '18K Gold', subtitle: 'Lighter, stronger 18K — modern silhouettes and diamond settings.' },
   'under-50k': { title: 'Under ₹50,000', subtitle: 'Gifting-ready pieces, under fifty thousand.' },
   gifting: { title: 'Gifting', subtitle: 'Hand-picked pieces, ready to gift.' },
+  men: { title: "For Men", subtitle: 'Chains, rings, bracelets and kadas crafted for him.' },
+  women: { title: "For Women", subtitle: 'Necklaces, earrings, rings and more, designed for her.' },
 };
 
 const SORTS = ['Featured', 'Newest', 'Price: low → high', 'Price: high → low', 'Weight: light → heavy'] as const;
@@ -120,6 +122,10 @@ function filterBySlug(
       return products.filter((p) => priceOf(p) < 50_00_000);
     case 'gifting':
       return products.filter((p) => priceOf(p) <= 1_00_000_00);
+    case 'men':
+      return products.filter((p) => p.gender === 'MEN');
+    case 'women':
+      return products.filter((p) => p.gender === 'WOMEN');
     default: {
       let cat = categories.find((c) => c.slug === slug);
       // Fuzzy fallback — token overlap, prefer the longest token-match.

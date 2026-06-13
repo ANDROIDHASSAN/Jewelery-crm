@@ -25,11 +25,17 @@ import type {
   TransferLineInputSchema,
   TransferCreateSchema,
   TransferRejectSchema,
+  StockRequestSchema,
+  StockRequestLineSchema,
+  StockRequestLineInputSchema,
+  StockRequestCreateSchema,
+  StockRequestReviewSchema,
   VendorSchema,
   VendorInputSchema,
   PurchaseOrderSchema,
   PurchaseOrderCreateSchema,
   PurchaseOrderItemInputSchema,
+  PurchaseOrderGstSchema,
   WastageInputSchema,
   CustomerSchema,
   CustomerInputSchema,
@@ -82,6 +88,11 @@ export type TransferLine = z.infer<typeof TransferLineSchema>;
 export type TransferLineInput = z.infer<typeof TransferLineInputSchema>;
 export type TransferCreate = z.infer<typeof TransferCreateSchema>;
 export type TransferReject = z.infer<typeof TransferRejectSchema>;
+export type StockRequest = z.infer<typeof StockRequestSchema>;
+export type StockRequestLine = z.infer<typeof StockRequestLineSchema>;
+export type StockRequestLineInput = z.infer<typeof StockRequestLineInputSchema>;
+export type StockRequestCreate = z.infer<typeof StockRequestCreateSchema>;
+export type StockRequestReview = z.infer<typeof StockRequestReviewSchema>;
 // `TransferStatus` is exported from ./constants.ts (the canonical enum). Don't
 // re-export from the schema to avoid an ambiguous name across shared/index.ts.
 export type Vendor = z.infer<typeof VendorSchema>;
@@ -89,6 +100,7 @@ export type VendorInput = z.infer<typeof VendorInputSchema>;
 export type PurchaseOrder = z.infer<typeof PurchaseOrderSchema>;
 export type PurchaseOrderCreate = z.infer<typeof PurchaseOrderCreateSchema>;
 export type PurchaseOrderItemInput = z.infer<typeof PurchaseOrderItemInputSchema>;
+export type PurchaseOrderGst = z.infer<typeof PurchaseOrderGstSchema>;
 export type WastageInput = z.infer<typeof WastageInputSchema>;
 
 export type Customer = z.infer<typeof CustomerSchema>;

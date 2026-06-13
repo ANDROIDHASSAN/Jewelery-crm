@@ -7,10 +7,11 @@
 //   COMPLETED -> read-only
 //   REJECTED  -> read-only
 
-import { useMemo, useState } from 'react';
-import { Check, X, PackageCheck, Plus, ArrowRight } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { Check, X, PackageCheck, Plus, ArrowRight, ScanLine, Layers, Sparkles } from 'lucide-react';
 import { toast } from 'sonner';
 import type { TransferStatus } from '@goldos/shared/constants';
+import type { Category, Collection } from '@goldos/shared/types';
 import {
   useGetTransfersQuery,
   useGetTransferQuery,
@@ -20,8 +21,15 @@ import {
   useCompleteTransferMutation,
   useRejectTransferMutation,
   type TransferRow,
+  type TransferableItem,
 } from '@/features/transfers/transfersApi';
+import { useGetCategoriesQuery, useGetCollectionsQuery } from '@/features/inventory/inventoryApi';
 import { useGetShopsQuery } from '@/features/shops/shopsApi';
+import { Money, Weight } from '@/components/ui/money';
+
+// Bulk pre-fill instruction used when the admin fulfils a POS stock request —
+// each entry adds every matching item at the source at the requested quantity.
+export type TransferAutoAdd = { categoryId?: string | null; collectionId?: string | null; quantity: number };
 import { PageHeader } from '@/components/ui/PageHeader';
 import { TabStrip, type TabStripItem } from '@/components/ui/TabStrip';
 import { SectionCard } from '@/components/ui/SectionCard';
@@ -294,6 +302,20 @@ function TransferDetailSheet({
   const fromName = transfer?.fromShop?.name ?? shopName.get(transfer?.fromShopId ?? '') ?? '—';
   const toName   = transfer?.toShop?.name  ?? shopName.get(transfer?.toShopId   ?? '') ?? '—';
 
+  // Line totals — units, weight, and cost value of everything in the transfer.
+  const totals = useMemo(() => {
+    const lines = transfer?.lines ?? [];
+    return lines.reduce(
+      (acc, l) => {
+        acc.qty += l.quantity;
+        acc.weightMg += l.item.weightMg * l.quantity;
+        acc.valuePaise += l.item.costPricePaise * l.quantity;
+        return acc;
+      },
+      { qty: 0, weightMg: 0, valuePaise: 0 },
+    );
+  }, [transfer?.lines]);
+
   return (
     <Sheet open onOpenChange={(o) => !o && onClose()}>
       <SheetContent className="!max-w-3xl">
@@ -385,6 +407,7 @@ function TransferDetailSheet({
                         <th className="px-3 py-2 text-right">Qty</th>
                         <th className="px-3 py-2 text-right">Weight</th>
                         <th className="px-3 py-2 text-right">Purity</th>
+                        <th className="px-3 py-2 text-right">Value</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -432,10 +455,28 @@ function TransferDetailSheet({
                                 ? '—'
                                 : `${(line.item.purityCaratX100 / 100).toFixed(0)}K`}
                             </td>
+                            <td className="px-3 py-2 text-right">
+                              <Money paise={line.item.costPricePaise * line.quantity} className="text-ink-900" />
+                            </td>
                           </tr>
                         );
                       })}
                     </tbody>
+                    <tfoot className="bg-ink-50 border-t border-ink-200 font-medium">
+                      <tr>
+                        <td className="px-3 py-2 text-left text-ink-500 text-eyebrow uppercase" colSpan={4}>
+                          Totals
+                        </td>
+                        <td className="px-3 py-2 text-right font-mono text-ink-900">{totals.qty}</td>
+                        <td className="px-3 py-2 text-right">
+                          <Weight mg={totals.weightMg} className="text-ink-900" />
+                        </td>
+                        <td className="px-3 py-2" />
+                        <td className="px-3 py-2 text-right">
+                          <Money paise={totals.valuePaise} className="text-ink-900" />
+                        </td>
+                      </tr>
+                    </tfoot>
                   </table>
                 </div>
               </div>
@@ -506,57 +547,113 @@ function RejectDialog({
 // ----------------------------------------------------------------------------
 // New transfer dialog — source shop, dest shop, item multi-select, reason.
 
-function NewTransferDialog({
+export function NewTransferDialog({
   open,
   onClose,
+  initialToShopId,
+  initialStockRequestId,
+  autoAdd,
 }: {
   open: boolean;
   onClose: () => void;
+  // When fulfilling a POS stock request: preset destination + linked request id,
+  // and a list of category/collection bulk-add instructions to auto-apply.
+  initialToShopId?: string;
+  initialStockRequestId?: string;
+  autoAdd?: TransferAutoAdd[];
 }): JSX.Element {
-  // Two separate queries — one warehouse-only for the From picker, one
-  // retail-only for the To picker. Falls back to the all-shops list if the
-  // tenant has no warehouses configured yet.
+  // Source can now be ANY shop. The warehouse-only query is kept just to mark
+  // warehouses in the dropdown and to pick a sensible default source.
   const { data: warehousesRes } = useGetShopsQuery({ type: 'WAREHOUSE' });
-  const { data: retailsRes } = useGetShopsQuery({ type: 'RETAIL' });
   const { data: shopsAllRes } = useGetShopsQuery();
+  const { data: catRes } = useGetCategoriesQuery();
+  const { data: colRes } = useGetCollectionsQuery();
+
   const warehouses = useMemo(() => warehousesRes?.data ?? [], [warehousesRes?.data]);
-  const retails = useMemo(() => retailsRes?.data ?? [], [retailsRes?.data]);
-  // For displays that still need a unified lookup of "what shop is this id?".
+  const allShops = useMemo(() => shopsAllRes?.data ?? [], [shopsAllRes?.data]);
+  const warehouseIds = useMemo(() => new Set(warehouses.map((w) => w.id)), [warehouses]);
   const shopName = useMemo(() => {
     const m = new Map<string, string>();
-    for (const s of shopsAllRes?.data ?? []) m.set(s.id, s.name);
+    for (const s of allShops) m.set(s.id, s.name);
     return m;
-  }, [shopsAllRes?.data]);
+  }, [allShops]);
 
-  // Default source = first warehouse, fall back to any retail (single-shop
-  // tenants without a warehouse can still transfer shop-to-shop).
-  const fromOptions = warehouses.length > 0 ? warehouses : retails;
+  // Category tree — mains (parentId === null) + their sub-categories.
+  const cats = useMemo(() => catRes?.data ?? [], [catRes?.data]);
+  const mains = useMemo(() => cats.filter((c) => !c.parentId), [cats]);
+  const subsByMain = useMemo(() => {
+    const m = new Map<string, Category[]>();
+    for (const c of cats) {
+      if (!c.parentId) continue;
+      const list = m.get(c.parentId) ?? [];
+      list.push(c);
+      m.set(c.parentId, list);
+    }
+    return m;
+  }, [cats]);
+  const collections = useMemo<Collection[]>(() => colRes?.data ?? [], [colRes?.data]);
 
   const [fromShopId, setFromShopId] = useState('');
   const [toShopId, setToShopId] = useState('');
   const [reason, setReason] = useState('');
   // selectedQty maps itemId -> quantity (0 / undefined = not selected).
-  // Defaults to 1 when the user ticks an item; lot items can be edited up to
-  // their quantityOnHand cap.
   const [selectedQty, setSelectedQty] = useState<Record<string, number>>({});
   const [search, setSearch] = useState('');
+  // Set when fulfilling a stock request — links the transfer to that request.
+  const [stockRequestId, setStockRequestId] = useState<string | undefined>(undefined);
 
-  // Lazily initialise source once shops load.
-  if (!fromShopId && fromOptions[0]) setFromShopId(fromOptions[0].id);
+  // Quick-add controls (category / collection / scan).
+  const [qaMain, setQaMain] = useState('');
+  const [qaSub, setQaSub] = useState('');
+  const [qaCatQty, setQaCatQty] = useState(1);
+  const [qaCol, setQaCol] = useState('');
+  const [qaColQty, setQaColQty] = useState(1);
+  const [scanValue, setScanValue] = useState('');
+  const [lastScan, setLastScan] = useState<string | null>(null);
+  const scanRef = useRef<HTMLInputElement>(null);
+  const autoAddDoneRef = useRef(false);
 
-  // Destination defaults to first retail shop that isn't the source.
-  const destOptions = useMemo(
-    () => retails.filter((s) => s.id !== fromShopId),
-    [retails, fromShopId],
-  );
-  if (!toShopId && destOptions[0]) setToShopId(destOptions[0].id);
+  // (Re)seed when the sheet opens — destination, linked request, fresh selection.
+  useEffect(() => {
+    if (!open) {
+      autoAddDoneRef.current = false;
+      return;
+    }
+    setToShopId(initialToShopId ?? '');
+    setStockRequestId(initialStockRequestId);
+    setSelectedQty({});
+    setReason(initialStockRequestId ? 'Fulfilling stock request' : '');
+    setSearch('');
+    setLastScan(null);
+    autoAddDoneRef.current = false;
+  }, [open, initialToShopId, initialStockRequestId]);
 
+  // Source options = every shop; default to a warehouse (else any shop), never
+  // the chosen destination.
+  const fromOptions = allShops;
+  useEffect(() => {
+    if (!open) return;
+    if (fromShopId && fromShopId !== toShopId) return;
+    const preferred =
+      warehouses.find((w) => w.id !== toShopId) ?? allShops.find((s) => s.id !== toShopId);
+    if (preferred) setFromShopId(preferred.id);
+  }, [open, fromShopId, toShopId, warehouses, allShops]);
+
+  // Destination = any shop except the source.
+  const destOptions = useMemo(() => allShops.filter((s) => s.id !== fromShopId), [allShops, fromShopId]);
+  useEffect(() => {
+    if (!open || toShopId || initialToShopId) return;
+    if (destOptions[0]) setToShopId(destOptions[0].id);
+  }, [open, toShopId, initialToShopId, destOptions]);
+
+  // Composer loads the FULL eligible set (all=true) so bulk add + scan work.
   const { data: itemsRes, isLoading: itemsLoading } = useGetTransferableItemsQuery(
-    fromShopId ? { shopId: fromShopId } : ({ shopId: '' } as { shopId: string }),
+    fromShopId ? { shopId: fromShopId, all: true } : ({ shopId: '', all: true } as { shopId: string; all: boolean }),
     { skip: !fromShopId },
   );
 
   const items = useMemo(() => itemsRes?.data ?? [], [itemsRes?.data]);
+  const itemById = useMemo(() => new Map(items.map((i) => [i.id, i] as const)), [items]);
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
     if (!q) return items;
@@ -575,17 +672,112 @@ function NewTransferDialog({
     [selectedQty],
   );
 
+  // Running totals across the whole selection (not just the filtered view).
+  const totals = useMemo(() => {
+    let units = 0;
+    let weightMg = 0;
+    let valuePaise = 0;
+    for (const { itemId, quantity } of selectedLines) {
+      const it = itemById.get(itemId);
+      if (!it) continue;
+      units += quantity;
+      weightMg += it.weightMg * quantity;
+      valuePaise += it.costPricePaise * quantity;
+    }
+    return { lines: selectedLines.length, units, weightMg, valuePaise };
+  }, [selectedLines, itemById]);
+
+  const capFor = (it: TransferableItem): number => (it.isSerialized ? 1 : it.quantityOnHand);
+
+  // Bulk add — set qty for every item matching `matchFn` (capped per item:
+  // serialized → 1, lot → min(qty, on-hand)).
+  function bulkAdd(matchFn: (it: TransferableItem) => boolean, qty: number, label: string): void {
+    const matches = items.filter(matchFn);
+    if (matches.length === 0) {
+      toast.error(`No transferable items in ${label} at this source`);
+      return;
+    }
+    setSelectedQty((prev) => {
+      const next = { ...prev };
+      for (const it of matches) next[it.id] = Math.max(1, Math.min(capFor(it), qty));
+      return next;
+    });
+    const units = matches.reduce((s, it) => s + Math.max(1, Math.min(capFor(it), qty)), 0);
+    toast.success(
+      `Added ${matches.length} item${matches.length === 1 ? '' : 's'} (${units} unit${units === 1 ? '' : 's'}) — ${label}`,
+    );
+  }
+
+  function addByCategory(): void {
+    if (!qaMain && !qaSub) return void toast.error('Pick a category first');
+    const label = qaSub
+      ? cats.find((c) => c.id === qaSub)?.name ?? 'sub-category'
+      : `${mains.find((c) => c.id === qaMain)?.name ?? 'category'} (all)`;
+    bulkAdd(
+      (it) => (qaSub ? it.categoryId === qaSub : it.categoryId === qaMain || it.parentCategoryId === qaMain),
+      qaCatQty,
+      label,
+    );
+  }
+
+  function addByCollection(): void {
+    if (!qaCol) return void toast.error('Pick a collection first');
+    const label = collections.find((c) => c.id === qaCol)?.name ?? 'collection';
+    bulkAdd((it) => it.collectionIds.includes(qaCol), qaColQty, label);
+  }
+
+  // Scan / type a SKU + Enter → add (or increment a lot) the matching item.
+  function handleScan(): void {
+    const raw = scanValue.trim();
+    if (!raw) return;
+    const it = items.find((i) => i.sku.toLowerCase() === raw.toLowerCase());
+    if (!it) {
+      toast.error(`No transferable item "${raw}" at this source`);
+      setScanValue('');
+      return;
+    }
+    setSelectedQty((prev) => {
+      const curr = prev[it.id] ?? 0;
+      const q = it.isSerialized ? 1 : Math.min(it.quantityOnHand, curr + 1);
+      return { ...prev, [it.id]: q };
+    });
+    setLastScan(`${it.sku}${it.name ? ` — ${it.name}` : ''}`);
+    setScanValue('');
+    scanRef.current?.focus();
+  }
+
+  // Admin fulfilling a stock request — apply the bulk instructions once the
+  // source items have loaded.
+  useEffect(() => {
+    if (!open || autoAddDoneRef.current) return;
+    if (!autoAdd || autoAdd.length === 0) return;
+    if (!fromShopId || items.length === 0) return;
+    setSelectedQty((prev) => {
+      const next = { ...prev };
+      for (const ins of autoAdd) {
+        const matches = items.filter((it) => {
+          if (ins.collectionId) return it.collectionIds.includes(ins.collectionId);
+          if (ins.categoryId) return it.categoryId === ins.categoryId || it.parentCategoryId === ins.categoryId;
+          return false;
+        });
+        for (const it of matches) next[it.id] = Math.max(1, Math.min(capFor(it), ins.quantity));
+      }
+      return next;
+    });
+    autoAddDoneRef.current = true;
+  }, [open, autoAdd, items, fromShopId]);
+
   function toggleAll(): void {
     const allOn = filtered.length > 0 && filtered.every((i) => (selectedQty[i.id] ?? 0) > 0);
-    if (allOn) {
-      const next = { ...selectedQty };
-      for (const i of filtered) delete next[i.id];
-      setSelectedQty(next);
-    } else {
-      const next = { ...selectedQty };
-      for (const i of filtered) next[i.id] = 1;
-      setSelectedQty(next);
-    }
+    setSelectedQty((prev) => {
+      const next = { ...prev };
+      if (allOn) {
+        for (const i of filtered) delete next[i.id];
+      } else {
+        for (const i of filtered) next[i.id] = Math.max(next[i.id] ?? 0, 1);
+      }
+      return next;
+    });
   }
 
   async function submit(e: React.FormEvent): Promise<void> {
@@ -600,6 +792,7 @@ function NewTransferDialog({
         toShopId,
         lines: selectedLines,
         reason: reason.trim(),
+        ...(stockRequestId ? { stockRequestId } : {}),
       }).unwrap();
       const totalUnits = selectedLines.reduce((s, l) => s + l.quantity, 0);
       toast.success(
@@ -629,34 +822,33 @@ function NewTransferDialog({
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <label className="block">
                 <span className="text-eyebrow uppercase text-ink-500 block mb-1">
-                  From (warehouse)
+                  From (source shop)
                 </span>
                 <select
                   value={fromShopId}
                   onChange={(e) => {
                     setFromShopId(e.target.value);
                     setSelectedQty({});
+                    setLastScan(null);
                   }}
                   className={fieldCls}
                   required
                 >
-                  {fromOptions.length === 0 && <option value="">No source shops available</option>}
+                  {fromOptions.length === 0 && <option value="">No shops available</option>}
                   {fromOptions.map((s) => (
-                    <option key={s.id} value={s.id}>
+                    <option key={s.id} value={s.id} disabled={s.id === toShopId}>
                       {s.name}
-                      {warehouses.some((w) => w.id === s.id) ? ' (warehouse)' : ''}
+                      {warehouseIds.has(s.id) ? ' (warehouse)' : ''}
                     </option>
                   ))}
                 </select>
-                {warehouses.length === 0 && (
-                  <p className="text-[10px] text-ink-500 mt-1">
-                    No warehouses configured — falling back to retail shops as source.
-                  </p>
-                )}
+                <p className="text-[10px] text-ink-500 mt-1">
+                  Any warehouse or shop can be the source.
+                </p>
               </label>
               <label className="block">
                 <span className="text-eyebrow uppercase text-ink-500 block mb-1">
-                  To (retail shop)
+                  To (destination)
                 </span>
                 <select
                   value={toShopId}
@@ -665,10 +857,11 @@ function NewTransferDialog({
                   required
                   disabled={destOptions.length === 0}
                 >
-                  {destOptions.length === 0 && <option value="">No retail destinations available</option>}
+                  {destOptions.length === 0 && <option value="">No destinations available</option>}
                   {destOptions.map((s) => (
                     <option key={s.id} value={s.id}>
                       {s.name}
+                      {warehouseIds.has(s.id) ? ' (warehouse)' : ''}
                     </option>
                   ))}
                 </select>
@@ -678,6 +871,129 @@ function NewTransferDialog({
                   </p>
                 )}
               </label>
+            </div>
+
+            {/* Quick add — bulk by category / collection, or scan a SKU. */}
+            <div className="border-t border-ink-100 pt-3 space-y-2.5">
+              <span className="text-eyebrow uppercase text-ink-500 flex items-center gap-1.5">
+                <Sparkles className="h-3.5 w-3.5" /> Quick add
+              </span>
+
+              {/* By main / sub category */}
+              <div className="rounded-lg border border-ink-100 bg-ink-25 p-2.5">
+                <p className="text-[10px] uppercase tracking-wide text-ink-500 mb-1.5 flex items-center gap-1">
+                  <Layers className="h-3 w-3" /> By category
+                </p>
+                <div className="flex flex-wrap items-end gap-2">
+                  <label className="flex-1 min-w-[130px]">
+                    <span className="text-[10px] text-ink-500 block mb-0.5">Main category</span>
+                    <select
+                      value={qaMain}
+                      onChange={(e) => {
+                        setQaMain(e.target.value);
+                        setQaSub('');
+                      }}
+                      className={fieldCls}
+                    >
+                      <option value="">Select…</option>
+                      {mains.map((m) => (
+                        <option key={m.id} value={m.id}>
+                          {m.name}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="flex-1 min-w-[130px]">
+                    <span className="text-[10px] text-ink-500 block mb-0.5">Sub-category</span>
+                    <select
+                      value={qaSub}
+                      onChange={(e) => setQaSub(e.target.value)}
+                      className={fieldCls}
+                      disabled={!qaMain}
+                    >
+                      <option value="">All in main</option>
+                      {(subsByMain.get(qaMain) ?? []).map((s) => (
+                        <option key={s.id} value={s.id}>
+                          {s.name}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="w-[72px]">
+                    <span className="text-[10px] text-ink-500 block mb-0.5">Qty each</span>
+                    <input
+                      type="number"
+                      min={1}
+                      value={qaCatQty}
+                      onChange={(e) => setQaCatQty(Math.max(1, Number(e.target.value) || 1))}
+                      className={fieldCls}
+                    />
+                  </label>
+                  <Button type="button" size="sm" variant="outline" onClick={addByCategory} disabled={!fromShopId}>
+                    Add
+                  </Button>
+                </div>
+              </div>
+
+              {/* By collection */}
+              <div className="rounded-lg border border-ink-100 bg-ink-25 p-2.5">
+                <p className="text-[10px] uppercase tracking-wide text-ink-500 mb-1.5 flex items-center gap-1">
+                  <Sparkles className="h-3 w-3" /> By collection
+                </p>
+                <div className="flex flex-wrap items-end gap-2">
+                  <label className="flex-1 min-w-[160px]">
+                    <span className="text-[10px] text-ink-500 block mb-0.5">Collection</span>
+                    <select value={qaCol} onChange={(e) => setQaCol(e.target.value)} className={fieldCls}>
+                      <option value="">Select…</option>
+                      {collections.map((c) => (
+                        <option key={c.id} value={c.id}>
+                          {c.name}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="w-[72px]">
+                    <span className="text-[10px] text-ink-500 block mb-0.5">Qty each</span>
+                    <input
+                      type="number"
+                      min={1}
+                      value={qaColQty}
+                      onChange={(e) => setQaColQty(Math.max(1, Number(e.target.value) || 1))}
+                      className={fieldCls}
+                    />
+                  </label>
+                  <Button type="button" size="sm" variant="outline" onClick={addByCollection} disabled={!fromShopId}>
+                    Add
+                  </Button>
+                </div>
+              </div>
+
+              {/* Scan / enter a SKU */}
+              <div className="rounded-lg border border-ink-100 bg-ink-25 p-2.5">
+                <p className="text-[10px] uppercase tracking-wide text-ink-500 mb-1.5 flex items-center gap-1">
+                  <ScanLine className="h-3 w-3" /> Scan / enter SKU
+                </p>
+                <div className="flex items-end gap-2">
+                  <input
+                    ref={scanRef}
+                    value={scanValue}
+                    onChange={(e) => setScanValue(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault();
+                        handleScan();
+                      }
+                    }}
+                    placeholder="Scan a barcode or type a SKU, then press Enter"
+                    className={`${fieldCls} flex-1`}
+                    disabled={!fromShopId}
+                  />
+                  <Button type="button" size="sm" variant="outline" onClick={handleScan} disabled={!fromShopId}>
+                    Add
+                  </Button>
+                </div>
+                {lastScan && <p className="text-[10px] text-brand-700 mt-1">Added: {lastScan}</p>}
+              </div>
             </div>
 
             <div className="border-t border-ink-100 pt-3">
@@ -794,6 +1110,24 @@ function NewTransferDialog({
                   </table>
                 )}
               </div>
+            </div>
+
+            {/* Running summary of the whole selection. */}
+            <div className="flex flex-wrap items-center justify-between gap-x-6 gap-y-1 rounded-lg border border-ink-100 bg-ink-25 px-3 py-2 text-xs">
+              <span className="text-ink-700">
+                <span className="font-semibold text-ink-900">{totals.lines}</span> line
+                {totals.lines === 1 ? '' : 's'} ·{' '}
+                <span className="font-semibold text-ink-900">{totals.units}</span> unit
+                {totals.units === 1 ? '' : 's'}
+              </span>
+              <span className="flex items-center gap-4 text-ink-600">
+                <span>
+                  Weight <Weight mg={totals.weightMg} className="text-ink-900" />
+                </span>
+                <span>
+                  Value <Money paise={totals.valuePaise} className="text-ink-900" />
+                </span>
+              </span>
             </div>
 
             <label className="block">

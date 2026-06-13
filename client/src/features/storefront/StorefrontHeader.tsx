@@ -1,9 +1,13 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link, NavLink, useNavigate } from 'react-router-dom';
-import { Search, Heart, User, ShoppingBag, MapPin, Menu, X, Gem, ChevronRight } from 'lucide-react';
+import { Search, Heart, User, ShoppingBag, MapPin, Menu, X, Gem, ChevronRight, Plus, Minus, Layers } from 'lucide-react';
 import { cn } from '@/lib/cn';
 import { useAppSelector } from '@/app/hooks';
-import { useGetPublicGoldRateQuery } from '@/features/storefront/storefrontApi';
+import {
+  useGetPublicGoldRateQuery,
+  useGetPublicCollectionsQuery,
+  useGetPublicCollectionsListQuery,
+} from '@/features/storefront/storefrontApi';
 
 // Format paise/g → "₹14,073/g" (no decimal for per-gram rates above ₹1k).
 // Falls back to the CMS-edited string when the live feed has no value yet.
@@ -52,6 +56,10 @@ export function StorefrontHeader(): JSX.Element {
   const { data: liveRate } = useGetPublicGoldRateQuery(undefined, {
     pollingInterval: 5 * 60 * 1000,
   });
+  // Top-level categories (e.g. "18K Gold Tone", "9KT Fine Gold", "925 Sterling
+  // Silver") become the mobile drawer's "tone" toggle; the selected tone's
+  // sub-categories fill the Palmonas-style "Shop by Category" grid below it.
+  const { data: allCategories = [] } = useGetPublicCollectionsQuery();
   const rates = useMemo(() => {
     const find = (p: number): number | undefined =>
       liveRate?.rates.find((r) => r.purity === p)?.ratePerGramPaise;
@@ -79,6 +87,32 @@ export function StorefrontHeader(): JSX.Element {
   const [mobileOpen, setMobileOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchQ, setSearchQ] = useState('');
+  // Mobile drawer: which tone tab is selected + whether "Shop by Category" is
+  // expanded. `mobileTone` stays null until the visitor taps a tab, so the
+  // active tone falls back to the first available tone on first open.
+  const [mobileTone, setMobileTone] = useState<string | null>(null);
+  const [categoryOpen, setCategoryOpen] = useState(true);
+  // Tones = top-level categories that actually have sub-categories to show.
+  const tones = useMemo(
+    () =>
+      allCategories.filter(
+        (c) => c.parentId === null && allCategories.some((s) => s.parentId === c.id),
+      ),
+    [allCategories],
+  );
+  const activeToneId =
+    mobileTone && tones.some((t) => t.id === mobileTone) ? mobileTone : tones[0]?.id;
+  const activeTone = tones.find((t) => t.id === activeToneId);
+  const toneSubs = useMemo(
+    () => (activeToneId ? allCategories.filter((c) => c.parentId === activeToneId) : []),
+    [allCategories, activeToneId],
+  );
+  // Curated inventory collections for "Shop by Collection" (only non-empty
+  // ones are returned by the API). Collapsible sections start closed to keep
+  // the drawer compact.
+  const { data: collections = [] } = useGetPublicCollectionsListQuery();
+  const [collectionOpen, setCollectionOpen] = useState(false);
+  const [genderOpen, setGenderOpen] = useState(false);
 
   function submitSearch(query: string): void {
     const q = query.trim();
@@ -298,32 +332,193 @@ export function StorefrontHeader(): JSX.Element {
               </button>
             </div>
             <nav className="flex-1 overflow-y-auto pb-2">
-              {/* Shop by Category — compact 2-up tile grid (built from the CMS
-                  collection nav, minus the Stores entry which lives below). */}
-              <div className="px-5 pt-5 pb-3">
-                <span className="text-[11px] uppercase tracking-[0.18em] text-ink-400">Shop by Category</span>
-              </div>
-              <div className="grid grid-cols-2 gap-2.5 px-5">
-                {NAV.filter((n) => !n.to.includes('/locations')).map((n) => (
-                  <NavLink
-                    key={n.to}
-                    to={n.to}
-                    end={n.end}
-                    onClick={() => setMobileOpen(false)}
-                    className="flex items-center justify-between gap-2 rounded-xl border border-ink-100 px-3.5 py-3 hover:border-brand-300 hover:bg-[#FAF3EE] transition-colors"
+              {activeTone ? (
+                <>
+                  {/* Tone toggle — top-level categories ("18K Gold Tone",
+                      "9KT Fine Gold", …). Tapping a tab swaps the sub-category
+                      grid below and re-opens "Shop by Category". */}
+                  <div
+                    className="grid border-b border-ink-100"
+                    style={{ gridTemplateColumns: `repeat(${tones.length}, minmax(0, 1fr))` }}
                   >
-                    <span className="text-[13px] leading-tight text-ink-800">{n.label}</span>
-                    <Gem className="h-4 w-4 text-brand-500 shrink-0" />
-                  </NavLink>
-                ))}
+                    {tones.map((t, idx) => {
+                      const active = t.id === activeToneId;
+                      return (
+                        <button
+                          key={t.id}
+                          type="button"
+                          onClick={() => {
+                            setMobileTone(t.id);
+                            setCategoryOpen(true);
+                          }}
+                          aria-pressed={active}
+                          className={cn(
+                            'relative px-1 py-3.5 text-center text-[11px] leading-tight uppercase tracking-wide transition-colors',
+                            idx > 0 && 'border-l border-ink-100',
+                            active ? 'text-ink-900 font-semibold' : 'text-ink-500 hover:text-ink-800',
+                          )}
+                        >
+                          {t.name}
+                          {active && (
+                            <span className="absolute left-3 right-3 -bottom-px h-0.5 bg-brand-500" />
+                          )}
+                        </button>
+                      );
+                    })}
+                  </div>
+
+                  {/* Shop by Category — collapsible header (Palmonas −/+). */}
+                  <button
+                    type="button"
+                    onClick={() => setCategoryOpen((v) => !v)}
+                    aria-expanded={categoryOpen}
+                    className="w-full flex items-center justify-between px-5 py-4 text-[15px] text-ink-900 hover:bg-[#FAF3EE] transition-colors"
+                  >
+                    <span className="font-medium">Shop by Category</span>
+                    {categoryOpen ? (
+                      <Minus className="h-4 w-4 text-ink-500" />
+                    ) : (
+                      <Plus className="h-4 w-4 text-ink-500" />
+                    )}
+                  </button>
+
+                  {categoryOpen && (
+                    <div className="px-5 pb-4">
+                      {toneSubs.length > 0 ? (
+                        <>
+                          <div className="grid grid-cols-2 gap-2.5">
+                            {toneSubs.map((s) => (
+                              <Link
+                                key={s.id}
+                                to={`/store/collections/${activeTone.slug}?sub=${s.id}`}
+                                onClick={() => setMobileOpen(false)}
+                                className="flex items-center justify-between gap-2 rounded-xl border border-ink-100 px-3.5 py-3 hover:border-brand-300 hover:bg-[#FAF3EE] transition-colors"
+                              >
+                                <span className="text-[13px] leading-tight text-ink-800">{s.name}</span>
+                                <Gem className="h-4 w-4 text-brand-500 shrink-0" />
+                              </Link>
+                            ))}
+                          </div>
+                          <Link
+                            to={`/store/collections/${activeTone.slug}`}
+                            onClick={() => setMobileOpen(false)}
+                            className="mt-3 block text-center text-[13px] text-brand-700 underline underline-offset-4"
+                          >
+                            View all {activeTone.name}
+                          </Link>
+                        </>
+                      ) : (
+                        <Link
+                          to={`/store/collections/${activeTone.slug}`}
+                          onClick={() => setMobileOpen(false)}
+                          className="block text-center text-[13px] text-brand-700 underline underline-offset-4"
+                        >
+                          View all {activeTone.name}
+                        </Link>
+                      )}
+                    </div>
+                  )}
+                </>
+              ) : (
+                <>
+                  {/* Fallback — tenants without a categorised catalogue keep the
+                      CMS-nav 2-up tile grid. */}
+                  <div className="px-5 pt-5 pb-3">
+                    <span className="text-[11px] uppercase tracking-[0.18em] text-ink-400">Shop by Category</span>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2.5 px-5">
+                    {NAV.filter((n) => !n.to.includes('/locations')).map((n) => (
+                      <NavLink
+                        key={n.to}
+                        to={n.to}
+                        end={n.end}
+                        onClick={() => setMobileOpen(false)}
+                        className="flex items-center justify-between gap-2 rounded-xl border border-ink-100 px-3.5 py-3 hover:border-brand-300 hover:bg-[#FAF3EE] transition-colors"
+                      >
+                        <span className="text-[13px] leading-tight text-ink-800">{n.label}</span>
+                        <Gem className="h-4 w-4 text-brand-500 shrink-0" />
+                      </NavLink>
+                    ))}
+                  </div>
+                  <Link
+                    to="/store/collections"
+                    onClick={() => setMobileOpen(false)}
+                    className="mt-3 block text-center text-[13px] text-brand-700 underline underline-offset-4"
+                  >
+                    View all
+                  </Link>
+                </>
+              )}
+
+              {/* Shop by Collection — curated inventory collections (only
+                  non-empty ones are returned). Collapsible accordion section. */}
+              {collections.length > 0 && (
+                <div className="border-t border-ink-100">
+                  <button
+                    type="button"
+                    onClick={() => setCollectionOpen((v) => !v)}
+                    aria-expanded={collectionOpen}
+                    className="w-full flex items-center justify-between px-5 py-4 text-[15px] text-ink-900 hover:bg-[#FAF3EE] transition-colors"
+                  >
+                    <span className="font-medium">Shop by Collection</span>
+                    {collectionOpen ? (
+                      <Minus className="h-4 w-4 text-ink-500" />
+                    ) : (
+                      <Plus className="h-4 w-4 text-ink-500" />
+                    )}
+                  </button>
+                  {collectionOpen && (
+                    <div className="px-5 pb-4 grid grid-cols-2 gap-2.5">
+                      {collections.map((c) => (
+                        <Link
+                          key={c.id}
+                          to={`/store/collections/${c.slug}`}
+                          onClick={() => setMobileOpen(false)}
+                          className="flex items-center justify-between gap-2 rounded-xl border border-ink-100 px-3.5 py-3 hover:border-brand-300 hover:bg-[#FAF3EE] transition-colors"
+                        >
+                          <span className="text-[13px] leading-tight text-ink-800">{c.name}</span>
+                          <Layers className="h-4 w-4 text-brand-500 shrink-0" />
+                        </Link>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Shop by Gender — Men / Women (gender is an item-level field). */}
+              <div className="border-t border-ink-100">
+                <button
+                  type="button"
+                  onClick={() => setGenderOpen((v) => !v)}
+                  aria-expanded={genderOpen}
+                  className="w-full flex items-center justify-between px-5 py-4 text-[15px] text-ink-900 hover:bg-[#FAF3EE] transition-colors"
+                >
+                  <span className="font-medium">Shop by Gender</span>
+                  {genderOpen ? (
+                    <Minus className="h-4 w-4 text-ink-500" />
+                  ) : (
+                    <Plus className="h-4 w-4 text-ink-500" />
+                  )}
+                </button>
+                {genderOpen && (
+                  <div className="px-5 pb-4 grid grid-cols-2 gap-2.5">
+                    {[
+                      { to: '/store/collections/women', label: 'Women' },
+                      { to: '/store/collections/men', label: 'Men' },
+                    ].map((g) => (
+                      <Link
+                        key={g.to}
+                        to={g.to}
+                        onClick={() => setMobileOpen(false)}
+                        className="flex items-center justify-between gap-2 rounded-xl border border-ink-100 px-3.5 py-3 hover:border-brand-300 hover:bg-[#FAF3EE] transition-colors"
+                      >
+                        <span className="text-[13px] leading-tight text-ink-800">{g.label}</span>
+                        <User className="h-4 w-4 text-brand-500 shrink-0" />
+                      </Link>
+                    ))}
+                  </div>
+                )}
               </div>
-              <Link
-                to="/store/collections"
-                onClick={() => setMobileOpen(false)}
-                className="mt-3 block text-center text-[13px] text-brand-700 underline underline-offset-4"
-              >
-                View all
-              </Link>
 
               {/* Compact link rows — the Palmonas-style accordion list. */}
               <div className="mt-4 border-t border-ink-100">
