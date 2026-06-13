@@ -7,15 +7,17 @@ import { useAppSelector } from '@/app/hooks';
 import {
   useGetPublicGoldRateQuery,
   useGetPublicProductsQuery,
+  useGetPublicSaleItemsQuery,
   useGetPublicCollectionsQuery,
 } from '@/features/storefront/storefrontApi';
 import type {
   PublicProduct,
+  PublicSaleProduct,
   PublicCategory,
   PublicGoldRateResponse,
 } from '@/features/storefront/storefrontApi';
 import type { DoorCard, TestimonialCard, TrustBadge } from '@/features/storefront/storefrontContentSlice';
-import { storefrontTotalPaise, productMetaLabel } from '@/features/storefront/pricing';
+import { storefrontTotalPaise, productMetaLabel, computeSalePrice } from '@/features/storefront/pricing';
 import { HeroCarousel } from './HeroCarousel';
 
 // Parse a blog's ISO date (YYYY-MM-DD) into a {day, month} badge. Returns null
@@ -176,6 +178,98 @@ function ProductShowcase({
   );
 }
 
+// Season Sales — the items the admin tagged into the Season Sale pool (Inventory
+// → Season sales), each with its own discount. Shows the original price struck
+// through, the discounted price and a "Flat X% off" badge. Renders nothing when
+// the sale is empty so the homepage simply omits the section. Sits directly
+// below Top Styles.
+function SeasonSales({
+  liveRate,
+  categoryNameById,
+}: {
+  liveRate: PublicGoldRateResponse | undefined;
+  categoryNameById: Map<string, string>;
+}): JSX.Element | null {
+  const { data: saleProducts = [] } = useGetPublicSaleItemsQuery();
+  const visible = saleProducts.slice(0, 8);
+  if (visible.length === 0) return null;
+  // Sale-wide Buy-1-Get-1 is the same flag on every sale item.
+  const bogoActive = visible.some((p) => p.sale?.bogo);
+  return (
+    <section className="bg-[#FFF7F0] border-b border-[#EFE0D2]/60">
+      <div className="max-w-[1280px] mx-auto px-4 sm:px-6 py-14 sm:py-20">
+        <div className="text-center mb-7 sm:mb-9">
+          <p className="text-eyebrow uppercase text-brand-700">Limited time</p>
+          <h2 className="font-display text-3xl sm:text-[36px] md:text-[44px] leading-tight text-ink-900 mt-2">
+            Season Sales
+          </h2>
+          {bogoActive && (
+            <p className="mt-3 inline-flex items-center bg-brand-600 text-ink-0 text-xs font-semibold uppercase tracking-[0.12em] px-3 py-1.5 rounded-sm">
+              Buy 1 Get 1 Free — on every piece
+            </p>
+          )}
+          <p className="mt-3 text-sm text-ink-600">Handpicked pieces at a special price — while stocks last.</p>
+        </div>
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-x-3 gap-y-8 sm:gap-x-5 sm:gap-y-10">
+          {visible.map((p: PublicSaleProduct) => {
+            const soldOut = p.inStock === false;
+            const catLabel = categoryNameById.get(p.categoryId) ?? productMetaLabel(p);
+            const original = storefrontTotalPaise(p, liveRate?.rates);
+            const offer = computeSalePrice(original, p.sale);
+            const discounted = offer?.discountedPaise ?? original;
+            return (
+              <Link to={`/store/products/${p.slug}`} key={p.id} className="group block">
+                <div className="relative aspect-[4/5] overflow-hidden bg-[#FAF3EE] rounded-sm gold-shine-target">
+                  <img
+                    src={p.images[0] ?? ''}
+                    alt={p.name}
+                    className={cn(
+                      'absolute inset-0 h-full w-full object-cover transition-transform duration-slow group-hover:scale-[1.03]',
+                      soldOut && 'grayscale opacity-70',
+                    )}
+                    loading="lazy"
+                  />
+                  {offer && (
+                    <span className="absolute top-2 right-2 z-10 bg-brand-600 text-ink-0 text-[10px] font-semibold uppercase tracking-[0.12em] px-2 py-1 rounded-sm shadow-sm">
+                      {offer.badge}
+                    </span>
+                  )}
+                  {soldOut && (
+                    <span className="absolute top-2 left-2 z-10 bg-ink-900 text-ink-0 text-[10px] uppercase tracking-[0.18em] px-2 py-1 rounded-sm">
+                      Sold out
+                    </span>
+                  )}
+                </div>
+                <div className="mt-3 sm:mt-4 space-y-1 px-0.5">
+                  <p className="text-[10px] uppercase tracking-[0.16em] text-ink-500 truncate">{catLabel}</p>
+                  <h3 className="font-display text-base sm:text-[18px] leading-tight text-ink-900 group-hover:text-brand-700 transition-colors truncate">
+                    {p.name}
+                  </h3>
+                  <div className="flex items-center gap-0.5 text-brand-500">
+                    {Array.from({ length: 5 }).map((_, k) => (
+                      <Star key={k} className="h-3 w-3 fill-current" aria-hidden />
+                    ))}
+                  </div>
+                  <div className="flex items-baseline gap-2 pt-0.5">
+                    <p className="text-sm text-ink-900 font-mono tabular-nums font-semibold">
+                      ₹{(discounted / 100).toLocaleString('en-IN')}
+                    </p>
+                    {offer?.hasStrike && (
+                      <p className="text-xs text-ink-400 font-mono tabular-nums line-through">
+                        ₹{(original / 100).toLocaleString('en-IN')}
+                      </p>
+                    )}
+                  </div>
+                </div>
+              </Link>
+            );
+          })}
+        </div>
+      </div>
+    </section>
+  );
+}
+
 export function StorefrontHome(): JSX.Element {
   const content = useAppSelector((s) => s.storefrontContent);
   const {
@@ -205,15 +299,24 @@ export function StorefrontHome(): JSX.Element {
   });
   const rateBy = (p: number): number | undefined =>
     liveRate?.rates.find((r) => r.purity === p)?.ratePerGramPaise;
+  // CMS-entered value wins when filled; live GoldAPI feed is the fallback for
+  // any rate (or the "updated at" label) left blank. Display ticker only —
+  // product prices always use the numeric live feed.
+  const pick = (cms: string | undefined, purity: number): string => {
+    const manual = (cms ?? '').trim();
+    return manual || formatLiveRate(rateBy(purity), '—');
+  };
   const rates = {
     ...cmsRates,
-    g24: formatLiveRate(rateBy(2400), '—'),
-    g22: formatLiveRate(rateBy(2200), cmsRates.g22),
-    g18: formatLiveRate(rateBy(1800), cmsRates.g18),
-    silver: formatLiveRate(rateBy(0), cmsRates.silver),
-    updatedAt: liveRate
-      ? `${new Date(liveRate.asOf).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Kolkata' })} IST`
-      : cmsRates.updatedAt,
+    g24: pick(cmsRates.g24, 2400),
+    g22: pick(cmsRates.g22, 2200),
+    g18: pick(cmsRates.g18, 1800),
+    silver: pick(cmsRates.silver, 0),
+    updatedAt:
+      (cmsRates.updatedAt ?? '').trim() ||
+      (liveRate
+        ? `${new Date(liveRate.asOf).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Kolkata' })} IST`
+        : ''),
   };
 
   // Homepage product showcases — 18K Gold Tone, 9 KT Fine Gold and Fine Silver.
@@ -360,6 +463,10 @@ export function StorefrontHome(): JSX.Element {
         liveRate={liveRate}
         categoryNameById={categoryNameById}
       />
+
+      {/* Season Sales — curated discounted pieces (Inventory → Season sales).
+          Renders nothing when the sale pool is empty. Sits below Top Styles. */}
+      <SeasonSales liveRate={liveRate} categoryNameById={categoryNameById} />
 
       {/* Shop by occasion — 6 tall body-shot tiles with dark gradient overlay
           showing category name + product count. Replaces the older 4-card TOC. */}

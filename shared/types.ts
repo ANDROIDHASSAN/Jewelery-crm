@@ -12,6 +12,9 @@ import type {
   CategoryInputSchema,
   CollectionSchema,
   CollectionInputSchema,
+  SaleItemRowSchema,
+  SaleInfoSchema,
+  SaleDiscountTypeSchema,
   ItemDiamondSchema,
   ItemSchema,
   ItemInputSchema,
@@ -66,6 +69,9 @@ export type Category = z.infer<typeof CategorySchema>;
 export type CategoryInput = z.infer<typeof CategoryInputSchema>;
 export type Collection = z.infer<typeof CollectionSchema>;
 export type CollectionInput = z.infer<typeof CollectionInputSchema>;
+export type SaleItemRow = z.infer<typeof SaleItemRowSchema>;
+export type SaleInfo = z.infer<typeof SaleInfoSchema>;
+export type SaleDiscountType = z.infer<typeof SaleDiscountTypeSchema>;
 export type ItemDiamond = z.infer<typeof ItemDiamondSchema>;
 export type Item = z.infer<typeof ItemSchema>;
 export type ItemInput = z.infer<typeof ItemInputSchema>;

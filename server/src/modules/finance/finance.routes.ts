@@ -1981,49 +1981,85 @@ financeRouter.get('/financial-year', async (req, res, next) => {
       return;
     }
 
-    const [billAgg, expenseAgg, prevBillAgg, prevExpenseAgg, monthly, byShop] = await Promise.all([
-      prisma.bill.aggregate({
-        where: { tenantId, createdAt: { gte: fyStart, lt: fyEnd } },
-        _sum: { totalPaise: true, cgstPaise: true, sgstPaise: true, igstPaise: true },
-        _count: { _all: true },
-      }),
-      prisma.expense.aggregate({
-        where: { tenantId, paidAt: { gte: fyStart, lt: fyEnd } },
-        _sum: { amountPaise: true },
-        _count: { _all: true },
-      }),
-      prisma.bill.aggregate({
-        where: { tenantId, createdAt: { gte: prevFyStart, lt: prevFyEnd } },
-        _sum: { totalPaise: true },
-      }),
-      prisma.expense.aggregate({
-        where: { tenantId, paidAt: { gte: prevFyStart, lt: prevFyEnd } },
-        _sum: { amountPaise: true },
-      }),
-      prisma.$queryRaw<Array<{ month: Date; revenue: bigint; expense: bigint }>>`
-        SELECT m::date AS month,
-               COALESCE((
-                 SELECT SUM("totalPaise") FROM "Bill"
-                 WHERE "tenantId" = ${tenantId}
-                   AND "createdAt" >= m
-                   AND "createdAt" < (m + INTERVAL '1 month')
-               ),0)::bigint AS revenue,
-               COALESCE((
-                 SELECT SUM("amountPaise") FROM "Expense"
-                 WHERE "tenantId" = ${tenantId}
-                   AND "paidAt" >= m
-                   AND "paidAt" < (m + INTERVAL '1 month')
-               ),0)::bigint AS expense
-        FROM generate_series(${fyStart}::timestamp, ${fyEnd}::timestamp - INTERVAL '1 day', INTERVAL '1 month') AS m
-        ORDER BY m
-      `,
-      prisma.bill.groupBy({
-        by: ['shopId'],
-        where: { tenantId, createdAt: { gte: fyStart, lt: fyEnd } },
-        _sum: { totalPaise: true, cgstPaise: true, sgstPaise: true, igstPaise: true },
-        _count: { _all: true },
-      }),
-    ]);
+    // E-commerce orders aren't POS bills, but they are revenue. Every other
+    // finance view (summary, daily-sales, GST) merges paid online orders into
+    // the totals, so the FY report must too — otherwise a store that sells only
+    // online shows ₹0 revenue and ₹0 GST for the year.
+    const ecomFyWhere = {
+      tenantId,
+      paymentStatus: PaymentStatus.PAID,
+      status: { notIn: [OrderStatus.CANCELLED, OrderStatus.RETURNED] },
+      paidAt: { gte: fyStart, lt: fyEnd },
+    };
+    const ecomPrevFyWhere = {
+      tenantId,
+      paymentStatus: PaymentStatus.PAID,
+      status: { notIn: [OrderStatus.CANCELLED, OrderStatus.RETURNED] },
+      paidAt: { gte: prevFyStart, lt: prevFyEnd },
+    };
+
+    const [billAgg, expenseAgg, prevBillAgg, prevExpenseAgg, monthly, byShop, ecomAgg, prevEcomAgg] =
+      await Promise.all([
+        prisma.bill.aggregate({
+          where: { tenantId, createdAt: { gte: fyStart, lt: fyEnd }, voidedAt: null },
+          _sum: { totalPaise: true, cgstPaise: true, sgstPaise: true, igstPaise: true },
+          _count: { _all: true },
+        }),
+        prisma.expense.aggregate({
+          where: { tenantId, paidAt: { gte: fyStart, lt: fyEnd } },
+          _sum: { amountPaise: true },
+          _count: { _all: true },
+        }),
+        prisma.bill.aggregate({
+          where: { tenantId, createdAt: { gte: prevFyStart, lt: prevFyEnd }, voidedAt: null },
+          _sum: { totalPaise: true },
+        }),
+        prisma.expense.aggregate({
+          where: { tenantId, paidAt: { gte: prevFyStart, lt: prevFyEnd } },
+          _sum: { amountPaise: true },
+        }),
+        prisma.$queryRaw<Array<{ month: Date; revenue: bigint; expense: bigint }>>`
+          SELECT m::date AS month,
+                 (COALESCE((
+                   SELECT SUM("totalPaise") FROM "Bill"
+                   WHERE "tenantId" = ${tenantId}
+                     AND "voidedAt" IS NULL
+                     AND "createdAt" >= m
+                     AND "createdAt" < (m + INTERVAL '1 month')
+                 ),0)
+                 + COALESCE((
+                   SELECT SUM("totalPaise") FROM "Order"
+                   WHERE "tenantId" = ${tenantId}
+                     AND "paymentStatus" = 'PAID'
+                     AND "status" NOT IN ('CANCELLED', 'RETURNED')
+                     AND "paidAt" >= m
+                     AND "paidAt" < (m + INTERVAL '1 month')
+                 ),0))::bigint AS revenue,
+                 COALESCE((
+                   SELECT SUM("amountPaise") FROM "Expense"
+                   WHERE "tenantId" = ${tenantId}
+                     AND "paidAt" >= m
+                     AND "paidAt" < (m + INTERVAL '1 month')
+                 ),0)::bigint AS expense
+          FROM generate_series(${fyStart}::timestamp, ${fyEnd}::timestamp - INTERVAL '1 day', INTERVAL '1 month') AS m
+          ORDER BY m
+        `,
+        prisma.bill.groupBy({
+          by: ['shopId'],
+          where: { tenantId, createdAt: { gte: fyStart, lt: fyEnd }, voidedAt: null },
+          _sum: { totalPaise: true, cgstPaise: true, sgstPaise: true, igstPaise: true },
+          _count: { _all: true },
+        }),
+        prisma.order.aggregate({
+          where: ecomFyWhere,
+          _sum: { totalPaise: true, taxPaise: true },
+          _count: { _all: true },
+        }),
+        prisma.order.aggregate({
+          where: ecomPrevFyWhere,
+          _sum: { totalPaise: true },
+        }),
+      ]);
 
     const fyShopIds = byShop.map((b) => b.shopId);
     const shops = await prisma.shop.findMany({
@@ -2032,9 +2068,17 @@ financeRouter.get('/financial-year', async (req, res, next) => {
     });
     const shopName = new Map(shops.map((s) => [s.id, s.name]));
 
-    const revenuePaise = billAgg._sum.totalPaise ?? 0;
+    const ecomRevenuePaise = ecomAgg._sum.totalPaise ?? 0;
+    const ecomGstPaise = ecomAgg._sum.taxPaise ?? 0;
+    const ecomOrderCount = ecomAgg._count._all;
+
+    const billRevenuePaise = billAgg._sum.totalPaise ?? 0;
+    const billGstPaise =
+      (billAgg._sum.cgstPaise ?? 0) + (billAgg._sum.sgstPaise ?? 0) + (billAgg._sum.igstPaise ?? 0);
+
+    const revenuePaise = billRevenuePaise + ecomRevenuePaise;
     const expensePaise = expenseAgg._sum.amountPaise ?? 0;
-    const prevRev = prevBillAgg._sum.totalPaise ?? 0;
+    const prevRev = (prevBillAgg._sum.totalPaise ?? 0) + (prevEcomAgg._sum.totalPaise ?? 0);
     const prevExp = prevExpenseAgg._sum.amountPaise ?? 0;
     const yoyRevenuePct = prevRev > 0 ? ((revenuePaise - prevRev) / prevRev) * 100 : null;
     const yoyExpensePct = prevExp > 0 ? ((expensePaise - prevExp) / prevExp) * 100 : null;
@@ -2047,11 +2091,8 @@ financeRouter.get('/financial-year', async (req, res, next) => {
         revenuePaise,
         expensePaise,
         netPaise: revenuePaise - expensePaise,
-        gstPaise:
-          (billAgg._sum.cgstPaise ?? 0) +
-          (billAgg._sum.sgstPaise ?? 0) +
-          (billAgg._sum.igstPaise ?? 0),
-        billCount: billAgg._count._all,
+        gstPaise: billGstPaise + ecomGstPaise,
+        billCount: billAgg._count._all + ecomOrderCount,
         expenseCount: expenseAgg._count._all,
         prev: {
           revenuePaise: prevRev,
@@ -2065,16 +2106,29 @@ financeRouter.get('/financial-year', async (req, res, next) => {
           expensePaise: Number(m.expense),
           netPaise: Number(m.revenue) - Number(m.expense),
         })),
-        byShop: byShop
-          .map((s) => ({
+        byShop: [
+          ...byShop.map((s) => ({
             shopId: s.shopId,
             shopName: shopName.get(s.shopId) ?? s.shopId.slice(-6),
             revenuePaise: s._sum.totalPaise ?? 0,
             gstPaise:
               (s._sum.cgstPaise ?? 0) + (s._sum.sgstPaise ?? 0) + (s._sum.igstPaise ?? 0),
             billCount: s._count._all,
-          }))
-          .sort((a, b) => b.revenuePaise - a.revenuePaise),
+          })),
+          // Online orders aren't shop-scoped — surface them as their own row so
+          // the branch breakdown reconciles with the FY revenue total.
+          ...(ecomOrderCount > 0
+            ? [
+                {
+                  shopId: 'ecommerce',
+                  shopName: 'E-commerce',
+                  revenuePaise: ecomRevenuePaise,
+                  gstPaise: ecomGstPaise,
+                  billCount: ecomOrderCount,
+                },
+              ]
+            : []),
+        ].sort((a, b) => b.revenuePaise - a.revenuePaise),
       },
     });
   } catch (err) {

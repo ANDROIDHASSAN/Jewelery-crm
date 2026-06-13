@@ -412,6 +412,152 @@ inventoryRouter.delete(
   },
 );
 
+// ── Season Sale items (single tenant-wide sale pool w/ per-item offer) ──
+// Mirrors the collection-items endpoints but on the SaleItem table, which also
+// carries a per-item offer: PERCENT (% off), FLAT (₹ off) or BOGO (buy-1-get-1).
+// The storefront renders these in the "Season Sales" section + on the PDP.
+const SaleOfferBody = z.object({
+  discountType: z.enum(['PERCENT', 'FLAT', 'BOGO']).default('PERCENT'),
+  discountBps: z.number().int().min(0).max(9000).default(0),
+  discountFlatPaise: z.number().int().min(0).max(100_000_00).default(0),
+});
+
+// Sale-wide config (currently just the Buy-1-Get-1 toggle). Stored on the
+// tenant since the Season Sale is a single tenant-wide pool.
+inventoryRouter.get('/sale-config', async (_req, res, next) => {
+  try {
+    const tenantId = getTenantId();
+    if (!tenantId) throw new Error('tenantId missing');
+    const tenant = await prisma.tenant.findUnique({
+      where: { id: tenantId },
+      select: { seasonSaleBogo: true },
+    });
+    res.json({ data: { bogoEnabled: tenant?.seasonSaleBogo ?? false } });
+  } catch (err) {
+    next(err);
+  }
+});
+
+inventoryRouter.put('/sale-config', requirePermission('inventory.write'), async (req, res, next) => {
+  try {
+    const tenantId = getTenantId();
+    if (!tenantId) throw new Error('tenantId missing');
+    const { bogoEnabled } = z.object({ bogoEnabled: z.boolean() }).parse(req.body);
+    await prisma.tenant.update({ where: { id: tenantId }, data: { seasonSaleBogo: bogoEnabled } });
+    res.json({ data: { bogoEnabled } });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// List items currently on sale, newest first, with their discount.
+inventoryRouter.get('/sale-items', async (_req, res, next) => {
+  try {
+    const rows = await prisma.saleItem.findMany({
+      include: {
+        item: {
+          select: {
+            id: true,
+            sku: true,
+            name: true,
+            images: true,
+            weightMg: true,
+            purityCaratX100: true,
+            status: true,
+          },
+        },
+      },
+      orderBy: [{ sortOrder: 'asc' }, { createdAt: 'desc' }],
+    });
+    const data = rows.map((r) => ({
+      id: r.item.id,
+      sku: r.item.sku,
+      name: r.item.name,
+      images: r.item.images,
+      weightMg: r.item.weightMg,
+      purityCaratX100: r.item.purityCaratX100,
+      status: r.item.status,
+      discountType: r.discountType,
+      discountBps: r.discountBps,
+      discountFlatPaise: r.discountFlatPaise,
+    }));
+    res.json({ data, page: { hasMore: false } });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Add items to the sale (default 0% discount; tweak per-item afterwards).
+// Skips items already on sale so re-adding never resets an existing discount.
+inventoryRouter.post(
+  '/sale-items',
+  requirePermission('inventory.write'),
+  async (req, res, next) => {
+    try {
+      const { itemIds, ...offer } = z
+        .object({
+          itemIds: z.array(z.string().min(1)).min(1),
+          discountType: z.enum(['PERCENT', 'FLAT', 'BOGO']).default('PERCENT'),
+          discountBps: z.number().int().min(0).max(9000).default(0),
+          discountFlatPaise: z.number().int().min(0).max(100_000_00).default(0),
+        })
+        .parse(req.body);
+      const tenantId = getTenantId();
+      if (!tenantId) throw new Error('tenantId missing');
+
+      let added = 0;
+      for (const itemId of itemIds) {
+        const existing = await prisma.saleItem.findUnique({ where: { itemId } });
+        if (!existing) {
+          await prisma.saleItem.create({ data: { tenantId, itemId, ...offer } });
+          added += 1;
+        }
+      }
+      res.status(201).json({
+        data: { message: `Added ${added} items to the sale`, added, skipped: itemIds.length - added },
+      });
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+// Update an item's sale offer (type + values).
+inventoryRouter.patch(
+  '/sale-items/:itemId',
+  requirePermission('inventory.write'),
+  async (req, res, next) => {
+    try {
+      const offer = SaleOfferBody.parse(req.body);
+      const updated = await prisma.saleItem.update({
+        where: { itemId: req.params['itemId']! },
+        data: offer,
+      });
+      res.json({ data: updated });
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+// Remove an item from the sale.
+inventoryRouter.delete(
+  '/sale-items/:itemId',
+  requirePermission('inventory.write'),
+  async (req, res, next) => {
+    try {
+      await prisma.saleItem.delete({ where: { itemId: req.params['itemId']! } });
+      res.status(204).end();
+    } catch (err) {
+      if (err instanceof Error && err.message.includes('not found')) {
+        res.status(404).json({ error: { message: 'Item not in sale' } });
+      } else {
+        next(err);
+      }
+    }
+  },
+);
+
 inventoryRouter.get('/valuation', async (req, res, next) => {
   try {
     const shopId = typeof req.query['shopId'] === 'string' ? req.query['shopId'] : undefined;

@@ -1147,11 +1147,14 @@ async function main(): Promise<void> {
             image:
               'https://images.unsplash.com/photo-1599643477877-530eb83abc8e?auto=format&fit=crop&w=1920&q=85',
           },
+          // Blank = use the live GoldAPI feed; an editor overrides per purity
+          // from the CMS Gold rates tab.
           rates: {
-            g22: '₹6,420/g',
-            g18: '₹5,255/g',
-            silver: '₹84.50/g',
-            updatedAt: '14 May, 11:02 AM IST',
+            g24: '',
+            g22: '',
+            g18: '',
+            silver: '',
+            updatedAt: '',
           },
           collections: [
             { slug: 'bridal', name: 'Bridal', tagline: 'For the day that matters', img: 'https://images.unsplash.com/photo-1611591437281-460bfbe1220a?auto=format&fit=crop&w=900&q=80' },

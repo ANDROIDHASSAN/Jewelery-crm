@@ -137,6 +137,10 @@ export interface StorefrontContent {
   /** CMS-managed hero carousel slides. Empty = fall back to the single `hero` block. */
   heroSlides: HeroSlide[];
   rates: {
+    // Free-text display strings for the "Today's rate" ticker. Each one, when
+    // filled, overrides the live GoldAPI feed for that purity; blank falls back
+    // to the live feed. (Product prices always use the numeric live feed.)
+    g24: string;
     g22: string;
     g18: string;
     silver: string;
@@ -301,10 +305,13 @@ export const DEFAULT_CONTENT: StorefrontContent = {
     },
   ],
   rates: {
-    g22: '₹6,420/g',
-    g18: '₹5,255/g',
-    silver: '₹84.50/g',
-    updatedAt: '14 May, 11:02 AM IST',
+    // Default to blank so a fresh storefront shows the live GoldAPI feed until
+    // an editor types a manual rate in the CMS (which then overrides the feed).
+    g24: '',
+    g22: '',
+    g18: '',
+    silver: '',
+    updatedAt: '',
   },
   collections: [
     { slug: 'bridal', name: 'Bridal', tagline: 'For the day that matters', img: 'https://images.unsplash.com/photo-1602173574767-37ac01994b2a?auto=format&fit=crop&w=1600&q=92' },

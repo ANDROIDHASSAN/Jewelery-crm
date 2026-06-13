@@ -245,6 +245,38 @@ export const CollectionInputSchema = CollectionSchema.omit({
   slug: z.string().min(1).max(100).optional(),
 });
 
+// --- Season Sale items (single tenant-wide sale pool with per-item discount) ---
+
+// Discount on a sale item, in basis points (5% = 500). Capped at 90% so a
+// fat-fingered 9000 can't zero out the price; 0 lists at full price.
+export const DiscountBpsSchema = z.number().int().min(0).max(9000);
+
+// Offer kind for a Season Sale item.
+export const SALE_DISCOUNT_TYPES = ['PERCENT', 'FLAT', 'BOGO'] as const;
+export const SaleDiscountTypeSchema = z.enum(SALE_DISCOUNT_TYPES);
+
+// The offer config carried on a sale item / surfaced to the storefront.
+export const SaleInfoSchema = z.object({
+  type: SaleDiscountTypeSchema.default('PERCENT'),
+  discountBps: DiscountBpsSchema.default(0),
+  discountFlatPaise: PaiseSchema.default(0),
+});
+
+// One item's sale entry as returned to the admin list — the item summary plus
+// its offer config. Mirrors the collection-items payload + the sale offer.
+export const SaleItemRowSchema = z.object({
+  id: CuidSchema,
+  sku: z.string(),
+  name: z.string().nullable(),
+  images: z.array(z.string()),
+  weightMg: z.number().int(),
+  purityCaratX100: z.number().int(),
+  status: z.enum(['IN_STOCK', 'IN_TRANSIT', 'SOLD', 'MELTED']),
+  discountType: SaleDiscountTypeSchema,
+  discountBps: DiscountBpsSchema,
+  discountFlatPaise: PaiseSchema,
+});
+
 // --- Diamond detail line (one stone group on an item) ---
 
 export const ItemDiamondSchema = z.object({
@@ -256,7 +288,14 @@ export const ItemDiamondSchema = z.object({
   clarity: z.string().max(20).optional().nullable(),
   color: z.string().max(20).optional().nullable(),
   count: z.number().int().min(1).max(1000).default(1),
+  // Total purchase cost for all stones in this row.
   costPaise: PaiseSchema.default(0),
+  // Total selling price for all stones in this row (optional).
+  sellingPricePaise: PaiseSchema.optional().nullable(),
+  // Per-carat rates (₹/ct, paise) from the calculators. Null = totals entered
+  // directly. Persisted so the calculators pre-fill on re-edit.
+  purchaseRatePaise: PaiseSchema.optional().nullable(),
+  sellRatePaise: PaiseSchema.optional().nullable(),
 });
 
 export const ItemSchema = z.object({
@@ -446,8 +485,24 @@ export const PurchaseOrderItemInputSchema = z.object({
   // Optional making-charge override (basis points, e.g. 600 = 6%). Applied to
   // the Item created when the PO is received; null = inherit category default.
   makingChargeBps: BpsSchema.optional().nullable(),
+  // Fixed selling price (paise) applied to the Item on receive; null = not set.
+  sellingPricePaise: PaiseSchema.optional().nullable(),
+  // When true, the linked storefront Product is published when the PO is received.
+  publishToStorefront: z.boolean().default(false),
   // qty > 1 → lot item on receive (isSerialized=false, quantityOnHand=quantity).
   quantity: z.number().int().min(1).max(10000).default(1),
+  // --- Full item-detail fields (optional — for new pieces described at PO time) ---
+  name: z.string().min(1).max(160).optional().nullable(),
+  description: z.string().max(4000).optional().nullable(),
+  images: z.array(z.string()).max(8).optional(),
+  hallmarkStatus: z.enum(HALLMARK_STATUSES).optional(),
+  hallmarkRef: HuidSchema.optional().nullable(),
+  stoneWeightMg: MgSchema.optional().nullable(),
+  makingChargeMode: z.enum(MAKING_CHARGE_MODES).optional().nullable(),
+  makingChargePerGramPaise: PaiseSchema.optional().nullable(),
+  isSerialized: z.boolean().optional(),
+  collectionIds: z.array(CuidSchema).max(50).optional(),
+  diamonds: z.array(ItemDiamondSchema).max(50).optional(),
 });
 
 export const PurchaseOrderCreateSchema = z.object({
@@ -873,6 +928,9 @@ export const StorefrontContentSchema = z.object({
   // validating; the storefront falls back to the single `hero` block when empty.
   heroSlides: z.array(HeroSlideSchema).max(8).optional().default([]),
   rates: z.object({
+    // 24K added later than the rest — optional + default '' so stored content
+    // rows that pre-date it keep validating. Blank = fall back to the live feed.
+    g24: z.string().max(40).optional().default(''),
     g22: z.string().max(40),
     g18: z.string().max(40),
     silver: z.string().max(40),

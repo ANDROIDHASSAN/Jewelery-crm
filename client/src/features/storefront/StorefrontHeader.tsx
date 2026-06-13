@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link, NavLink, useNavigate } from 'react-router-dom';
-import { Search, Heart, User, ShoppingBag, MapPin, Menu, X } from 'lucide-react';
+import { Search, Heart, User, ShoppingBag, MapPin, Menu, X, Gem, ChevronRight } from 'lucide-react';
 import { cn } from '@/lib/cn';
 import { useAppSelector } from '@/app/hooks';
 import { useGetPublicGoldRateQuery } from '@/features/storefront/storefrontApi';
@@ -55,12 +55,19 @@ export function StorefrontHeader(): JSX.Element {
   const rates = useMemo(() => {
     const find = (p: number): number | undefined =>
       liveRate?.rates.find((r) => r.purity === p)?.ratePerGramPaise;
+    // CMS-entered value wins when an editor has filled it in; the live GoldAPI
+    // feed is the fallback for any rate left blank. Only the displayed ticker
+    // is affected — product prices always use the numeric live feed.
+    const pick = (cms: string | undefined, purity: number): string => {
+      const manual = (cms ?? '').trim();
+      return manual || formatLiveRate(find(purity), '—');
+    };
     return {
       ...cmsRates,
-      g22: formatLiveRate(find(2200), cmsRates.g22),
-      g18: formatLiveRate(find(1800), cmsRates.g18),
-      silver: formatLiveRate(find(0), cmsRates.silver),
-      g24: formatLiveRate(find(2400), '—'),
+      g24: pick(cmsRates.g24, 2400),
+      g22: pick(cmsRates.g22, 2200),
+      g18: pick(cmsRates.g18, 1800),
+      silver: pick(cmsRates.silver, 0),
     };
   }, [cmsRates, liveRate]);
   const locationCount = useAppSelector((s) => s.storefrontContent.locations.length);
@@ -290,30 +297,62 @@ export function StorefrontHeader(): JSX.Element {
                 <X className="h-5 w-5" />
               </button>
             </div>
-            <nav className="flex-1 overflow-y-auto py-2">
-              {NAV.map((n) => (
-                <NavLink
-                  key={n.to}
-                  to={n.to}
-                  end={n.end}
-                  onClick={() => setMobileOpen(false)}
-                  className={({ isActive }) =>
-                    cn(
-                      'block px-5 sm:px-6 py-4 font-display text-2xl sm:text-display-sm border-b border-ink-100',
-                      isActive ? 'text-ink-900' : 'text-ink-700',
-                    )
-                  }
+            <nav className="flex-1 overflow-y-auto pb-2">
+              {/* Shop by Category — compact 2-up tile grid (built from the CMS
+                  collection nav, minus the Stores entry which lives below). */}
+              <div className="px-5 pt-5 pb-3">
+                <span className="text-[11px] uppercase tracking-[0.18em] text-ink-400">Shop by Category</span>
+              </div>
+              <div className="grid grid-cols-2 gap-2.5 px-5">
+                {NAV.filter((n) => !n.to.includes('/locations')).map((n) => (
+                  <NavLink
+                    key={n.to}
+                    to={n.to}
+                    end={n.end}
+                    onClick={() => setMobileOpen(false)}
+                    className="flex items-center justify-between gap-2 rounded-xl border border-ink-100 px-3.5 py-3 hover:border-brand-300 hover:bg-[#FAF3EE] transition-colors"
+                  >
+                    <span className="text-[13px] leading-tight text-ink-800">{n.label}</span>
+                    <Gem className="h-4 w-4 text-brand-500 shrink-0" />
+                  </NavLink>
+                ))}
+              </div>
+              <Link
+                to="/store/collections"
+                onClick={() => setMobileOpen(false)}
+                className="mt-3 block text-center text-[13px] text-brand-700 underline underline-offset-4"
+              >
+                View all
+              </Link>
+
+              {/* Compact link rows — the Palmonas-style accordion list. */}
+              <div className="mt-4 border-t border-ink-100">
+                {[
+                  { to: '/store/collections', label: 'New Arrivals', end: false },
+                  { to: '/store/locations', label: 'Stores & Services', end: false },
+                  { to: '/store/account', label: signedIn ? 'Your account' : 'Sign in', end: false },
+                  { to: '/store/wishlist', label: `Wishlist${wishlistCount ? ` (${wishlistCount})` : ''}`, end: false },
+                  { to: '/store/cart', label: `Bag${cartCount ? ` (${cartCount})` : ''}`, end: false },
+                  { to: '/store/track', label: 'Track Order', end: false },
+                  { to: '/store/help', label: 'Help', end: false },
+                ].map((r) => (
+                  <Link
+                    key={r.label}
+                    to={r.to}
+                    onClick={() => setMobileOpen(false)}
+                    className="flex items-center justify-between px-5 py-3.5 border-b border-ink-100 text-[15px] text-ink-800 hover:bg-[#FAF3EE]"
+                  >
+                    <span>{r.label}</span>
+                    <ChevronRight className="h-4 w-4 text-ink-300" />
+                  </Link>
+                ))}
+                <a
+                  href="https://wa.me/919876543210"
+                  className="flex items-center justify-between px-5 py-3.5 border-b border-ink-100 text-[15px] text-brand-700 hover:bg-[#FAF3EE]"
                 >
-                  {n.label}
-                </NavLink>
-              ))}
-              <div className="px-5 sm:px-6 py-6 space-y-3 text-sm text-ink-600">
-                <Link to="/store/account" onClick={() => setMobileOpen(false)} className="block">{signedIn ? 'Your account' : 'Sign in'}</Link>
-                <Link to="/store/wishlist" onClick={() => setMobileOpen(false)} className="block">Wishlist{wishlistCount ? ` (${wishlistCount})` : ''}</Link>
-                <Link to="/store/cart" onClick={() => setMobileOpen(false)} className="block">Bag{cartCount ? ` (${cartCount})` : ''}</Link>
-                <Link to="/store/track" onClick={() => setMobileOpen(false)} className="block">Track order</Link>
-                <Link to="/store/help" onClick={() => setMobileOpen(false)} className="block">Help</Link>
-                <a href="https://wa.me/919876543210" className="block text-brand-700">Chat on WhatsApp</a>
+                  <span>Chat on WhatsApp</span>
+                  <ChevronRight className="h-4 w-4 text-brand-300" />
+                </a>
               </div>
             </nav>
             <div className="border-t border-ink-100 px-5 sm:px-6 py-4 bg-ink-25 text-xs font-mono tabular-nums text-ink-600">

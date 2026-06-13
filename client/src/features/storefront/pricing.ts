@@ -118,6 +118,68 @@ export function storefrontTotalPaise(p: PricedProduct, rates?: StorefrontRates):
   return computeStorefrontPrice(p, rates).totalPaise;
 }
 
+// A Season Sale offer carried on a product. Mirrors the server payload.
+// `type` + discount values are the per-item price cut (% / ₹). `bogo` is the
+// sale-wide Buy-1-Get-1 flag that applies to every item in the Season Sale.
+export interface SaleInfo {
+  type: 'PERCENT' | 'FLAT' | 'BOGO';
+  discountBps: number;
+  discountFlatPaise: number;
+  bogo: boolean;
+}
+
+export interface SalePrice {
+  /** Price after the per-item % / ₹ cut, in paise (unchanged when none). */
+  discountedPaise: number;
+  /** True when the original price should be shown struck through. */
+  hasStrike: boolean;
+  /** Badge for the per-item % / ₹ cut, null when there's no price cut. */
+  priceBadge: string | null;
+  /** Sale-wide Buy-1-Get-1 is active for this piece. */
+  bogo: boolean;
+  /** Headline badge to show — BOGO wins the corner over the price cut. */
+  badge: string;
+}
+
+// Resolve a product's Season Sale offer against its live price. Returns null
+// only when there's no offer at all (no per-item cut AND no sale-wide BOGO).
+// The card + PDP use this to render the struck price + badge consistently.
+export function computeSalePrice(
+  originalPaise: number,
+  sale: SaleInfo | null | undefined,
+): SalePrice | null {
+  if (!sale) return null;
+  const bogo = !!sale.bogo;
+  let discountedPaise = originalPaise;
+  let hasStrike = false;
+  let priceBadge: string | null = null;
+
+  if (sale.type === 'FLAT') {
+    const off = Math.min(originalPaise, Math.max(0, sale.discountFlatPaise));
+    if (off > 0) {
+      discountedPaise = originalPaise - off;
+      hasStrike = true;
+      priceBadge = `₹${(off / 100).toLocaleString('en-IN')} OFF`;
+    }
+  } else if (sale.type === 'PERCENT') {
+    const pct = Math.round(sale.discountBps / 100);
+    if (pct > 0) {
+      discountedPaise = Math.round(originalPaise * (1 - sale.discountBps / 10000));
+      hasStrike = true;
+      priceBadge = `FLAT ${pct}% OFF`;
+    }
+  }
+
+  if (!bogo && !priceBadge) return null;
+  return {
+    discountedPaise,
+    hasStrike,
+    priceBadge,
+    bogo,
+    badge: bogo ? 'BUY 1 GET 1 FREE' : priceBadge!,
+  };
+}
+
 // Compact material label for a product-card subtitle. Non-precious pieces are
 // NOT hallmarked and must never be labelled "Silver" just for carrying no carat
 // — stainless-steel "gold tone" fashion jewellery is the common case.

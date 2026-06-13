@@ -42,6 +42,10 @@ model Tenant {
   loyaltyMinRedeemPoints Int @default(500)
   loyaltyMaxRedeemPct    Int @default(20)       // max % of subtotal payable by points
   loyaltyExpiryDays      Int @default(365)
+  // Sale-wide "Buy 1 Get 1 Free" toggle for the Season Sale. When on, every
+  // item in the Season Sale pool advertises B1G1 on the storefront. Per-item
+  // % / ₹ discounts are independent of this flag.
+  seasonSaleBogo         Boolean @default(false)
 
   shops             Shop[]
   users             User[]
@@ -80,6 +84,7 @@ model Tenant {
   invitations       UserInvitation[]
   collections         Collection[]
   itemCollections     ItemCollection[]
+  saleItems           SaleItem[]
   itemDiamonds        ItemDiamond[]
   productSections     ProductSection[]
   coupons             CouponCode[]
@@ -452,6 +457,7 @@ model Item {
   billLines         BillLine[]
   transferLines     TransferLine[]
   collections       ItemCollection[]
+  saleItem          SaleItem?
   diamonds          ItemDiamond[]
   // Reverse side of Product.linkedItemId. At most one storefront Product
   // mirrors a given inventory Item (one-to-one), so this is `Product?`.
@@ -500,6 +506,41 @@ model ItemCollection {
   @@index([collectionId])
 }
 
+// Season Sale membership. One row per item currently on sale — a single,
+// tenant-wide "Season Sales" pool (the storefront renders one Season Sales
+// section). `discountBps` is the percentage off in basis points (5% = 500),
+// applied to the item's live storefront price. Item membership is the source
+// of truth — one inventory record, never a stock duplicate. Mirrors
+// ItemCollection but carries the per-item discount.
+// Offer kind for a Season Sale item:
+//   PERCENT — % off the live price (discountBps)
+//   FLAT    — flat ₹ off the live price (discountFlatPaise)
+//   BOGO    — Buy 1 Get 1 free (no per-unit price change; badge only)
+enum SaleDiscountType {
+  PERCENT
+  FLAT
+  BOGO
+}
+
+model SaleItem {
+  itemId      String           @id
+  tenantId    String
+  discountType SaleDiscountType @default(PERCENT)
+  // Percentage discount off the live storefront price, in basis points
+  // (5% = 500, 12.5% = 1250). Used when discountType = PERCENT.
+  discountBps Int      @default(0)
+  // Flat amount off the live storefront price, in paise. Used when
+  // discountType = FLAT (e.g. ₹1,000 off = 100000).
+  discountFlatPaise Int @default(0)
+  sortOrder   Int      @default(0)
+  createdAt   DateTime @default(now())
+
+  item   Item   @relation(fields: [itemId], references: [id], onDelete: Cascade)
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId])
+}
+
 // One diamond/stone line on an item (M1 FR#4, M2 §1). An item may have several
 // of these — different shapes/grades/carats. costPaise is the diamond's
 // purchase cost, booked separately from the metal cost (Item.costPricePaise).
@@ -515,7 +556,15 @@ model ItemDiamond {
   clarity         String?
   color           String?
   count           Int     @default(1)
+  // Total purchase cost for all stones in this row (caratWeight × count × rate + GST).
   costPaise       Int     @default(0)
+  // Total selling price for all stones in this row (same formula with sell rate).
+  sellingPricePaise Int?
+  // Per-carat rates entered in the purchase/selling rate calculators, in paise
+  // (₹/ct). Persisted so the calculator pre-fills on re-edit. Null when the
+  // admin typed the totals directly instead of using the calculator.
+  purchaseRatePaise Int?
+  sellRatePaise     Int?
 
   item   Item   @relation(fields: [itemId], references: [id], onDelete: Cascade)
   tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
@@ -684,6 +733,24 @@ model PurchaseOrderItem {
   // when building the PO and applied to the Item created on receive; null =
   // inherit the category's default making charge at bill time.
   makingChargeBps Int?
+  // Fixed selling price (paise) captured on the PO line; copied onto the Item
+  // when the PO is received so pricing is set at stock-intake time.
+  sellingPricePaise Int?
+  // When true, the linked storefront Product is published on receive (if one exists).
+  publishToStorefront Boolean @default(false)
+  // Full item-detail fields — mirrors ItemInput so new pieces can be fully
+  // described at PO creation time and arrive in inventory ready to publish.
+  name        String?
+  description String?
+  images      Json    @default("[]")
+  hallmarkStatus   String  @default("PENDING")
+  hallmarkRef      String?
+  stoneWeightMg    Int?
+  makingChargeMode String?
+  makingChargePerGramPaise Int?
+  isSerialized     Boolean @default(true)
+  collectionIds    Json    @default("[]")
+  diamondsJson     Json    @default("[]")
   // qty > 1 → lot item (isSerialized=false, quantityOnHand=quantity) on receive.
   quantity  Int     @default(1)
 
@@ -1375,6 +1442,10 @@ model Order {
   customerId            String
   status                OrderStatus   @default(PENDING)
   subtotalPaise         Int
+  // Sale-wide Buy-1-Get-1 discount — the value of the free units, deducted
+  // before coupon/loyalty. An order-level discount (OrderItem unit prices stay
+  // full) mirroring couponDiscountPaise / loyaltyDiscountPaise.
+  bogoDiscountPaise     Int           @default(0)
   shippingPaise         Int           @default(0)
   taxPaise              Int           @default(0)
   totalPaise            Int

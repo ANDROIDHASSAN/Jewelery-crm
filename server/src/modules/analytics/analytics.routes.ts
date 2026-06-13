@@ -20,7 +20,7 @@
 
 import { Router } from 'express';
 import { z } from 'zod';
-import { Prisma } from '@prisma/client';
+import { Prisma, OrderStatus, PaymentStatus } from '@prisma/client';
 import { prisma } from '../../lib/prisma.js';
 import { sumPaise } from '../../lib/money.js';
 import { readGoldRatePaise } from '../../lib/redis.js';
@@ -79,10 +79,22 @@ async function buildDashboardSummary(shopId: string | undefined): Promise<unknow
   // SQL-side aggregates. Was the slowest part of the dashboard for tenants
   // with >5k bills; now it's a single COUNT+SUM per slice instead of
   // hauling thousands of paise integers across the wire.
+  // E-commerce orders are revenue too, but they aren't POS bills and aren't
+  // shop-scoped. Every other sales view (daily-sales, FY report) folds paid
+  // online orders into the totals, so the dashboard must too — otherwise a
+  // store selling only online shows ₹0 today / ₹0 across the 7-day trend.
+  // We key online revenue off `paidAt` (money-in), matching daily-sales.
+  const ecomPaidWhere = {
+    paymentStatus: PaymentStatus.PAID,
+    status: { notIn: [OrderStatus.CANCELLED, OrderStatus.RETURNED] },
+  };
   const [
     todayAgg,
     yesterdayAgg,
     sevenDayBills,
+    todayOrderAgg,
+    yesterdayOrderAgg,
+    sevenDayOrders,
     openLeads,
     leadsToday,
     itemAgg,
@@ -104,6 +116,20 @@ async function buildDashboardSummary(shopId: string | undefined): Promise<unknow
     prisma.bill.findMany({
       where: { ...shopWhere, createdAt: { gte: sevenDaysAgo, lte: now } },
       select: { totalPaise: true, createdAt: true },
+    }),
+    prisma.order.aggregate({
+      where: { ...ecomPaidWhere, paidAt: { gte: startOfToday, lte: now } },
+      _sum: { totalPaise: true },
+      _count: { _all: true },
+    }),
+    prisma.order.aggregate({
+      where: { ...ecomPaidWhere, paidAt: { gte: startOfYesterday, lt: startOfToday } },
+      _sum: { totalPaise: true },
+      _count: { _all: true },
+    }),
+    prisma.order.findMany({
+      where: { ...ecomPaidWhere, paidAt: { gte: sevenDaysAgo, lte: now } },
+      select: { totalPaise: true, paidAt: true },
     }),
     prisma.lead.count({ where: { status: { in: ['NEW', 'CONTACTED', 'INTERESTED', 'NEGOTIATION'] } } }),
     prisma.lead.count({ where: { createdAt: { gte: startOfToday } } }),
@@ -142,6 +168,12 @@ async function buildDashboardSummary(shopId: string | undefined): Promise<unknow
     const key = b.createdAt.toISOString().slice(0, 10);
     buckets.set(key, (buckets.get(key) ?? 0) + b.totalPaise);
   }
+  // Fold paid online orders into the same day buckets (keyed off paidAt).
+  for (const o of sevenDayOrders) {
+    if (!o.paidAt) continue;
+    const key = o.paidAt.toISOString().slice(0, 10);
+    buckets.set(key, (buckets.get(key) ?? 0) + o.totalPaise);
+  }
   const sevenDaySeries = Array.from(buckets.entries()).map(([date, revenuePaise]) => ({
     date,
     revenuePaise,
@@ -172,8 +204,14 @@ async function buildDashboardSummary(shopId: string | undefined): Promise<unknow
   }
 
   return {
-    today: { revenuePaise: todayAgg._sum.totalPaise ?? 0, billCount: todayAgg._count._all },
-    yesterday: { revenuePaise: yesterdayAgg._sum.totalPaise ?? 0, billCount: yesterdayAgg._count._all },
+    today: {
+      revenuePaise: (todayAgg._sum.totalPaise ?? 0) + (todayOrderAgg._sum.totalPaise ?? 0),
+      billCount: todayAgg._count._all + todayOrderAgg._count._all,
+    },
+    yesterday: {
+      revenuePaise: (yesterdayAgg._sum.totalPaise ?? 0) + (yesterdayOrderAgg._sum.totalPaise ?? 0),
+      billCount: yesterdayAgg._count._all + yesterdayOrderAgg._count._all,
+    },
     leads: { open: openLeads, today: leadsToday },
     stock: { valuationPaise: stockValuationPaise, itemCount },
     sevenDay: sevenDaySeries,

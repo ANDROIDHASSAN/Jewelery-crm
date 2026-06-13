@@ -23,6 +23,7 @@ import {
   productMetaLabel,
   storefrontTotalPaise,
   isNonPrecious,
+  computeSalePrice,
 } from '@/features/storefront/pricing';
 import { openRazorpayCheckout } from '@/lib/razorpay';
 import { StarRating } from './OrderReviewSheet';
@@ -184,6 +185,9 @@ export function ProductDetailPage(): JSX.Element {
   const subtotal = gold + making + product.stoneChargePaise;
   const gst = Math.round((subtotal * GST_BPS) / 10000);
   const total = subtotal + gst;
+  // Season Sale offer (% off / ₹ off / BOGO) — drives the struck price + badge.
+  const offer = computeSalePrice(total, product.sale);
+  const salePrice = offer?.discountedPaise ?? total;
 
   // Human label for the pill — "22K", "18K", "Silver", "Stainless Steel", "Pt 950", or the
   // exact carat for custom alloys.
@@ -260,9 +264,19 @@ export function ProductDetailPage(): JSX.Element {
             <p className="mt-2 text-sm text-ink-600">{weightG.toFixed(2)} g · {purity}</p>
           </header>
 
-          <div className="flex items-baseline gap-3">
-            <Money paise={total} className="font-mono text-2xl sm:text-[32px] text-ink-900 tabular-nums" />
-            <span className="text-xs text-ink-500">Incl. of all taxes</span>
+          <div className="space-y-1.5">
+            <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+              <Money paise={salePrice} className="font-mono text-2xl sm:text-[32px] text-ink-900 tabular-nums" />
+              {offer?.hasStrike && (
+                <Money paise={total} className="font-mono text-base sm:text-lg text-ink-400 tabular-nums line-through" />
+              )}
+              <span className="text-xs text-ink-500">Incl. of all taxes</span>
+            </div>
+            {offer && (
+              <span className="inline-flex items-center bg-brand-600 text-ink-0 text-[11px] font-semibold uppercase tracking-[0.1em] px-2.5 py-1 rounded-sm">
+                {offer.badge}
+              </span>
+            )}
           </div>
 
           {/* Today's rate pill — only shown for gold/silver items with a live
@@ -380,8 +394,8 @@ export function ProductDetailPage(): JSX.Element {
                     productId: product.id,
                     name: product.name,
                     weight: `${weightG.toFixed(2)} g · ${purity}`,
-                    priceLabel: `₹${(total / 100).toLocaleString('en-IN')}`,
-                    pricePaise: subtotal,
+                    priceLabel: `₹${(salePrice / 100).toLocaleString('en-IN')}`,
+                    pricePaise: offer ? Math.round(salePrice / 1.03) : subtotal,
                     size: selectedSize?.label,
                     img: product.images[0] ?? '',
                     qty,
@@ -412,8 +426,8 @@ export function ProductDetailPage(): JSX.Element {
                     productId: product.id,
                     name: product.name,
                     weight: `${weightG.toFixed(2)} g · ${purity}`,
-                    priceLabel: `₹${(total / 100).toLocaleString('en-IN')}`,
-                    pricePaise: subtotal,
+                    priceLabel: `₹${(salePrice / 100).toLocaleString('en-IN')}`,
+                    pricePaise: offer ? Math.round(salePrice / 1.03) : subtotal,
                     size: selectedSize?.label,
                     img: product.images[0] ?? '',
                     qty,
@@ -440,8 +454,8 @@ export function ProductDetailPage(): JSX.Element {
                     productId: product.id,
                     name: product.name,
                     weight: `${weightG.toFixed(2)} g · ${purity}`,
-                    priceLabel: `₹${(total / 100).toLocaleString('en-IN')}`,
-                    pricePaise: subtotal,
+                    priceLabel: `₹${(salePrice / 100).toLocaleString('en-IN')}`,
+                    pricePaise: offer ? Math.round(salePrice / 1.03) : subtotal,
                     img: product.images[0] ?? '',
                   });
                   toast.success(wishlisted ? 'Removed from wishlist' : 'Saved to wishlist');
@@ -592,10 +606,40 @@ export function ProductDetailPage(): JSX.Element {
                   )}
                 </div>
 
+                {/* Diamond / stone groups — one block per stone group, mirroring
+                    the metal block: carat weight · count · final value. The
+                    values are already part of stoneChargePaise (and the total). */}
+                {(product.diamonds ?? []).map((d, i) => {
+                  const label = `${d.shape ? d.shape.charAt(0) + d.shape.slice(1).toLowerCase() + ' ' : ''}Diamond`;
+                  return (
+                    <div key={i} className="border-t border-ink-100 pt-3">
+                      <p className="font-medium text-ink-900 mb-2">{label}</p>
+                      <div className="grid grid-cols-3 gap-2">
+                        <div>
+                          <span className="block text-ink-800 font-mono tabular-nums">
+                            {(d.caratWeightX100 / 100).toFixed(3)} ct
+                          </span>
+                          <span className="text-xs text-ink-500">Weight</span>
+                        </div>
+                        <div>
+                          <span className="block text-ink-800 font-mono tabular-nums">{d.count}</span>
+                          <span className="text-xs text-ink-500">Count</span>
+                        </div>
+                        <div className="text-right">
+                          <Money paise={d.valuePaise} className="block text-ink-800 font-mono tabular-nums" />
+                          <span className="text-xs text-ink-500">Final value</span>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+
                 {/* Charges & tax */}
                 <div className="border-t border-ink-100 pt-3 space-y-2">
                   {making > 0 && <Row label="Making charges" value={<Money paise={making} />} />}
-                  {product.stoneChargePaise > 0 && (
+                  {/* Legacy fallback: products with a manual stone charge but no
+                      detailed diamond groups still show a single line. */}
+                  {(product.diamonds ?? []).length === 0 && product.stoneChargePaise > 0 && (
                     <Row label="Stone / diamond charges" value={<Money paise={product.stoneChargePaise} />} />
                   )}
                   <Row label="GST (3%)" value={<Money paise={gst} />} />

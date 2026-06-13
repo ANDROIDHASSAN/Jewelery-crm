@@ -33,6 +33,25 @@ export interface PublicProduct {
   fixedPricePaise: number | null;
   stoneChargePaise: number;
   /**
+   * Customer-facing diamond value in paise (Σ of the linked item's stone-group
+   * selling prices). Already included in `stoneChargePaise` (and therefore the
+   * total) — surfaced separately so the PDP can show a labelled "Diamond value"
+   * line in the price breakup. 0 for pieces without priced diamonds.
+   */
+  diamondValuePaise?: number;
+  /**
+   * Per-stone-group detail for the PDP price breakup — carat weight, count and
+   * customer-facing value (the stone's selling price). Only priced groups are
+   * included; the internal purchase cost is never exposed. Their values sum to
+   * `diamondValuePaise` (and are part of `stoneChargePaise` / the total).
+   */
+  diamonds?: { shape: string | null; caratWeightX100: number; count: number; valuePaise: number }[];
+  /**
+   * Season Sale offer on this piece (PERCENT / FLAT / BOGO), or null when not on
+   * sale. Drives the struck price + offer badge on cards and the PDP.
+   */
+  sale?: { type: 'PERCENT' | 'FLAT' | 'BOGO'; discountBps: number; discountFlatPaise: number; bogo: boolean } | null;
+  /**
    * Optional size variants `{ label, weightMg }`. When non-empty the PDP shows
    * a size selector and prices the piece off the SELECTED size's weight at the
    * live metal rate (fixedPricePaise is ignored for sized pieces). Null/empty =
@@ -57,6 +76,11 @@ export interface PublicProduct {
    * legacy products without a linked Item.
    */
   inStock: boolean;
+}
+
+/** A published product on sale — a PublicProduct whose `sale` offer is set. */
+export interface PublicSaleProduct extends PublicProduct {
+  sale: { type: 'PERCENT' | 'FLAT' | 'BOGO'; discountBps: number; discountFlatPaise: number; bogo: boolean };
 }
 
 export interface PublicCategory {
@@ -154,6 +178,13 @@ export const storefrontApi = baseApi.injectEndpoints({
       }),
       transformResponse: (raw: { data: PublicProduct[] }) => raw.data,
       providesTags: [{ type: 'Product', id: 'PUBLIC' }],
+    }),
+    // Season Sale feed — published products on sale, each carrying its discount
+    // (basis points). Drives the storefront "Season Sales" section.
+    getPublicSaleItems: build.query<PublicSaleProduct[], void>({
+      query: () => ({ url: '/website/sale-items' }),
+      transformResponse: (raw: { data: PublicSaleProduct[] }) => raw.data,
+      providesTags: [{ type: 'Product', id: 'SALE' }],
     }),
     getPublicCollections: build.query<PublicCategory[], void>({
       query: () => ({ url: '/website/collections' }),
@@ -440,6 +471,7 @@ export const {
   useGetAdminStorefrontQuery,
   useUpdateStorefrontMutation,
   useGetPublicProductsQuery,
+  useGetPublicSaleItemsQuery,
   useGetPublicCollectionsQuery,
   useGetCollectionItemsQuery,
   useCreateEnquiryMutation,

@@ -6,6 +6,8 @@ import type {
   ApiOne,
   Category,
   Collection,
+  SaleItemRow,
+  SaleDiscountType,
   Vendor,
   VendorInput,
   PurchaseOrderCreate,
@@ -247,6 +249,42 @@ export const inventoryApi = baseApi.injectEndpoints({
       query: ({ collectionId, itemId }) => ({ url: `/inventory/collections/${collectionId}/items/${itemId}`, method: 'DELETE' }),
       invalidatesTags: (_, __, { collectionId }) => [{ type: 'Item', id: collectionId }],
     }),
+    // Sale-wide config — currently the Buy-1-Get-1 toggle (applies to all items).
+    getSaleConfig: b.query<ApiOne<{ bogoEnabled: boolean }>, void>({
+      query: () => '/inventory/sale-config',
+      providesTags: [{ type: 'SaleItem', id: 'CONFIG' }],
+    }),
+    updateSaleConfig: b.mutation<ApiOne<{ bogoEnabled: boolean }>, { bogoEnabled: boolean }>({
+      query: (body) => ({ url: '/inventory/sale-config', method: 'PUT', body }),
+      invalidatesTags: [{ type: 'SaleItem', id: 'CONFIG' }],
+    }),
+    // Season Sale items — single tenant-wide sale pool with a per-item discount.
+    getSaleItems: b.query<ApiList<SaleItemRow>, void>({
+      query: () => '/inventory/sale-items',
+      providesTags: [{ type: 'SaleItem', id: 'LIST' }],
+    }),
+    addItemsToSale: b.mutation<
+      ApiOne<{ message: string; added: number; skipped: number }>,
+      { itemIds: string[]; discountType?: SaleDiscountType; discountBps?: number; discountFlatPaise?: number }
+    >({
+      query: (body) => ({ url: '/inventory/sale-items', method: 'POST', body }),
+      invalidatesTags: [{ type: 'SaleItem', id: 'LIST' }],
+    }),
+    updateSaleItemDiscount: b.mutation<
+      ApiOne<{ itemId: string }>,
+      { itemId: string; discountType: SaleDiscountType; discountBps: number; discountFlatPaise: number }
+    >({
+      query: ({ itemId, ...offer }) => ({
+        url: `/inventory/sale-items/${itemId}`,
+        method: 'PATCH',
+        body: offer,
+      }),
+      invalidatesTags: [{ type: 'SaleItem', id: 'LIST' }],
+    }),
+    removeItemFromSale: b.mutation<void, string>({
+      query: (itemId) => ({ url: `/inventory/sale-items/${itemId}`, method: 'DELETE' }),
+      invalidatesTags: [{ type: 'SaleItem', id: 'LIST' }],
+    }),
     // Suggest the next SKU ([CODE]-[seq]) for a category — prefills the form.
     getSkuSuggestion: b.query<ApiOne<{ sku: string; code: string | null }>, string>({
       query: (categoryId) => ({ url: '/inventory/sku-suggestion', params: { categoryId } }),
@@ -359,6 +397,12 @@ export const {
   useListCollectionItemsQuery,
   useAddItemsToCollectionMutation,
   useRemoveItemFromCollectionMutation,
+  useGetSaleConfigQuery,
+  useUpdateSaleConfigMutation,
+  useGetSaleItemsQuery,
+  useAddItemsToSaleMutation,
+  useUpdateSaleItemDiscountMutation,
+  useRemoveItemFromSaleMutation,
   useLazyGetSkuSuggestionQuery,
   useUpdateCategoryMakingChargeMutation,
   useGetValuationQuery,

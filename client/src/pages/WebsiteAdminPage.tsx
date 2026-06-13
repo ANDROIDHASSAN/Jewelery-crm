@@ -493,32 +493,41 @@ export function WebsiteAdminPage(): JSX.Element {
           )}
 
           {tab === 'rates' && (
-            <Card title="Today's gold rates" desc="Shown in the announcement bar, hero strip, and PDP.">
+            <Card title="Today's gold rates" desc="Shown in the announcement bar, hero strip, and PDP. A value entered here overrides the live market feed — leave a field blank to fall back to today's live rate.">
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <Field label="22K">
+                <Field label="24K" hint="Blank = use live feed.">
+                  <Input
+                    value={content.rates.g24 ?? ''}
+                    onChange={(e) => dispatch(updateRates({ g24: e.target.value }))}
+                    onBlur={notify}
+                  />
+                </Field>
+                <Field label="22K" hint="Blank = use live feed.">
                   <Input
                     value={content.rates.g22}
                     onChange={(e) => dispatch(updateRates({ g22: e.target.value }))}
                     onBlur={notify}
                   />
                 </Field>
-                <Field label="18K">
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <Field label="18K" hint="Blank = use live feed.">
                   <Input
                     value={content.rates.g18}
                     onChange={(e) => dispatch(updateRates({ g18: e.target.value }))}
                     onBlur={notify}
                   />
                 </Field>
-              </div>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <Field label="Silver">
+                <Field label="Silver" hint="Blank = use live feed.">
                   <Input
                     value={content.rates.silver}
                     onChange={(e) => dispatch(updateRates({ silver: e.target.value }))}
                     onBlur={notify}
                   />
                 </Field>
-                <Field label="Updated at" hint="Free text — e.g. '14 May, 11:02 AM IST'.">
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <Field label="Updated at" hint="Free text — e.g. '14 May, 11:02 AM IST'. Blank = show the live feed's timestamp.">
                   <Input
                     value={content.rates.updatedAt}
                     onChange={(e) => dispatch(updateRates({ updatedAt: e.target.value }))}
@@ -527,7 +536,7 @@ export function WebsiteAdminPage(): JSX.Element {
                 </Field>
               </div>
               <p className="text-xs text-ink-500">
-                In production these will be wired to the MCX worker (see <code className="text-ink-700">server/src/workers/gold-rate.ts</code>).
+                Any field left blank is filled from the live GoldAPI feed (see <code className="text-ink-700">server/src/lib/gold-rate.ts</code>). Product prices always use the live feed, never these display values.
               </p>
             </Card>
           )}

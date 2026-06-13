@@ -25,11 +25,14 @@ export const DEFAULT_STOREFRONT_CONTENT = {
     image:
       'https://images.unsplash.com/photo-1599643477877-530eb83abc8e?auto=format&fit=crop&w=1920&q=85',
   },
+  // Blank by default so a fresh storefront shows the live GoldAPI feed; an
+  // editor can type a manual rate in the CMS to override the feed per purity.
   rates: {
-    g22: '₹6,420/g',
-    g18: '₹5,255/g',
-    silver: '₹84.50/g',
-    updatedAt: '14 May, 11:02 AM IST',
+    g24: '',
+    g22: '',
+    g18: '',
+    silver: '',
+    updatedAt: '',
   },
   shopByChips: [
     { label: '22K Gold', href: '/store/collections/22k' },

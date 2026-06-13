@@ -5,6 +5,8 @@ import { baseApi } from '@/app/store';
 
 export interface PricingBreakdown {
   subtotalPaise: number;
+  /** Sale-wide Buy-1-Get-1 discount (value of the free units), before coupon. */
+  bogoDiscountPaise: number;
   couponDiscountPaise: number;
   loyaltyDiscountPaise: number;
   shippingPaise: number;

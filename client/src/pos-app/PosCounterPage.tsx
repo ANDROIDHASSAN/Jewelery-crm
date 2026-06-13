@@ -53,6 +53,7 @@ import {
   useGetGoldRateQuery,
   useLazyFindCustomerQuery,
   useCreateBillMutation,
+  useLazyFindItemByBarcodeQuery,
 } from '@/features/pos/posApi';
 import { useGetOpenSessionQuery, useParkBillMutation } from './posFeaturesApi';
 import { OpenRegisterGate } from './OpenRegisterGate';
@@ -190,6 +191,7 @@ function PosBillingScreen(): JSX.Element {
   const { data: ratesRes } = useGetGoldRateQuery(undefined, { pollingInterval: 60_000 });
   const { data: sessionData } = useGetOpenSessionQuery(shopId, { skip: !shopId });
   const [findCustomer, { isFetching: lookingUp }] = useLazyFindCustomerQuery();
+  const [findItemByBarcode] = useLazyFindItemByBarcodeQuery();
   const [createBill, { isLoading: charging }] = useCreateBillMutation();
   const [parkBill, { isLoading: parking }] = useParkBillMutation();
   const [createItem, { isLoading: addingItem }] = useCreateItemMutation();
@@ -445,6 +447,11 @@ function PosBillingScreen(): JSX.Element {
     }
   }, [items, rates]);
 
+  // Auto-focus search on mount so the scanner can type immediately.
+  useEffect(() => {
+    searchInputRef.current?.focus();
+  }, []);
+
   // Focus search box with F2 key
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -457,23 +464,40 @@ function PosBillingScreen(): JSX.Element {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, []);
 
-  const handleSearchSubmit = useCallback(() => {
+  const handleSearchSubmit = useCallback(async () => {
     const q = search.trim().toLowerCase();
     if (!q) return;
 
-    // Find an item that has an exact SKU or barcodeData match in stock.
-    const exactMatch = inStock.find(
+    // 1. Try client-side cache first (fast path, covers the loaded 100 items).
+    const localMatch = inStock.find(
       (it) => it.sku.toLowerCase() === q || it.barcodeData.toLowerCase() === q
     );
 
-    if (exactMatch) {
-      addItem(exactMatch);
-      setSearch(''); // Clear search input on successful scan/match!
-      toast.success(`Scanned and added ${exactMatch.sku}`);
-    } else {
-      toast.error(`No in-stock item found matching "${search}"`);
+    if (localMatch) {
+      addItem(localMatch);
+      setSearch('');
+      searchInputRef.current?.focus();
+      toast.success(`Added ${localMatch.sku}`);
+      return;
     }
-  }, [search, inStock, addItem]);
+
+    // 2. API fallback — handles items beyond the local limit or exact barcode lookup.
+    try {
+      const res = await findItemByBarcode({ code: search.trim() }).unwrap();
+      if (res.data) {
+        addItem(res.data);
+        setSearch('');
+        searchInputRef.current?.focus();
+        toast.success(`Added ${res.data.sku}`);
+      } else {
+        toast.error(`No in-stock item found for "${search}"`);
+        searchInputRef.current?.select();
+      }
+    } catch {
+      toast.error(`No in-stock item found for "${search}"`);
+      searchInputRef.current?.select();
+    }
+  }, [search, inStock, addItem, findItemByBarcode]);
 
   function removeLine(id: string): void {
     setLines((curr) => curr.filter((l) => l.id !== id));

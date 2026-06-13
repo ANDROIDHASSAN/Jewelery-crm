@@ -68,6 +68,19 @@ function productPricingFromItem(item: {
   };
 }
 
+// Sum of the customer-facing diamond value for an item, in paise — the basis
+// for the storefront Product.stoneChargePaise so diamond pieces are priced (and
+// shown in the PDP "Diamond value" breakup) for what the stones are worth.
+// Uses each stone group's selling price; rows without one contribute 0 (we never
+// expose the internal costPaise as a customer price).
+async function diamondValuePaiseForItem(itemId: string): Promise<number> {
+  const rows = await prisma.itemDiamond.findMany({
+    where: { itemId },
+    select: { sellingPricePaise: true },
+  });
+  return rows.reduce((sum, d) => sum + (d.sellingPricePaise ?? 0), 0);
+}
+
 // Create a storefront Product mirroring an inventory Item, published. Requires
 // a display name + at least one image (ProductInputSchema enforces min(1));
 // callers must gate on that before calling. Resolves a unique per-tenant slug,
@@ -80,6 +93,8 @@ async function createProductMirror(tenantId: string, item: ItemForMirror): Promi
   });
   const slug = existing ? `${baseSlug}-${item.id.slice(-6).toLowerCase()}` : baseSlug;
   const pricing = productPricingFromItem(item);
+  // Diamond pieces carry their stone value into the storefront price + breakup.
+  const stoneChargePaise = await diamondValuePaiseForItem(item.id);
   await prisma.product.create({
     data: {
       tenantId,
@@ -95,7 +110,7 @@ async function createProductMirror(tenantId: string, item: ItemForMirror): Promi
       makingChargeBps: pricing.makingChargeBps,
       basePricePaise: pricing.basePricePaise,
       fixedPricePaise: pricing.fixedPricePaise,
-      stoneChargePaise: 0,
+      stoneChargePaise,
       isPublished: true,
     },
   });
@@ -193,6 +208,9 @@ export async function createItem(input: ItemInput, performedByUserId?: string) {
                 color: d.color ?? null,
                 count: d.count ?? 1,
                 costPaise: d.costPaise ?? 0,
+                sellingPricePaise: d.sellingPricePaise ?? null,
+                purchaseRatePaise: d.purchaseRatePaise ?? null,
+                sellRatePaise: d.sellRatePaise ?? null,
               })),
             },
           }
@@ -263,6 +281,9 @@ export async function updateItem(id: string, patch: Partial<ItemInput>, performe
                 color: d.color ?? null,
                 count: d.count ?? 1,
                 costPaise: d.costPaise ?? 0,
+                sellingPricePaise: d.sellingPricePaise ?? null,
+                purchaseRatePaise: d.purchaseRatePaise ?? null,
+                sellRatePaise: d.sellRatePaise ?? null,
               })),
             }),
           ]
@@ -288,6 +309,11 @@ export async function updateItem(id: string, patch: Partial<ItemInput>, performe
   // include those fields hit the Product row, so silent edits to private
   // fields (cost price, hallmark ref) don't churn the public catalog.
   const mirrorPatch: Prisma.ProductUpdateInput = {};
+  // Diamonds changed → re-derive the storefront stone value so the public price
+  // and the PDP "Diamond value" breakup track the new stones.
+  if (diamonds !== undefined) {
+    mirrorPatch.stoneChargePaise = await diamondValuePaiseForItem(id);
+  }
   if (itemPatch.name !== undefined && itemPatch.name !== null) mirrorPatch.name = itemPatch.name;
   if (itemPatch.description !== undefined && itemPatch.description !== null) {
     mirrorPatch.descriptionMd = itemPatch.description;
@@ -1289,7 +1315,21 @@ export async function createPurchaseOrder(input: PurchaseOrderCreate) {
           purity: i.purity,
           costPaise: i.costPaise,
           makingChargeBps: i.makingChargeBps ?? null,
+          sellingPricePaise: i.sellingPricePaise ?? null,
+          publishToStorefront: i.publishToStorefront ?? false,
           quantity: i.quantity ?? 1,
+          // Full item-detail fields
+          name: i.name ?? null,
+          description: i.description ?? null,
+          images: (i.images ?? []) as Prisma.InputJsonValue,
+          hallmarkStatus: i.hallmarkStatus ?? 'PENDING',
+          hallmarkRef: i.hallmarkRef ?? null,
+          stoneWeightMg: i.stoneWeightMg ?? null,
+          makingChargeMode: i.makingChargeMode ?? null,
+          makingChargePerGramPaise: i.makingChargePerGramPaise ?? null,
+          isSerialized: i.isSerialized ?? true,
+          collectionIds: (i.collectionIds ?? []) as Prisma.InputJsonValue,
+          diamondsJson: (i.diamonds ?? []) as Prisma.InputJsonValue,
         })),
       },
     },
@@ -1345,6 +1385,8 @@ export async function receivePurchaseOrder(
             // Upgrade to lot if receiving multiple units of a previously-serialized piece
             isSerialized: qty > 1 ? false : existing.isSerialized,
             status: 'IN_STOCK',
+            // Apply selling price from PO line if provided
+            ...(line.sellingPricePaise != null ? { sellingPricePaise: line.sellingPricePaise } : {}),
           },
         });
         await tx.itemMovement.create({
@@ -1358,9 +1400,24 @@ export async function receivePurchaseOrder(
             performedByUserId: userId ?? null,
           },
         });
+        // Publish to storefront if requested and a linked Product exists
+        if (line.publishToStorefront) {
+          const linkedProduct = await tx.product.findFirst({
+            where: { linkedItemId: existing.id },
+            select: { id: true },
+          });
+          if (linkedProduct) {
+            await tx.product.update({ where: { id: linkedProduct.id }, data: { isPublished: true } });
+          }
+        }
       } else {
         // Item doesn't exist yet — create it fresh with the original SKU.
-        const isLot = qty > 1;
+        // A lot if qty > 1 OR if the PO line explicitly marks it as non-serialized.
+        const isLot = qty > 1 || !(line.isSerialized ?? true);
+        // Cast JSON columns to typed arrays (stored as Prisma.JsonValue).
+        const itemImages = Array.isArray(line.images) ? (line.images as string[]) : [];
+        const rawCollectionIds = Array.isArray(line.collectionIds) ? (line.collectionIds as string[]) : [];
+        const rawDiamonds = Array.isArray(line.diamondsJson) ? line.diamondsJson : [];
         const item = await tx.item.create({
           data: {
             tenantId,
@@ -1368,16 +1425,49 @@ export async function receivePurchaseOrder(
             categoryId: line.categoryId ?? categoryId,
             sku,
             barcodeData: sku,
+            name: line.name ?? null,
+            description: line.description ?? null,
+            images: itemImages,
             weightMg: line.weightMg,
             purityCaratX100: line.purity,
+            stoneWeightMg: line.stoneWeightMg ?? null,
             costPricePaise: line.costPaise,
             // Carry the PO line's making-charge override onto the new item
             // (null = inherit the category default at bill time).
             makingChargeBps: line.makingChargeBps ?? null,
-            hallmarkStatus: 'PENDING',
+            makingChargeMode: (line.makingChargeMode as 'PERCENTAGE' | 'PER_GRAM' | null) ?? null,
+            makingChargePerGramPaise: line.makingChargePerGramPaise ?? null,
+            // Fixed selling price from the PO line, if set at ordering time.
+            sellingPricePaise: line.sellingPricePaise ?? null,
+            hallmarkStatus: (line.hallmarkStatus ?? 'PENDING') as 'PENDING' | 'SUBMITTED' | 'CERTIFIED' | 'EXEMPT',
+            hallmarkRef: line.hallmarkRef ?? null,
             status: 'IN_STOCK',
             isSerialized: !isLot,
             quantityOnHand: qty,
+            // Diamonds (4Cs) recorded at PO time
+            ...(rawDiamonds.length > 0 ? {
+              diamonds: {
+                create: (rawDiamonds as Array<Record<string, unknown>>).map((d) => ({
+                  tenantId,
+                  shape: (d.shape as string | null) ?? null,
+                  caratWeightX100: (d.caratWeightX100 as number) ?? 0,
+                  cut: (d.cut as string | null) ?? null,
+                  clarity: (d.clarity as string | null) ?? null,
+                  color: (d.color as string | null) ?? null,
+                  count: (d.count as number) ?? 1,
+                  costPaise: (d.costPaise as number) ?? 0,
+                  sellingPricePaise: (d.sellingPricePaise as number | null) ?? null,
+                  purchaseRatePaise: (d.purchaseRatePaise as number | null) ?? null,
+                  sellRatePaise: (d.sellRatePaise as number | null) ?? null,
+                })),
+              },
+            } : {}),
+            // Collection memberships recorded at PO time
+            ...(rawCollectionIds.length > 0 ? {
+              collections: {
+                create: rawCollectionIds.map((cid: string) => ({ tenantId, collectionId: cid })),
+              },
+            } : {}),
           },
         });
         await tx.itemMovement.create({
@@ -1391,6 +1481,26 @@ export async function receivePurchaseOrder(
             performedByUserId: userId ?? null,
           },
         });
+        // Publish to storefront if requested.
+        // If item has a name + images, create a Product mirror and publish it.
+        // Otherwise find an existing linked Product and publish it.
+        if (line.publishToStorefront) {
+          try {
+            if (item.name && item.images.length > 0) {
+              await createProductMirror(tenantId, item);
+            } else {
+              const linkedProduct = await tx.product.findFirst({
+                where: { linkedItemId: item.id },
+                select: { id: true },
+              });
+              if (linkedProduct) {
+                await tx.product.update({ where: { id: linkedProduct.id }, data: { isPublished: true } });
+              }
+            }
+          } catch (err) {
+            console.error('[receivePurchaseOrder] publish failed for item', sku, err);
+          }
+        }
       }
     }
     return tx.purchaseOrder.update({

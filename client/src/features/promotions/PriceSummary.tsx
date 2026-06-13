@@ -41,6 +41,14 @@ export function PriceSummary({ pricing, fallbackSubtotalPaise, fallbackShippingP
     <div className="space-y-2 text-sm">
       <Row label="Subtotal" value={<Money paise={pricing.subtotalPaise} />} />
 
+      {(pricing.bogoDiscountPaise ?? 0) > 0 && (
+        <Row
+          label="Buy 1 Get 1 Free"
+          value={<span>−<Money paise={pricing.bogoDiscountPaise ?? 0} /></span>}
+          highlight
+        />
+      )}
+
       {pricing.couponDiscountPaise > 0 && (
         <Row
           label={pricing.coupon ? `Coupon (${pricing.coupon.code})` : 'Coupon discount'}

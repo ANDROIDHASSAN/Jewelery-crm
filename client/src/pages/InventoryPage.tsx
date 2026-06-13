@@ -26,10 +26,11 @@ import {
   ChevronRight,
   Sparkles,
   Trash2,
+  BadgePercent,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { uploadImageToCloudinary, isCloudinaryConfigured, cloudinaryThumb } from '@/lib/cloudinary';
-import type { Item, Collection } from '@goldos/shared/types';
+import type { Item, Collection, SaleItemRow, SaleDiscountType } from '@goldos/shared/types';
 import {
   DIAMOND_SHAPES,
   DIAMOND_CUTS,
@@ -50,6 +51,12 @@ import {
   useListCollectionItemsQuery,
   useAddItemsToCollectionMutation,
   useRemoveItemFromCollectionMutation,
+  useGetSaleConfigQuery,
+  useUpdateSaleConfigMutation,
+  useGetSaleItemsQuery,
+  useAddItemsToSaleMutation,
+  useUpdateSaleItemDiscountMutation,
+  useRemoveItemFromSaleMutation,
   useLazyGetSkuSuggestionQuery,
   useDeleteItemMutation,
   useCreateItemMutation,
@@ -102,6 +109,7 @@ type Tab =
   | 'items'
   | 'categories'
   | 'collections'
+  | 'sale-items'
   | 'transfers'
   | 'wastage'
   | 'valuation'
@@ -116,6 +124,7 @@ const TABS: Array<{ id: Tab; label: string; icon: typeof Boxes }> = [
   { id: 'items', label: 'Items', icon: Boxes },
   { id: 'categories', label: 'Categories', icon: TagIcon },
   { id: 'collections', label: 'Collections', icon: Sparkles },
+  { id: 'sale-items', label: 'Season sales', icon: BadgePercent },
   { id: 'transfers', label: 'Transfers', icon: Truck },
   { id: 'wastage', label: 'Wastage & melting', icon: Flame },
   { id: 'valuation', label: 'Valuation', icon: Coins },
@@ -144,6 +153,7 @@ export function InventoryPage(): JSX.Element {
       {tab === 'items' && <ItemsTab />}
       {tab === 'categories' && <CategoriesTab />}
       {tab === 'collections' && <CollectionsManageTab />}
+      {tab === 'sale-items' && <SaleItemsManageTab />}
       {tab === 'transfers' && <MovementsTab type="TRANSFER" emptyLabel="No transfers yet." />}
       {tab === 'wastage' && <MovementsTab type="WASTAGE" emptyLabel="No wastage logged." />}
       {tab === 'valuation' && <ValuationTab />}
@@ -330,6 +340,39 @@ function ItemsTab(): JSX.Element {
                 <Row label="Cost price">
                   <Money paise={selected.costPricePaise} />
                 </Row>
+                {selected.sellingPricePaise != null && (() => {
+                  const metal = categoryMetalById.get(selected.categoryId) ?? 'GOLD';
+                  const catName = categoryNameById.get(selected.categoryId) ?? '';
+                  const isFixedTone = metal === 'OTHER' || metal === 'STAINLESS_STEEL' || /tone|plated/i.test(catName);
+                  const sp = selected.sellingPricePaise;
+                  const preGst = Math.round(sp * 10000 / 10300);
+                  const gstAmt = sp - preGst;
+                  return (
+                    <Row label="Selling breakdown">
+                      <div className="text-xs font-mono space-y-0.5 text-right">
+                        {isFixedTone ? (
+                          <>
+                            <div className="text-ink-600">Base <Money paise={preGst} /></div>
+                            <div className="text-ink-500">GST <Money paise={gstAmt} /></div>
+                            <div className="font-semibold text-ink-900">Total <Money paise={sp} /></div>
+                          </>
+                        ) : metal === 'SILVER' ? (
+                          <>
+                            <div className="text-ink-600">Selling + Making <Money paise={preGst} /></div>
+                            <div className="text-ink-500">GST 3% <Money paise={gstAmt} /></div>
+                            <div className="font-semibold text-ink-900">Total <Money paise={sp} /></div>
+                          </>
+                        ) : (
+                          <>
+                            <div className="text-ink-600">Gold + Making + Diamond <Money paise={preGst} /></div>
+                            <div className="text-ink-500">GST 3% <Money paise={gstAmt} /></div>
+                            <div className="font-semibold text-ink-900">Total <Money paise={sp} /></div>
+                          </>
+                        )}
+                      </div>
+                    </Row>
+                  );
+                })()}
                 <Row label="Stone weight">
                   {selected.stoneWeightMg ? <Weight mg={selected.stoneWeightMg} /> : '—'}
                 </Row>
@@ -1711,6 +1754,285 @@ function AddItemsModal({ collectionId, onClose }: { collectionId: string; onClos
               Cancel
             </Button>
             <Button onClick={() => void handleAddItems()} disabled={adding || selectedItemIds.size === 0}>
+              {adding ? 'Adding…' : 'Add'}
+            </Button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Season Sales management — the single tenant-wide pool of items shown in the
+// storefront "Season Sales" section. Select items (same picker as Collections)
+// and set a per-item % discount, which the storefront applies to the live price.
+function SaleItemsManageTab(): JSX.Element {
+  const { data, isLoading } = useGetSaleItemsQuery();
+  const { data: configData } = useGetSaleConfigQuery();
+  const [updateConfig, { isLoading: savingConfig }] = useUpdateSaleConfigMutation();
+  const [addOpen, setAddOpen] = useState(false);
+  const items = data?.data ?? [];
+  const bogoEnabled = configData?.data.bogoEnabled ?? false;
+
+  const toggleBogo = (next: boolean): void => {
+    updateConfig({ bogoEnabled: next })
+      .unwrap()
+      .catch(() => toast.error('Could not update Buy 1 Get 1 setting'));
+  };
+
+  return (
+    <div className="space-y-4">
+      <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-3">
+        <p className="text-sm text-ink-500 max-w-2xl">
+          Items added here appear in the storefront&apos;s <strong>Season Sales</strong> section (below Top Styles). Set a
+          discount per item — the storefront shows the original price struck through, the discounted price and a
+          &quot;Flat&nbsp;X% off&quot; badge. Items stay a single inventory record; removing one only drops it from the sale.
+        </p>
+        <Button onClick={() => setAddOpen(true)} className="self-start shrink-0">
+          <Plus className="h-4 w-4" /> Add items
+        </Button>
+      </div>
+
+      {/* Sale-wide Buy 1 Get 1 — applies to every item in the Season Sale. */}
+      <label className="flex items-start gap-3 rounded-md border border-ink-100 bg-ink-0 p-3 cursor-pointer">
+        <input
+          type="checkbox"
+          checked={bogoEnabled}
+          disabled={savingConfig}
+          onChange={(e) => toggleBogo(e.target.checked)}
+          className="mt-0.5 h-4 w-4 rounded border-ink-300 text-brand-600 focus:ring-brand-500"
+        />
+        <div>
+          <p className="text-sm font-medium text-ink-900">Buy 1 Get 1 Free — whole sale</p>
+          <p className="text-xs text-ink-500">
+            When on, every item in the Season Sale shows a &quot;Buy&nbsp;1 Get&nbsp;1 Free&quot; badge on the storefront.
+            Per-item % / ₹ discounts still apply on top.
+          </p>
+        </div>
+      </label>
+
+      {isLoading && <p className="text-sm text-ink-500">Loading…</p>}
+      {!isLoading && items.length === 0 && (
+        <EmptyState
+          eyebrow="No items on sale"
+          title="Start a season sale"
+          body="Add items and give each a discount. They'll show up in the Season Sales section on your storefront."
+        />
+      )}
+      {items.length > 0 && (
+        <ul className="divide-y divide-ink-100 rounded-md border border-ink-100 bg-ink-0">
+          {items.map((it) => (
+            <SaleItemRowCard key={it.id} item={it} />
+          ))}
+        </ul>
+      )}
+      {addOpen && <AddSaleItemsModal onClose={() => setAddOpen(false)} />}
+    </div>
+  );
+}
+
+// One sale row: thumbnail + name/SKU, an offer-type selector (% off / ₹ off /
+// BOGO) with the matching value input, and a remove button. The value is held
+// locally and committed on blur / Enter so typing doesn't fire a request per
+// keystroke. Changing the type commits immediately.
+function SaleItemRowCard({ item }: { item: SaleItemRow }): JSX.Element {
+  const [updateOffer, { isLoading: saving }] = useUpdateSaleItemDiscountMutation();
+  const [removeItem] = useRemoveItemFromSaleMutation();
+  // Per-item offer is now % / ₹ only (BOGO is a sale-wide toggle). Coerce any
+  // legacy per-item BOGO row to PERCENT so the dropdown stays consistent.
+  const initialType: SaleDiscountType = item.discountType === 'FLAT' ? 'FLAT' : 'PERCENT';
+  const [type, setType] = useState<SaleDiscountType>(initialType);
+  // The amount input mirrors whichever value the current type uses: % for
+  // PERCENT, ₹ for FLAT.
+  const [amount, setAmount] = useState<string>(
+    initialType === 'FLAT' ? String(item.discountFlatPaise / 100) : String(item.discountBps / 100),
+  );
+
+  const push = (next: SaleDiscountType, amt: string): void => {
+    const n = parseFloat(amt);
+    const bps = next === 'PERCENT' && Number.isFinite(n) ? Math.max(0, Math.min(9000, Math.round(n * 100))) : 0;
+    const flat = next === 'FLAT' && Number.isFinite(n) ? Math.max(0, Math.round(n * 100)) : 0;
+    updateOffer({ itemId: item.id, discountType: next, discountBps: bps, discountFlatPaise: flat })
+      .unwrap()
+      .catch(() => toast.error('Could not update offer'));
+  };
+
+  const onTypeChange = (next: SaleDiscountType): void => {
+    setType(next);
+    // Reset the amount to this type's stored value so the field is sensible.
+    const a = next === 'FLAT' ? String(item.discountFlatPaise / 100) : next === 'PERCENT' ? String(item.discountBps / 100) : '';
+    setAmount(a);
+    push(next, a);
+  };
+
+  const remove = (): void => {
+    if (!window.confirm(`Remove "${item.name ?? item.sku}" from the sale?`)) return;
+    removeItem(item.id)
+      .unwrap()
+      .catch(() => toast.error('Could not remove item'));
+  };
+
+  return (
+    <li className="flex items-center gap-3 px-4 py-3">
+      <div className="h-12 w-12 shrink-0 overflow-hidden rounded bg-ink-50">
+        {item.images[0] ? (
+          <img src={item.images[0]} alt={item.name ?? item.sku} className="h-full w-full object-cover" />
+        ) : (
+          <div className="flex h-full w-full items-center justify-center text-ink-300">
+            <BadgePercent className="h-5 w-5" />
+          </div>
+        )}
+      </div>
+      <div className="min-w-0 flex-1">
+        <p className="truncate text-sm text-ink-900">{item.name ?? 'Unnamed item'}</p>
+        <p className="text-xs text-ink-500">{item.sku}</p>
+      </div>
+      <div className="flex items-center gap-1.5">
+        <select
+          value={type}
+          onChange={(e) => onTypeChange(e.target.value as SaleDiscountType)}
+          className="h-9 rounded-md border border-ink-200 px-2 text-sm focus:border-brand-400 focus:outline-none"
+          aria-label={`Offer type for ${item.name ?? item.sku}`}
+        >
+          <option value="PERCENT">% off</option>
+          <option value="FLAT">₹ off</option>
+        </select>
+        {type !== 'BOGO' && (
+          <>
+            {type === 'FLAT' && <span className="text-sm text-ink-500">₹</span>}
+            <input
+              type="number"
+              min={0}
+              step={type === 'FLAT' ? 1 : 0.5}
+              value={amount}
+              onChange={(e) => setAmount(e.target.value)}
+              onBlur={() => push(type, amount)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') e.currentTarget.blur();
+              }}
+              className="h-9 w-24 rounded-md border border-ink-200 px-2 text-right text-sm tabular-nums focus:border-brand-400 focus:outline-none"
+              aria-label={`Offer amount for ${item.name ?? item.sku}`}
+            />
+            <span className="text-sm text-ink-500">{type === 'PERCENT' ? '% off' : 'off'}</span>
+          </>
+        )}
+        {saving && <span className="text-[11px] text-ink-400">saving…</span>}
+      </div>
+      <button
+        type="button"
+        onClick={remove}
+        className="ml-2 text-ink-400 hover:text-red-500 transition-colors"
+        aria-label={`Remove ${item.name ?? item.sku} from sale`}
+      >
+        <Trash2 className="h-4 w-4" />
+      </button>
+    </li>
+  );
+}
+
+// Item picker for the season sale — mirrors AddItemsModal but posts to the sale
+// pool. An optional starting discount applies to every item added in this batch
+// (each can still be tuned individually afterwards).
+function AddSaleItemsModal({ onClose }: { onClose: () => void }): JSX.Element {
+  const { data: allItems } = useGetItemsQuery({});
+  const [addItems, { isLoading: adding }] = useAddItemsToSaleMutation();
+  const [selectedItemIds, setSelectedItemIds] = useState<Set<string>>(new Set());
+  const [searchTerm, setSearchTerm] = useState('');
+  const [type, setType] = useState<SaleDiscountType>('PERCENT');
+  const [amount, setAmount] = useState('10');
+
+  const items = (allItems?.data ?? []).filter(
+    (item) =>
+      (item.name ?? '').toLowerCase().includes(searchTerm.toLowerCase()) ||
+      (item.sku ?? '').toLowerCase().includes(searchTerm.toLowerCase()),
+  );
+
+  const handleAdd = async (): Promise<void> => {
+    if (selectedItemIds.size === 0) return void toast.error('Select at least one item');
+    const n = parseFloat(amount);
+    const discountBps = type === 'PERCENT' && Number.isFinite(n) ? Math.max(0, Math.min(9000, Math.round(n * 100))) : 0;
+    const discountFlatPaise = type === 'FLAT' && Number.isFinite(n) ? Math.max(0, Math.round(n * 100)) : 0;
+    try {
+      await addItems({ itemIds: Array.from(selectedItemIds), discountType: type, discountBps, discountFlatPaise }).unwrap();
+      toast.success(`Added ${selectedItemIds.size} item(s) to the sale`);
+      onClose();
+    } catch (err) {
+      const msg = (err as { data?: { error?: { message?: string } } }).data?.error?.message ?? 'Could not add items';
+      toast.error(msg);
+    }
+  };
+
+  const toggleItem = (itemId: string): void => {
+    const next = new Set(selectedItemIds);
+    if (next.has(itemId)) next.delete(itemId);
+    else next.add(itemId);
+    setSelectedItemIds(next);
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+      <div className="bg-white rounded-lg shadow-lg w-full max-w-md max-h-[80vh] flex flex-col">
+        <div className="flex items-center justify-between p-4 border-b border-ink-100">
+          <h3 className="text-base font-semibold text-ink-900">Add items to sale</h3>
+          <button type="button" onClick={onClose} className="text-ink-400 hover:text-ink-600">
+            <X className="h-5 w-5" />
+          </button>
+        </div>
+
+        <div className="flex items-end gap-3 px-4 pt-3">
+          <Field label="Offer">
+            <select value={type} onChange={(e) => setType(e.target.value as SaleDiscountType)} className={fieldCls}>
+              <option value="PERCENT">% off</option>
+              <option value="FLAT">₹ off</option>
+            </select>
+          </Field>
+          {type !== 'BOGO' && (
+            <Field label={type === 'PERCENT' ? 'Discount %' : 'Amount ₹'}>
+              <input
+                type="number"
+                min={0}
+                step={type === 'FLAT' ? 1 : 0.5}
+                value={amount}
+                onChange={(e) => setAmount(e.target.value)}
+                className={fieldCls}
+              />
+            </Field>
+          )}
+          <p className="pb-2 text-xs text-ink-500">Applied to each item added now; tune individually after.</p>
+        </div>
+
+        <div className="flex-1 overflow-y-auto p-4 space-y-3">
+          <input
+            type="text"
+            placeholder="Search by name or SKU…"
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+            className={fieldCls}
+          />
+          {items.length === 0 && <p className="text-sm text-ink-500 text-center py-4">No items found</p>}
+          {items.map((item) => (
+            <label key={item.id} className="flex items-center gap-3 p-2 hover:bg-ink-50 rounded cursor-pointer">
+              <input
+                type="checkbox"
+                checked={selectedItemIds.has(item.id)}
+                onChange={() => toggleItem(item.id)}
+                className="h-4 w-4 rounded border-ink-300 text-brand-600 focus:ring-brand-500"
+              />
+              <div className="min-w-0 flex-1">
+                <p className="text-sm text-ink-900 truncate">{item.name ?? 'Unknown'}</p>
+                <p className="text-xs text-ink-500">{item.sku ?? 'N/A'}</p>
+              </div>
+            </label>
+          ))}
+        </div>
+
+        <div className="flex items-center justify-between gap-2 p-4 border-t border-ink-100">
+          <p className="text-xs text-ink-500">{selectedItemIds.size} selected</p>
+          <div className="flex gap-2">
+            <Button variant="secondary" onClick={onClose} disabled={adding}>
+              Cancel
+            </Button>
+            <Button onClick={() => void handleAdd()} disabled={adding || selectedItemIds.size === 0}>
               {adding ? 'Adding…' : 'Add'}
             </Button>
           </div>
@@ -3213,6 +3535,16 @@ function AddItemDialog({ open, onClose }: { open: boolean; onClose: () => void }
                 />
               </Field>
             </div>
+            {(metalType === 'GOLD' || metalType === 'SILVER' || metalType === 'OTHER' || metalType === 'STAINLESS_STEEL') && (
+              <PriceCalcHelper
+                metalType={metalType}
+                categoryName={selectedCat?.name ?? ''}
+                weightG={form.weightG}
+                onUseCost={(v) => setForm((f) => ({ ...f, costPriceRupees: v }))}
+                onUseSelling={(v) => setForm((f) => ({ ...f, sellingPriceRupees: v }))}
+              />
+            )}
+
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <Field label="Cost price (₹)">
                 <input
@@ -3358,7 +3690,7 @@ function EditItemDialog({
   const itemExt = item as Item & {
     description?: string | null;
     collectionIds?: string[];
-    diamonds?: Array<{ shape?: string | null; caratWeightX100?: number; cut?: string | null; clarity?: string | null; color?: string | null; count?: number; costPaise?: number }>;
+    diamonds?: Array<{ shape?: string | null; caratWeightX100?: number; cut?: string | null; clarity?: string | null; color?: string | null; count?: number; costPaise?: number; sellingPricePaise?: number | null; purchaseRatePaise?: number | null; sellRatePaise?: number | null }>;
   };
   const [form, setForm] = useState({
     name: item.name ?? '',
@@ -3711,6 +4043,16 @@ function EditItemDialog({
                 />
               </Field>
             </div>
+
+            {(metalType === 'GOLD' || metalType === 'SILVER' || metalType === 'OTHER' || metalType === 'STAINLESS_STEEL') && (
+              <PriceCalcHelper
+                metalType={metalType}
+                categoryName={selectedCat?.name ?? ''}
+                weightG={form.weightG}
+                onUseCost={(v) => setForm((f) => ({ ...f, costPriceRupees: v }))}
+                onUseSelling={(v) => setForm((f) => ({ ...f, sellingPriceRupees: v }))}
+              />
+            )}
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <Field label="Cost price (₹)">
@@ -4215,6 +4557,26 @@ interface POLine {
   /** Making-charge override as a percentage (e.g. "6" → 600 bps). Optional. */
   makingPct?: string;
   qty: string;
+  /** Fixed selling price in rupees; copied onto the Item on receive. */
+  sellingPriceRupees?: string;
+  /** When true, the linked storefront Product is published on receive. */
+  publishToStorefront?: boolean;
+  /** UI-only: metal purchase rate ₹/g used to auto-compute costRupees. Not sent to server. */
+  metalRateRupees?: string;
+  /** UI-only: making charge ₹/g used in cost calculator. Not sent to server. */
+  makingPerGramCalc?: string;
+  // ---- Full item-detail fields (optional, for new pieces) ----
+  name?: string;
+  description?: string;
+  images?: string[];
+  hallmarkStatus?: string;
+  hallmarkRef?: string;
+  stoneWeightG?: string;
+  makingMode?: 'PERCENTAGE' | 'PER_GRAM';
+  makingPerGramRupees?: string;
+  isSerialized?: boolean;
+  collectionIds?: string[];
+  diamonds?: DiamondRow[];
 }
 
 // Item picker sheet — lets the user pick existing inventory items (by category
@@ -4451,6 +4813,388 @@ function ItemPickerSheet({
   );
 }
 
+// Per-line editor extracted into its own component so it can call hooks
+// independently for each line. Has a collapsible "Item Details" section that
+// mirrors the Add Item dialog — for new pieces that should be fully described
+// at PO-creation time (name, images, diamonds, collections, etc.).
+function POLineEditor({
+  line,
+  index,
+  categories,
+  onPatch,
+  onRemove,
+}: {
+  line: POLine;
+  index: number;
+  categories: CategoryRow[];
+  onPatch: (i: number, patch: Partial<POLine>) => void;
+  onRemove: (i: number) => void;
+}): JSX.Element {
+  const [triggerSku, { data: skuData }] = useLazyGetSkuSuggestionQuery();
+  const [expanded, setExpanded] = useState(false);
+  const [uploading, setUploading] = useState<{ name: string; progress: number }[]>([]);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const cloudinaryReady = isCloudinaryConfigured();
+  const skuPrefix = skuData?.data?.code ?? null;
+
+  const lineCat = categories.find((c) => c.id === line.categoryId);
+  const lineMetal: MetalTypeLiteral = lineCat?.metalType ?? 'GOLD';
+
+  function handleCategoryChange(catId: string): void {
+    const cat = categories.find((c) => c.id === catId);
+    onPatch(index, { categoryId: catId, purityCarat: defaultPurityForMetal(cat?.metalType), itemSku: '' });
+    if (catId) {
+      void triggerSku(catId).then((res) => {
+        const suggested = res.data?.data?.sku;
+        if (suggested) onPatch(index, { itemSku: suggested });
+      });
+    }
+  }
+
+  async function uploadFiles(files: File[]): Promise<void> {
+    const imageFiles = files.filter((f) => f.type.startsWith('image/'));
+    if (imageFiles.length === 0) { toast.error('Only image files are supported'); return; }
+    setUploading((prev) => [...prev, ...imageFiles.map((f) => ({ name: f.name, progress: 0 }))]);
+    const results = await Promise.allSettled(
+      imageFiles.map((file) =>
+        uploadImageToCloudinary(file, {
+          folder: 'zelora/items',
+          onProgress: (pct) => {
+            setUploading((prev) => prev.map((u) => (u.name === file.name ? { ...u, progress: pct } : u)));
+          },
+        }),
+      ),
+    );
+    const newUrls: string[] = [];
+    let failures = 0;
+    for (const r of results) {
+      if (r.status === 'fulfilled') newUrls.push(r.value.secureUrl);
+      else failures += 1;
+    }
+    if (newUrls.length > 0) onPatch(index, { images: [...(line.images ?? []), ...newUrls] });
+    if (failures > 0) toast.error(`${failures} upload${failures === 1 ? '' : 's'} failed`);
+    setUploading((prev) => prev.filter((u) => !imageFiles.some((f) => f.name === u.name)));
+  }
+
+  const images = line.images ?? [];
+
+  return (
+    <div className="rounded-md border border-ink-200 p-3 space-y-2.5">
+      {/* ── Category row ── */}
+      <div className="flex items-start gap-2">
+        <div className="flex-1">
+          <span className="text-[11px] uppercase tracking-wider text-ink-500 block mb-1">Category</span>
+          <select
+            value={line.categoryId}
+            onChange={(e) => handleCategoryChange(e.target.value)}
+            className={fieldCls}
+            required
+          >
+            <option value="">Choose category…</option>
+            {buildCategoryFilterOptions(categories).map((o) => (
+              <option key={o.value} value={o.value}>{o.label}</option>
+            ))}
+          </select>
+        </div>
+        <button
+          type="button"
+          onClick={() => onRemove(index)}
+          className="mt-6 text-ink-400 hover:text-rose-600 text-lg leading-none"
+          aria-label="Remove line"
+          title="Remove line"
+        >×</button>
+      </div>
+
+      {/* ── SKU / Weight / Cost / Qty ── */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+        <div className="col-span-2 sm:col-span-1">
+          <div className="flex items-center justify-between mb-1">
+            <span className="text-[11px] uppercase tracking-wider text-ink-500">SKU</span>
+            {skuPrefix && (
+              <span className="text-[10px] bg-brand-100 text-brand-700 px-1.5 py-0.5 rounded font-mono leading-none">
+                {skuPrefix}
+              </span>
+            )}
+          </div>
+          <input
+            value={line.itemSku}
+            onChange={(e) => onPatch(index, { itemSku: e.target.value })}
+            className={fieldCls}
+            placeholder={skuPrefix ? `${skuPrefix}-001` : 'DW-0050'}
+          />
+        </div>
+        <div>
+          <span className="text-[11px] uppercase tracking-wider text-ink-500 block mb-1">Weight (g)</span>
+          <input type="number" step="0.001" value={line.weightG}
+            onChange={(e) => onPatch(index, { weightG: e.target.value })} className={fieldCls} />
+        </div>
+        <div>
+          <span className="text-[11px] uppercase tracking-wider text-ink-500 block mb-1">Cost (₹)</span>
+          <input type="number" step="0.01" value={line.costRupees}
+            onChange={(e) => onPatch(index, { costRupees: e.target.value })} className={fieldCls} />
+        </div>
+        <div>
+          <span className="text-[11px] uppercase tracking-wider text-ink-500 block mb-1">Qty</span>
+          <input type="number" min="1" step="1" value={line.qty}
+            onChange={(e) => onPatch(index, { qty: e.target.value })} className={fieldCls} />
+        </div>
+      </div>
+
+      {/* ── Purity / Making % / Selling Price ── */}
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+        <div>
+          <span className="text-[11px] uppercase tracking-wider text-ink-500 block mb-1">Purity</span>
+          <PurityPicker value={line.purityCarat} metalType={lineMetal}
+            onChange={(v) => onPatch(index, { purityCarat: v })} />
+        </div>
+        <div>
+          <span className="text-[11px] uppercase tracking-wider text-ink-500 block mb-1">Making %</span>
+          <input type="number" step="0.01" min="0" value={line.makingPct ?? ''}
+            onChange={(e) => onPatch(index, { makingPct: e.target.value })}
+            className={fieldCls} placeholder="e.g. 6" />
+          <span className="text-[10px] text-ink-400 block mt-1">Optional — blank uses category default.</span>
+        </div>
+        <div>
+          <span className="text-[11px] uppercase tracking-wider text-ink-500 block mb-1">Selling Price (₹)</span>
+          <input type="number" step="0.01" min="0" value={line.sellingPriceRupees ?? ''}
+            onChange={(e) => onPatch(index, { sellingPriceRupees: e.target.value })}
+            className={fieldCls} placeholder="Optional" />
+          <span className="text-[10px] text-ink-400 block mt-1">Set on item when PO is received.</span>
+        </div>
+      </div>
+
+      {/* ── Cost calculator ── */}
+      {(lineMetal === 'GOLD' || lineMetal === 'SILVER') && (() => {
+        const w = parseFloat(line.weightG) || 0;
+        const r = parseFloat(line.metalRateRupees ?? '') || 0;
+        const m = parseFloat(line.makingPerGramCalc ?? '') || 0;
+        const metal = w * r; const making = w * m;
+        const subtotal = metal + making; const gst = subtotal * 0.03;
+        const calcTotal = subtotal + gst;
+        const label = lineMetal === 'SILVER' ? 'Silver rate (₹/g)' : 'Gold rate (₹/g)';
+        return (
+          <div className="rounded bg-brand-50/40 border border-brand-200 px-2.5 py-2 space-y-1.5">
+            <p className="text-[10px] uppercase tracking-wider text-brand-700 font-medium">Cost calculator — rate + making + GST</p>
+            <div className="grid grid-cols-2 gap-1.5">
+              <div>
+                <span className="text-[10px] text-ink-500 block mb-0.5">{label}</span>
+                <input type="number" step="0.01" min={0} value={line.metalRateRupees ?? ''}
+                  onChange={(e) => {
+                    const rr = parseFloat(e.target.value) || 0;
+                    const mm = parseFloat(line.makingPerGramCalc ?? '') || 0;
+                    const ww = parseFloat(line.weightG) || 0;
+                    const tot = (ww * rr + ww * mm) * 1.03;
+                    onPatch(index, { metalRateRupees: e.target.value, ...(rr > 0 && ww > 0 ? { costRupees: tot.toFixed(2) } : {}) });
+                  }}
+                  className={`${fieldCls} text-xs`} placeholder="e.g. 3200" />
+              </div>
+              <div>
+                <span className="text-[10px] text-ink-500 block mb-0.5">Making (₹/g)</span>
+                <input type="number" step="0.01" min={0} value={line.makingPerGramCalc ?? ''}
+                  onChange={(e) => {
+                    const mm = parseFloat(e.target.value) || 0;
+                    const rr = parseFloat(line.metalRateRupees ?? '') || 0;
+                    const ww = parseFloat(line.weightG) || 0;
+                    const tot = (ww * rr + ww * mm) * 1.03;
+                    onPatch(index, { makingPerGramCalc: e.target.value, ...(rr > 0 && ww > 0 ? { costRupees: tot.toFixed(2) } : {}) });
+                  }}
+                  className={`${fieldCls} text-xs`} placeholder="e.g. 150" />
+              </div>
+            </div>
+            {w > 0 && r > 0 && (
+              <div className="text-[10px] font-mono text-ink-600 flex flex-wrap gap-x-3 gap-y-0.5">
+                <span>Metal ₹{metal.toFixed(2)}</span>
+                {making > 0 && <span>Making ₹{making.toFixed(2)}</span>}
+                <span>GST ₹{gst.toFixed(2)}</span>
+                <span className="font-semibold text-ink-900">Total ₹{calcTotal.toFixed(2)}</span>
+              </div>
+            )}
+          </div>
+        );
+      })()}
+
+      {/* ── Publish toggle ── */}
+      <label className="flex items-center gap-2 cursor-pointer select-none">
+        <input type="checkbox" checked={line.publishToStorefront ?? false}
+          onChange={(e) => onPatch(index, { publishToStorefront: e.target.checked })}
+          className="h-4 w-4 rounded border-ink-300 accent-brand-600 shrink-0" />
+        <span className="text-[11px] text-ink-600">
+          Publish to storefront on receive
+          <span className="text-ink-400"> — publishes or creates a Product if name + images are filled</span>
+        </span>
+      </label>
+
+      {/* ── Expandable item-detail section ── */}
+      <button
+        type="button"
+        onClick={() => setExpanded((x) => !x)}
+        className="w-full flex items-center justify-between text-[11px] font-medium text-brand-600 hover:text-brand-700 border-t border-ink-100 pt-2 mt-1"
+      >
+        <span>{expanded ? '▲ Hide item details' : '▼ Add item details (name, images, diamonds…)'}</span>
+        {(line.name || images.length > 0 || (line.diamonds?.length ?? 0) > 0) && !expanded && (
+          <span className="text-[10px] bg-brand-100 text-brand-700 px-1.5 py-0.5 rounded">filled</span>
+        )}
+      </button>
+
+      {expanded && (
+        <div className="border-t border-ink-100 pt-3 space-y-3">
+          {/* Item name */}
+          <div>
+            <span className="text-[11px] uppercase tracking-wider text-ink-500 block mb-1">Item name</span>
+            <input
+              value={line.name ?? ''}
+              onChange={(e) => onPatch(index, { name: e.target.value })}
+              className={fieldCls}
+              placeholder="e.g. Floral diamond pendant"
+            />
+          </div>
+
+          {/* Images */}
+          <div>
+            <span className="text-[11px] uppercase tracking-wider text-ink-500 block mb-1">Item images</span>
+            <div
+              onClick={() => fileInputRef.current?.click()}
+              onDragOver={(e) => e.preventDefault()}
+              onDrop={(e) => { e.preventDefault(); const files = Array.from(e.dataTransfer.files); if (files.length > 0) void uploadFiles(files); }}
+              role="button" tabIndex={0}
+              onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); fileInputRef.current?.click(); } }}
+              className="flex flex-col items-center justify-center gap-1 px-3 py-3 rounded-md border-2 border-dashed border-ink-200 hover:border-ink-300 hover:bg-ink-25 cursor-pointer transition-colors"
+            >
+              <Upload className="h-4 w-4 text-ink-500" aria-hidden />
+              <p className="text-xs text-ink-600">
+                <span className="font-medium text-ink-900">Click to upload</span> or drag &amp; drop
+              </p>
+              {!cloudinaryReady && <p className="text-[10px] text-ink-400">Dev mode: no Cloudinary</p>}
+            </div>
+            <input ref={fileInputRef} type="file" accept="image/*" multiple className="hidden"
+              onChange={(e) => { const files = e.target.files ? Array.from(e.target.files) : []; if (files.length > 0) void uploadFiles(files); e.target.value = ''; }} />
+            {uploading.length > 0 && (
+              <ul className="mt-1.5 space-y-1">
+                {uploading.map((u) => (
+                  <li key={u.name} className="rounded-md border border-ink-100 bg-ink-25 px-2 py-1.5">
+                    <div className="flex items-center justify-between gap-2 text-[11px]">
+                      <span className="text-ink-700 truncate">{u.name}</span>
+                      <span className="font-mono tabular-nums text-ink-500">{u.progress}%</span>
+                    </div>
+                    <div className="mt-1 h-0.5 rounded-full bg-ink-100 overflow-hidden">
+                      <div className="h-full bg-brand-500 transition-all" style={{ width: `${u.progress}%` }} />
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            )}
+            {images.length > 0 && (
+              <ul className="mt-1.5 grid grid-cols-4 gap-2">
+                {images.map((url, idx) => (
+                  <li key={url + idx} className="relative group rounded-md border border-ink-100 bg-ink-25 overflow-hidden aspect-square">
+                    <img src={cloudinaryThumb(url, 160) ?? url} alt={`Image ${idx + 1}`} className="h-full w-full object-cover" />
+                    <button type="button"
+                      onClick={() => onPatch(index, { images: images.filter((_, i) => i !== idx) })}
+                      className="absolute top-0.5 right-0.5 h-5 w-5 inline-flex items-center justify-center rounded-full bg-ink-900/70 text-ink-0 opacity-0 group-hover:opacity-100 transition-opacity"
+                      aria-label="Remove image"><X className="h-3 w-3" /></button>
+                    {idx === 0 && <span className="absolute bottom-0.5 left-0.5 text-[9px] px-1 py-0.5 rounded-full bg-ink-900/70 text-ink-0">Primary</span>}
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+
+          {/* Description */}
+          <div>
+            <span className="text-[11px] uppercase tracking-wider text-ink-500 block mb-1">Description</span>
+            <textarea
+              value={line.description ?? ''}
+              onChange={(e) => onPatch(index, { description: e.target.value })}
+              rows={2}
+              placeholder="Shown on storefront, receipts and item slips."
+              className={`${fieldCls} h-auto resize-y`}
+            />
+          </div>
+
+          {/* Stone weight / Hallmark */}
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+            <div>
+              <span className="text-[11px] uppercase tracking-wider text-ink-500 block mb-1">Stone wt (g)</span>
+              <input type="number" step="0.001" min={0} value={line.stoneWeightG ?? ''}
+                onChange={(e) => onPatch(index, { stoneWeightG: e.target.value })}
+                className={fieldCls} placeholder="Optional" />
+            </div>
+            <div>
+              <span className="text-[11px] uppercase tracking-wider text-ink-500 block mb-1">Hallmark</span>
+              <select value={line.hallmarkStatus ?? 'PENDING'}
+                onChange={(e) => onPatch(index, { hallmarkStatus: e.target.value })}
+                className={fieldCls}>
+                <option value="PENDING">Pending</option>
+                <option value="SUBMITTED">Submitted</option>
+                <option value="CERTIFIED">Certified</option>
+                <option value="EXEMPT">Exempt</option>
+              </select>
+            </div>
+            <div>
+              <span className="text-[11px] uppercase tracking-wider text-ink-500 block mb-1">HUID ref</span>
+              <input value={line.hallmarkRef ?? ''}
+                onChange={(e) => onPatch(index, { hallmarkRef: e.target.value })}
+                className={fieldCls} placeholder="6-char alphanumeric" />
+            </div>
+          </div>
+
+          {/* Making charge mode */}
+          <div>
+            <span className="text-[11px] uppercase tracking-wider text-ink-500 block mb-1">Making charge override</span>
+            <MakingChargeOverride
+              mode={line.makingMode ?? 'PERCENTAGE'}
+              pct={line.makingPct ?? ''}
+              perGram={line.makingPerGramRupees ?? ''}
+              onMode={(m) => onPatch(index, { makingMode: m })}
+              onPct={(v) => onPatch(index, { makingPct: v })}
+              onPerGram={(v) => onPatch(index, { makingPerGramRupees: v })}
+            />
+          </div>
+
+          {/* Stock type */}
+          <div>
+            <span className="text-[11px] uppercase tracking-wider text-ink-500 block mb-1">Stock type</span>
+            <div className="grid grid-cols-2 gap-2">
+              {([{ val: true, label: 'Unique piece', sub: 'Ring, necklace — each piece is its own SKU' },
+                 { val: false, label: 'Bulk lot', sub: 'Gold coin, silver bar — N interchangeable units' }] as const).map(({ val, label, sub }) => (
+                <button type="button" key={String(val)}
+                  onClick={() => onPatch(index, { isSerialized: val })}
+                  className={cn(
+                    'rounded-md border px-3 py-2 text-left transition-colors',
+                    (line.isSerialized ?? true) === val
+                      ? 'border-brand-500 bg-brand-50 ring-1 ring-brand-400'
+                      : 'border-ink-200 hover:border-ink-300',
+                  )}>
+                  <span className="block text-xs font-medium text-ink-900">{label}</span>
+                  <span className="block text-[10px] text-ink-500">{sub}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Collections */}
+          <div>
+            <span className="text-[11px] uppercase tracking-wider text-ink-500 block mb-1">Collections</span>
+            <CollectionsMultiSelect
+              selected={line.collectionIds ?? []}
+              onChange={(ids) => onPatch(index, { collectionIds: ids })}
+            />
+          </div>
+
+          {/* Diamonds */}
+          <div>
+            <span className="text-[11px] uppercase tracking-wider text-ink-500 block mb-1">Diamonds (4 Cs)</span>
+            <DiamondsEditor
+              rows={line.diamonds ?? []}
+              onChange={(rows) => onPatch(index, { diamonds: rows })}
+            />
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function CreatePODialog({ open, onClose }: { open: boolean; onClose: () => void }): JSX.Element {
   const { data: vendors } = useGetVendorsQuery();
   const { data: catsRes } = useGetCategoriesQuery();
@@ -4476,14 +5220,6 @@ function CreatePODialog({ open, onClose }: { open: boolean; onClose: () => void 
   const patchLine = (i: number, patch: Partial<POLine>): void =>
     setLines((ls) => ls.map((l, j) => (j === i ? { ...l, ...patch } : l)));
 
-  // When the category changes, default the purity to that metal's default
-  // (9K for gold, "0" / non-precious for stainless/silver) — same rule as the
-  // item form, so per-gram & non-precious items are captured correctly.
-  const onCategoryChange = (i: number, catId: string): void => {
-    const cat = categories.find((c) => c.id === catId);
-    patchLine(i, { categoryId: catId, purityCarat: defaultPurityForMetal(cat?.metalType) });
-  };
-
   // Merge picker-selected lines into the current list, removing the placeholder
   // blank line if it hasn't been touched yet.
   function handlePickerAdd(newLines: POLine[]): void {
@@ -4498,16 +5234,45 @@ function CreatePODialog({ open, onClose }: { open: boolean; onClose: () => void 
     e.preventDefault();
     if (!vendorId) return void toast.error('Pick a vendor');
     if (lines.some((l) => !l.categoryId)) return void toast.error('Pick a category for each line');
-    const items = lines.map((l) => ({
-      itemSku: l.itemSku.trim(),
-      categoryId: l.categoryId,
-      weightMg: Math.round(parseFloat(l.weightG) * 1000),
-      purity: Math.round(parseFloat(l.purityCarat) * 100),
-      costPaise: Math.round(parseFloat(l.costRupees) * 100),
-      makingChargeBps:
-        l.makingPct && l.makingPct.trim() ? Math.round(parseFloat(l.makingPct) * 100) : undefined,
-      quantity: Math.max(1, parseInt(l.qty, 10) || 1),
-    }));
+    const items = lines.map((l) => {
+      // Making charge — if makingMode is explicitly set (from expanded form),
+      // use the full resolver; otherwise fall back to the basic makingPct field.
+      const making = resolveItemMakingOverride(
+        l.makingMode ?? 'PERCENTAGE',
+        l.makingPct ?? '',
+        l.makingPerGramRupees ?? '',
+      );
+      const stoneRaw = parseFloat(l.stoneWeightG ?? '');
+      return {
+        itemSku: l.itemSku.trim(),
+        categoryId: l.categoryId,
+        weightMg: Math.round(parseFloat(l.weightG) * 1000),
+        purity: Math.round(parseFloat(l.purityCarat) * 100),
+        costPaise: Math.round(parseFloat(l.costRupees) * 100),
+        makingChargeBps: making.makingChargeBps ?? undefined,
+        makingChargeMode: making.makingChargeMode ?? undefined,
+        makingChargePerGramPaise: making.makingChargePerGramPaise ?? undefined,
+        sellingPricePaise:
+          l.sellingPriceRupees && l.sellingPriceRupees.trim()
+            ? Math.round(parseFloat(l.sellingPriceRupees) * 100)
+            : undefined,
+        publishToStorefront: l.publishToStorefront ?? false,
+        quantity: Math.max(1, parseInt(l.qty, 10) || 1),
+        // Full item-detail fields
+        name: l.name?.trim() || undefined,
+        description: l.description?.trim() || undefined,
+        images: l.images ?? [],
+        hallmarkStatus: (l.hallmarkStatus ?? 'PENDING') as 'PENDING' | 'SUBMITTED' | 'CERTIFIED' | 'EXEMPT',
+        hallmarkRef: l.hallmarkRef?.trim() || undefined,
+        stoneWeightMg:
+          l.stoneWeightG && Number.isFinite(stoneRaw) && stoneRaw > 0
+            ? Math.round(stoneRaw * 1000)
+            : undefined,
+        isSerialized: l.isSerialized ?? true,
+        collectionIds: l.collectionIds ?? [],
+        diamonds: l.diamonds ? diamondRowsToInput(l.diamonds) : [],
+      };
+    });
     if (items.some((i) => !i.itemSku || !Number.isFinite(i.weightMg) || i.weightMg <= 0 || !Number.isFinite(i.costPaise) || i.costPaise <= 0)) {
       return void toast.error('Each line needs a category, SKU, weight, and cost');
     }
@@ -4561,104 +5326,16 @@ function CreatePODialog({ open, onClose }: { open: boolean; onClose: () => void 
                     No lines yet — add manually or browse inventory above.
                   </p>
                 )}
-                {lines.map((l, i) => {
-                  const lineCat = categories.find((c) => c.id === l.categoryId);
-                  const lineMetal: MetalTypeLiteral = lineCat?.metalType ?? 'GOLD';
-                  return (
-                    <div key={i} className="rounded-md border border-ink-200 p-3 space-y-2.5">
-                      <div className="flex items-start gap-2">
-                        <div className="flex-1">
-                          <span className="text-[11px] uppercase tracking-wider text-ink-500 block mb-1">Category</span>
-                          <select
-                            value={l.categoryId}
-                            onChange={(e) => onCategoryChange(i, e.target.value)}
-                            className={fieldCls}
-                            required
-                          >
-                            <option value="">Choose category…</option>
-                            {buildCategoryFilterOptions(categories).map((o) => (
-                              <option key={o.value} value={o.value}>{o.label}</option>
-                            ))}
-                          </select>
-                        </div>
-                        <button
-                          type="button"
-                          onClick={() => setLines(lines.filter((_, j) => j !== i))}
-                          className="mt-6 text-ink-400 hover:text-rose-600"
-                          aria-label="Remove line"
-                          title="Remove line"
-                        >
-                          ×
-                        </button>
-                      </div>
-                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-                        <div className="col-span-2 sm:col-span-1">
-                          <span className="text-[11px] uppercase tracking-wider text-ink-500 block mb-1">SKU</span>
-                          <input
-                            value={l.itemSku}
-                            onChange={(e) => patchLine(i, { itemSku: e.target.value })}
-                            className={fieldCls}
-                            placeholder="DW-0050"
-                          />
-                        </div>
-                        <div>
-                          <span className="text-[11px] uppercase tracking-wider text-ink-500 block mb-1">Weight (g)</span>
-                          <input
-                            type="number"
-                            step="0.001"
-                            value={l.weightG}
-                            onChange={(e) => patchLine(i, { weightG: e.target.value })}
-                            className={fieldCls}
-                          />
-                        </div>
-                        <div>
-                          <span className="text-[11px] uppercase tracking-wider text-ink-500 block mb-1">Cost (₹)</span>
-                          <input
-                            type="number"
-                            step="0.01"
-                            value={l.costRupees}
-                            onChange={(e) => patchLine(i, { costRupees: e.target.value })}
-                            className={fieldCls}
-                          />
-                        </div>
-                        <div>
-                          <span className="text-[11px] uppercase tracking-wider text-ink-500 block mb-1">Qty</span>
-                          <input
-                            type="number"
-                            min="1"
-                            step="1"
-                            value={l.qty}
-                            onChange={(e) => patchLine(i, { qty: e.target.value })}
-                            className={fieldCls}
-                          />
-                        </div>
-                      </div>
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                        <div>
-                          <span className="text-[11px] uppercase tracking-wider text-ink-500 block mb-1">Purity</span>
-                          <PurityPicker
-                            value={l.purityCarat}
-                            metalType={lineMetal}
-                            onChange={(v) => patchLine(i, { purityCarat: v })}
-                          />
-                        </div>
-                        <div>
-                          <span className="text-[11px] uppercase tracking-wider text-ink-500 block mb-1">Making %</span>
-                          <input
-                            type="number"
-                            step="0.01"
-                            min="0"
-                            value={l.makingPct ?? ''}
-                            onChange={(e) => patchLine(i, { makingPct: e.target.value })}
-                            className={fieldCls}
-                            placeholder="e.g. 6"
-                          />
-                          <span className="text-[10px] text-ink-400 block mt-1">Optional — blank uses the category default.</span>
-                        </div>
-                      </div>
-                    </div>
-                  );
-                })}
+                {lines.map((l, i) => (
+                  <POLineEditor
+                    key={i}
+                    line={l}
+                    index={i}
+                    categories={categories}
+                    onPatch={patchLine}
+                    onRemove={(idx) => setLines(lines.filter((_, j) => j !== idx))}
+                  />
+                ))}
                 <Button
                   type="button"
                   variant="outline"
@@ -4812,12 +5489,17 @@ function PurityPicker({
 
 export interface DiamondRow {
   shape: string;
-  caratWeight: string; // carats, e.g. "1.05"
+  caratWeight: string; // carats, e.g. "1.050" (3 decimal places)
   cut: string;
   clarity: string;
   color: string;
   count: string;
   costRupees: string;
+  sellingPriceRupees: string;
+  /** Purchase rate ₹/ct used to auto-compute costRupees. Persisted so it pre-fills on re-edit. */
+  purchaseRateRupees: string;
+  /** Selling rate ₹/ct used to auto-compute sellingPriceRupees. Persisted so it pre-fills on re-edit. */
+  sellingRateRupees: string;
 }
 
 export const emptyDiamondRow = (): DiamondRow => ({
@@ -4828,23 +5510,29 @@ export const emptyDiamondRow = (): DiamondRow => ({
   color: '',
   count: '1',
   costRupees: '',
+  sellingPriceRupees: '',
+  purchaseRateRupees: '',
+  sellingRateRupees: '',
 });
 
 // Persisted diamond rows (from the API) → editable form rows.
 export function dbDiamondsToRows(
   diamonds:
-    | Array<{ shape?: string | null; caratWeightX100?: number; cut?: string | null; clarity?: string | null; color?: string | null; count?: number; costPaise?: number }>
+    | Array<{ shape?: string | null; caratWeightX100?: number; cut?: string | null; clarity?: string | null; color?: string | null; count?: number; costPaise?: number; sellingPricePaise?: number | null; purchaseRatePaise?: number | null; sellRatePaise?: number | null }>
     | undefined,
 ): DiamondRow[] {
   if (!diamonds || diamonds.length === 0) return [];
   return diamonds.map((d) => ({
     shape: d.shape ?? '',
-    caratWeight: d.caratWeightX100 ? String(d.caratWeightX100 / 100) : '',
+    caratWeight: d.caratWeightX100 ? (d.caratWeightX100 / 100).toFixed(3) : '',
     cut: d.cut ?? '',
     clarity: d.clarity ?? '',
     color: d.color ?? '',
     count: String(d.count ?? 1),
     costRupees: d.costPaise ? String(d.costPaise / 100) : '',
+    sellingPriceRupees: d.sellingPricePaise ? String(d.sellingPricePaise / 100) : '',
+    purchaseRateRupees: d.purchaseRatePaise ? String(d.purchaseRatePaise / 100) : '',
+    sellingRateRupees: d.sellRatePaise ? String(d.sellRatePaise / 100) : '',
   }));
 }
 
@@ -4860,7 +5548,185 @@ export function diamondRowsToInput(rows: DiamondRow[]) {
       color: r.color || null,
       count: Math.max(1, parseInt(r.count, 10) || 1),
       costPaise: Math.round((parseFloat(r.costRupees) || 0) * 100),
+      sellingPricePaise: r.sellingPriceRupees.trim()
+        ? Math.round((parseFloat(r.sellingPriceRupees) || 0) * 100)
+        : null,
+      purchaseRatePaise: r.purchaseRateRupees.trim()
+        ? Math.round((parseFloat(r.purchaseRateRupees) || 0) * 100)
+        : null,
+      sellRatePaise: r.sellingRateRupees.trim()
+        ? Math.round((parseFloat(r.sellingRateRupees) || 0) * 100)
+        : null,
     }));
+}
+
+// ── Price Calculator ─────────────────────────────────────────────────────────
+// Helps the admin compute cost price and selling price from components:
+//   GOLD / SILVER: weight × rate + making × weight + 3% GST
+//   18K Gold Tone / OTHER: fixed rate + 3% GST, no making needed
+// "Use as Cost / Selling Price" buttons fill the respective fields.
+function PriceCalcHelper({
+  metalType,
+  categoryName,
+  weightG,
+  onUseCost,
+  onUseSelling,
+}: {
+  metalType: string;
+  categoryName: string;
+  weightG: string;
+  onUseCost: (rupees: string) => void;
+  onUseSelling: (rupees: string) => void;
+}): JSX.Element {
+  const isFixedPrice =
+    metalType === 'OTHER' ||
+    metalType === 'STAINLESS_STEEL' ||
+    /tone|plated/i.test(categoryName);
+
+  const [costRate, setCostRate] = useState('');
+  const [costMaking, setCostMaking] = useState('');
+  const [sellRate, setSellRate] = useState('');
+  const [sellMaking, setSellMaking] = useState('');
+  const [fixedCostRate, setFixedCostRate] = useState('');
+  const [fixedSellRate, setFixedSellRate] = useState('');
+
+  const weight = parseFloat(weightG) || 0;
+
+  function calcBreakdown(rate: string, making: string) {
+    const r = parseFloat(rate) || 0;
+    const m = parseFloat(making) || 0;
+    const metal = weight * r;
+    const makingAmt = weight * m;
+    const subtotal = metal + makingAmt;
+    const gst = subtotal * 0.03;
+    return { metal, making: makingAmt, gst, total: subtotal + gst };
+  }
+
+  function calcFixed(rate: string) {
+    const r = parseFloat(rate) || 0;
+    const gst = r * 0.03;
+    return { gst, total: r + gst };
+  }
+
+  const metalLabel = metalType === 'SILVER' ? 'Silver rate (₹/g)' : 'Gold rate (₹/g)';
+
+  if (isFixedPrice) {
+    const c = calcFixed(fixedCostRate);
+    const s = calcFixed(fixedSellRate);
+    return (
+      <div className="rounded-md border border-amber-200 bg-amber-50/40 p-3 text-sm space-y-3">
+        <p className="text-[11px] uppercase tracking-wider font-semibold text-amber-700">
+          Fixed price — no making charge (18K Gold Tone)
+        </p>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div className="space-y-1.5">
+            <p className="text-[10px] font-medium text-ink-600 uppercase">Purchase rate</p>
+            <input
+              type="number" step="0.01" min={0} value={fixedCostRate}
+              onChange={(e) => setFixedCostRate(e.target.value)}
+              className={fieldCls} placeholder="₹/piece excl. GST"
+            />
+            {parseFloat(fixedCostRate) > 0 && (
+              <div className="rounded bg-ink-50 px-2.5 py-1.5 text-xs font-mono space-y-0.5">
+                <div className="flex justify-between text-ink-500"><span>GST (3%)</span><span>₹{c.gst.toFixed(2)}</span></div>
+                <div className="flex justify-between font-semibold text-ink-900 border-t border-ink-200 pt-0.5"><span>Total</span><span>₹{c.total.toFixed(2)}</span></div>
+              </div>
+            )}
+            {c.total > 0 && (
+              <button type="button" onClick={() => onUseCost(c.total.toFixed(2))} className="text-[11px] px-2.5 py-1 rounded border border-ink-300 hover:bg-ink-50 w-full text-left">
+                → Use as Cost Price
+              </button>
+            )}
+          </div>
+          <div className="space-y-1.5">
+            <p className="text-[10px] font-medium text-ink-600 uppercase">Sale rate</p>
+            <input
+              type="number" step="0.01" min={0} value={fixedSellRate}
+              onChange={(e) => setFixedSellRate(e.target.value)}
+              className={fieldCls} placeholder="₹/piece excl. GST"
+            />
+            {parseFloat(fixedSellRate) > 0 && (
+              <div className="rounded bg-ink-50 px-2.5 py-1.5 text-xs font-mono space-y-0.5">
+                <div className="flex justify-between text-ink-500"><span>GST (3%)</span><span>₹{s.gst.toFixed(2)}</span></div>
+                <div className="flex justify-between font-semibold text-ink-900 border-t border-ink-200 pt-0.5"><span>Total</span><span>₹{s.total.toFixed(2)}</span></div>
+              </div>
+            )}
+            {s.total > 0 && (
+              <button type="button" onClick={() => onUseSelling(s.total.toFixed(2))} className="text-[11px] px-2.5 py-1 rounded border border-ink-300 hover:bg-ink-50 w-full text-left">
+                → Use as Selling Price
+              </button>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  const cost = calcBreakdown(costRate, costMaking);
+  const sell = calcBreakdown(sellRate, sellMaking);
+  const hasWeight = weight > 0;
+
+  return (
+    <div className="rounded-md border border-brand-200 bg-brand-50/30 p-3 text-sm space-y-3">
+      <p className="text-[11px] uppercase tracking-wider font-semibold text-brand-700">
+        Price calculator — weight × rate + making + 3% GST
+      </p>
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+        <div className="space-y-1.5">
+          <p className="text-[10px] font-medium text-ink-600 uppercase">Cost price components</p>
+          <div className="grid grid-cols-2 gap-1.5">
+            <div>
+              <span className="text-[10px] text-ink-500 block mb-0.5">{metalLabel}</span>
+              <input type="number" step="0.01" min={0} value={costRate} onChange={(e) => setCostRate(e.target.value)} className={fieldCls} placeholder="e.g. 3200" />
+            </div>
+            <div>
+              <span className="text-[10px] text-ink-500 block mb-0.5">Making (₹/g)</span>
+              <input type="number" step="0.01" min={0} value={costMaking} onChange={(e) => setCostMaking(e.target.value)} className={fieldCls} placeholder="e.g. 150" />
+            </div>
+          </div>
+          {hasWeight && parseFloat(costRate) > 0 && (
+            <div className="rounded bg-ink-50 px-2.5 py-1.5 text-xs font-mono space-y-0.5">
+              <div className="flex justify-between text-ink-500"><span>Metal ({weight}g × ₹{parseFloat(costRate)||0}/g)</span><span>₹{cost.metal.toFixed(2)}</span></div>
+              {cost.making > 0 && <div className="flex justify-between text-ink-500"><span>Making ({weight}g × ₹{parseFloat(costMaking)||0}/g)</span><span>₹{cost.making.toFixed(2)}</span></div>}
+              <div className="flex justify-between text-ink-500"><span>GST (3%)</span><span>₹{cost.gst.toFixed(2)}</span></div>
+              <div className="flex justify-between font-semibold text-ink-900 border-t border-ink-200 pt-0.5"><span>Total</span><span>₹{cost.total.toFixed(2)}</span></div>
+            </div>
+          )}
+          {cost.total > 0 && hasWeight && (
+            <button type="button" onClick={() => onUseCost(cost.total.toFixed(2))} className="text-[11px] px-2.5 py-1 rounded border border-ink-300 hover:bg-ink-50 w-full text-left">
+              → Use as Cost Price
+            </button>
+          )}
+        </div>
+        <div className="space-y-1.5">
+          <p className="text-[10px] font-medium text-ink-600 uppercase">Selling price components</p>
+          <div className="grid grid-cols-2 gap-1.5">
+            <div>
+              <span className="text-[10px] text-ink-500 block mb-0.5">{metalLabel}</span>
+              <input type="number" step="0.01" min={0} value={sellRate} onChange={(e) => setSellRate(e.target.value)} className={fieldCls} placeholder="e.g. 3500" />
+            </div>
+            <div>
+              <span className="text-[10px] text-ink-500 block mb-0.5">Making (₹/g)</span>
+              <input type="number" step="0.01" min={0} value={sellMaking} onChange={(e) => setSellMaking(e.target.value)} className={fieldCls} placeholder="e.g. 200" />
+            </div>
+          </div>
+          {hasWeight && parseFloat(sellRate) > 0 && (
+            <div className="rounded bg-ink-50 px-2.5 py-1.5 text-xs font-mono space-y-0.5">
+              <div className="flex justify-between text-ink-500"><span>Metal ({weight}g × ₹{parseFloat(sellRate)||0}/g)</span><span>₹{sell.metal.toFixed(2)}</span></div>
+              {sell.making > 0 && <div className="flex justify-between text-ink-500"><span>Making ({weight}g × ₹{parseFloat(sellMaking)||0}/g)</span><span>₹{sell.making.toFixed(2)}</span></div>}
+              <div className="flex justify-between text-ink-500"><span>GST (3%)</span><span>₹{sell.gst.toFixed(2)}</span></div>
+              <div className="flex justify-between font-semibold text-ink-900 border-t border-ink-200 pt-0.5"><span>Total</span><span>₹{sell.total.toFixed(2)}</span></div>
+            </div>
+          )}
+          {sell.total > 0 && hasWeight && (
+            <button type="button" onClick={() => onUseSelling(sell.total.toFixed(2))} className="text-[11px] px-2.5 py-1 rounded border border-ink-300 hover:bg-ink-50 w-full text-left">
+              → Use as Selling Price
+            </button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
 }
 
 function DiamondsEditor({
@@ -4872,7 +5738,9 @@ function DiamondsEditor({
 }): JSX.Element {
   const set = (i: number, patch: Partial<DiamondRow>) =>
     onChange(rows.map((r, idx) => (idx === i ? { ...r, ...patch } : r)));
-  const totalCost = rows.reduce((s, r) => s + (parseFloat(r.costRupees) || 0) * (parseInt(r.count, 10) || 1), 0);
+  // costRupees is the TOTAL cost for all stones in a row (caratWeight × qty × rate + GST).
+  // Do NOT multiply by count again here — costPaise already represents the row total.
+  const totalCost = rows.reduce((s, r) => s + (parseFloat(r.costRupees) || 0), 0);
   return (
     <div className="space-y-2">
       {rows.length === 0 && (
@@ -4888,9 +5756,9 @@ function DiamondsEditor({
               ))}
             </select>
             <input
-              type="number" step="0.01" min={0} value={r.caratWeight}
+              type="number" step="0.001" min={0} value={r.caratWeight}
               onChange={(e) => set(i, { caratWeight: e.target.value })}
-              placeholder="Carat (ct)" className={`${fieldCls} text-xs`}
+              placeholder="Carat 0.000" className={`${fieldCls} text-xs`}
             />
             <input
               type="number" min={1} value={r.count}
@@ -4910,12 +5778,75 @@ function DiamondsEditor({
               {DIAMOND_COLORS.map((c) => <option key={c} value={c}>{c}</option>)}
             </select>
           </div>
-          <div className="flex items-center gap-2">
-            <input
-              type="number" step="0.01" min={0} value={r.costRupees}
-              onChange={(e) => set(i, { costRupees: e.target.value })}
-              placeholder="Diamond cost (₹)" className={`${fieldCls} text-xs flex-1`}
-            />
+          {/* Diamond rate calculator: weight × purchase rate + 3% GST → auto-fills costRupees */}
+          <div className="rounded bg-blue-50/60 border border-blue-100 px-2.5 py-2 space-y-1.5">
+            <p className="text-[10px] uppercase tracking-wider text-blue-600 font-medium">Purchase rate calculator</p>
+            <div className="flex items-end gap-2">
+              <div className="flex-1">
+                <span className="text-[10px] text-ink-500 block mb-0.5">Rate (₹/ct)</span>
+                <input
+                  type="number" step="0.01" min={0} value={r.purchaseRateRupees}
+                  onChange={(e) => {
+                    const rate = parseFloat(e.target.value) || 0;
+                    const ct = parseFloat(r.caratWeight) || 0;
+                    const total = ct * rate * 1.03;
+                    set(i, { purchaseRateRupees: e.target.value, costRupees: rate > 0 && ct > 0 ? total.toFixed(2) : r.costRupees });
+                  }}
+                  placeholder="₹/carat" className={`${fieldCls} text-xs`}
+                />
+              </div>
+              {parseFloat(r.purchaseRateRupees) > 0 && parseFloat(r.caratWeight) > 0 && (
+                <div className="text-[10px] font-mono text-ink-600 pb-0.5 leading-tight space-y-0.5">
+                  <div>{(parseFloat(r.caratWeight)||0).toFixed(3)} ct × ₹{parseFloat(r.purchaseRateRupees)||0}/ct</div>
+                  <div className="text-ink-500">+3% GST → <span className="font-semibold text-ink-800">₹{((parseFloat(r.caratWeight)||0)*(parseFloat(r.purchaseRateRupees)||0)*1.03).toFixed(2)}</span></div>
+                </div>
+              )}
+            </div>
+          </div>
+          <div className="grid grid-cols-2 gap-2">
+            <div>
+              <span className="text-[10px] text-ink-500 block mb-0.5">Purchase cost (₹ total)</span>
+              <input
+                type="number" step="0.01" min={0} value={r.costRupees}
+                onChange={(e) => set(i, { costRupees: e.target.value })}
+                placeholder="Total cost incl. GST" className={`${fieldCls} text-xs`}
+              />
+            </div>
+            <div>
+              <span className="text-[10px] text-ink-500 block mb-0.5">Selling price (₹ total)</span>
+              <input
+                type="number" step="0.01" min={0} value={r.sellingPriceRupees}
+                onChange={(e) => set(i, { sellingPriceRupees: e.target.value })}
+                placeholder="Total selling incl. GST" className={`${fieldCls} text-xs`}
+              />
+            </div>
+          </div>
+          {/* Selling rate calculator */}
+          <div className="rounded bg-emerald-50/60 border border-emerald-100 px-2.5 py-2 space-y-1.5">
+            <p className="text-[10px] uppercase tracking-wider text-emerald-700 font-medium">Selling rate calculator</p>
+            <div className="flex items-end gap-2">
+              <div className="flex-1">
+                <span className="text-[10px] text-ink-500 block mb-0.5">Sell rate (₹/ct)</span>
+                <input
+                  type="number" step="0.01" min={0} value={r.sellingRateRupees}
+                  onChange={(e) => {
+                    const rate = parseFloat(e.target.value) || 0;
+                    const ct = parseFloat(r.caratWeight) || 0;
+                    const total = ct * rate * 1.03;
+                    set(i, { sellingRateRupees: e.target.value, sellingPriceRupees: rate > 0 && ct > 0 ? total.toFixed(2) : r.sellingPriceRupees });
+                  }}
+                  placeholder="₹/carat" className={`${fieldCls} text-xs`}
+                />
+              </div>
+              {parseFloat(r.sellingRateRupees) > 0 && parseFloat(r.caratWeight) > 0 && (
+                <div className="text-[10px] font-mono text-ink-600 pb-0.5 leading-tight space-y-0.5">
+                  <div>{(parseFloat(r.caratWeight)||0).toFixed(3)} ct × ₹{parseFloat(r.sellingRateRupees)||0}/ct</div>
+                  <div className="text-emerald-600">+3% GST → <span className="font-semibold text-emerald-800">₹{((parseFloat(r.caratWeight)||0)*(parseFloat(r.sellingRateRupees)||0)*1.03).toFixed(2)}</span></div>
+                </div>
+              )}
+            </div>
+          </div>
+          <div className="flex justify-end">
             <button
               type="button"
               onClick={() => onChange(rows.filter((_, idx) => idx !== i))}
@@ -4936,9 +5867,15 @@ function DiamondsEditor({
         >
           <Plus className="h-3.5 w-3.5" /> Add diamond
         </button>
-        {rows.length > 0 && (
-          <span className="text-[11px] text-ink-500 font-mono">Diamond cost ₹{totalCost.toFixed(2)}</span>
-        )}
+        {rows.length > 0 && (() => {
+          const totalSell = rows.reduce((s, r) => s + (parseFloat(r.sellingPriceRupees) || 0), 0);
+          return (
+            <div className="text-[11px] font-mono space-y-0.5 text-right">
+              <div className="text-ink-500">Cost ₹{totalCost.toFixed(2)}</div>
+              {totalSell > 0 && <div className="text-emerald-700">Sell ₹{totalSell.toFixed(2)}</div>}
+            </div>
+          );
+        })()}
       </div>
     </div>
   );
