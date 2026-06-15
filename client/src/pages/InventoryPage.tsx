@@ -3373,6 +3373,7 @@ function AddItemDialog({ open, onClose }: { open: boolean; onClose: () => void }
   const [diamonds, setDiamonds] = useState<DiamondRow[]>([]);
   const [publishToWebsite, setPublishToWebsite] = useState(true);
   const [uploading, setUploading] = useState<{ name: string; progress: number }[]>([]);
+  const [calcSellTotal, setCalcSellTotal] = useState(0);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const cloudinaryReady = isCloudinaryConfigured();
   // Stock model — see schema.prisma Item.isSerialized.
@@ -3876,6 +3877,7 @@ function AddItemDialog({ open, onClose }: { open: boolean; onClose: () => void }
                 weightG={form.weightG}
                 onUseCost={(v) => setForm((f) => ({ ...f, costPriceRupees: v }))}
                 onUseSelling={(v) => setForm((f) => ({ ...f, sellingPriceRupees: v }))}
+                onSellCalc={setCalcSellTotal}
               />
             )}
 
@@ -3937,6 +3939,23 @@ function AddItemDialog({ open, onClose }: { open: boolean; onClose: () => void }
             <Field label="Diamonds (4 Cs)">
               <DiamondsEditor rows={diamonds} onChange={setDiamonds} />
             </Field>
+
+            {calcSellTotal > 0 && diamonds.length > 0 && (() => {
+              const diamondSell = diamonds.reduce((s, r) => s + (parseFloat(r.sellingPriceRupees) || 0), 0);
+              return diamondSell > 0 ? (
+                <div className="rounded-md border border-amber-200 bg-amber-50/40 px-3 py-2 font-mono text-xs space-y-1">
+                  <div className="flex justify-between text-ink-500">
+                    <span>Metal sell (incl. GST)</span><span>₹{calcSellTotal.toFixed(2)}</span>
+                  </div>
+                  <div className="flex justify-between text-ink-500">
+                    <span>Diamond sell (incl. GST)</span><span>₹{diamondSell.toFixed(2)}</span>
+                  </div>
+                  <div className="flex justify-between font-semibold text-ink-900 border-t border-amber-200 pt-1">
+                    <span>Grand Total</span><span>₹{(calcSellTotal + diamondSell).toFixed(2)}</span>
+                  </div>
+                </div>
+              ) : null;
+            })()}
 
             <label className="flex items-start gap-2 pt-2 cursor-pointer select-none">
               <input
@@ -4047,6 +4066,7 @@ function EditItemDialog({
   const [images, setImages] = useState<string[]>(item.images ?? []);
   const [collectionIds, setCollectionIds] = useState<string[]>(itemExt.collectionIds ?? []);
   const [diamonds, setDiamonds] = useState<DiamondRow[]>(dbDiamondsToRows(itemExt.diamonds));
+  const [calcSellTotal, setCalcSellTotal] = useState(0);
   const [publishToWebsite, setPublishToWebsite] = useState<boolean>(
     (item as Item & { isPublished?: boolean }).isPublished ?? false,
   );
@@ -4399,6 +4419,7 @@ function EditItemDialog({
                 weightG={form.weightG}
                 onUseCost={(v) => setForm((f) => ({ ...f, costPriceRupees: v }))}
                 onUseSelling={(v) => setForm((f) => ({ ...f, sellingPriceRupees: v }))}
+                onSellCalc={setCalcSellTotal}
               />
             )}
 
@@ -4461,6 +4482,23 @@ function EditItemDialog({
             <Field label="Diamonds (4 Cs)">
               <DiamondsEditor rows={diamonds} onChange={setDiamonds} />
             </Field>
+
+            {calcSellTotal > 0 && diamonds.length > 0 && (() => {
+              const diamondSell = diamonds.reduce((s, r) => s + (parseFloat(r.sellingPriceRupees) || 0), 0);
+              return diamondSell > 0 ? (
+                <div className="rounded-md border border-amber-200 bg-amber-50/40 px-3 py-2 font-mono text-xs space-y-1">
+                  <div className="flex justify-between text-ink-500">
+                    <span>Metal sell (incl. GST)</span><span>₹{calcSellTotal.toFixed(2)}</span>
+                  </div>
+                  <div className="flex justify-between text-ink-500">
+                    <span>Diamond sell (incl. GST)</span><span>₹{diamondSell.toFixed(2)}</span>
+                  </div>
+                  <div className="flex justify-between font-semibold text-ink-900 border-t border-amber-200 pt-1">
+                    <span>Grand Total</span><span>₹{(calcSellTotal + diamondSell).toFixed(2)}</span>
+                  </div>
+                </div>
+              ) : null;
+            })()}
 
             <label className="flex items-start gap-2 pt-2 cursor-pointer select-none">
               <input
@@ -5934,12 +5972,14 @@ function PriceCalcHelper({
   weightG,
   onUseCost,
   onUseSelling,
+  onSellCalc,
 }: {
   metalType: string;
   categoryName: string;
   weightG: string;
   onUseCost: (rupees: string) => void;
   onUseSelling: (rupees: string) => void;
+  onSellCalc?: (rupees: number) => void;
 }): JSX.Element {
   const isFixedPrice =
     metalType === 'OTHER' ||
@@ -6028,6 +6068,10 @@ function PriceCalcHelper({
   const cost = calcBreakdown(costRate, costMaking);
   const sell = calcBreakdown(sellRate, sellMaking);
   const hasWeight = weight > 0;
+
+  useEffect(() => {
+    onSellCalc?.(sell.total);
+  }, [sell.total, onSellCalc]);
 
   return (
     <div className="rounded-md border border-brand-200 bg-brand-50/30 p-3 text-sm space-y-3">

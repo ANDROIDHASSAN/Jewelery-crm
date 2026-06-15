@@ -36,7 +36,7 @@ export interface StorefrontPrice {
   metalValuePaise: number;
   makingPaise: number;
   stoneChargePaise: number;
-  /** metal + making + stone, before GST. */
+  /** metal + making + stone base (pre-GST for all components), before GST. */
   subtotalPaise: number;
   gstPaise: number;
   /** GST-inclusive — what the customer pays. */
@@ -94,7 +94,10 @@ export function computeStorefrontPrice(p: PricedProduct, rates: StorefrontRates)
     }
   }
 
-  const subtotalPaise = metalValuePaise + makingPaise + p.stoneChargePaise;
+  // stoneChargePaise is stored GST-inclusive (sell_rate × ct × 1.03); strip the
+  // embedded 3% so the uniform 3% GST is applied exactly once across all components.
+  const stoneBasePaise = Math.round((p.stoneChargePaise * 10000) / 10300);
+  const subtotalPaise = metalValuePaise + makingPaise + stoneBasePaise;
   const gstPaise = Math.round((subtotalPaise * STOREFRONT_GST_BPS) / 10000);
   const totalPaise = subtotalPaise + gstPaise;
   return {

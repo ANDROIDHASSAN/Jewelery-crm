@@ -182,7 +182,10 @@ export function ProductDetailPage(): JSX.Element {
     making = Math.round((gold * product.makingChargeBps) / 10000);
   }
 
-  const subtotal = gold + making + product.stoneChargePaise;
+  // stoneChargePaise is stored GST-inclusive; strip the embedded 3% before
+  // computing the uniform GST so diamonds are not taxed twice.
+  const stoneBasePaise = Math.round((product.stoneChargePaise * 10000) / 10300);
+  const subtotal = gold + making + stoneBasePaise;
   const gst = Math.round((subtotal * GST_BPS) / 10000);
   const total = subtotal + gst;
   // Season Sale offer (% off / ₹ off / BOGO) — drives the struck price + badge.
@@ -649,8 +652,8 @@ export function ProductDetailPage(): JSX.Element {
                           <span className="text-xs text-ink-500">Count</span>
                         </div>
                         <div className="text-right">
-                          <Money paise={d.valuePaise} className="block text-ink-800 font-mono tabular-nums" />
-                          <span className="text-xs text-ink-500">Final value</span>
+                          <Money paise={Math.round((d.valuePaise * 10000) / 10300)} className="block text-ink-800 font-mono tabular-nums" />
+                          <span className="text-xs text-ink-500">Excl. GST</span>
                         </div>
                       </div>
                     </div>
@@ -661,9 +664,9 @@ export function ProductDetailPage(): JSX.Element {
                 <div className="border-t border-ink-100 pt-3 space-y-2">
                   {making > 0 && <Row label="Making charges" value={<Money paise={making} />} />}
                   {/* Legacy fallback: products with a manual stone charge but no
-                      detailed diamond groups still show a single line. */}
+                      detailed diamond groups still show a single line (excl. GST). */}
                   {(product.diamonds ?? []).length === 0 && product.stoneChargePaise > 0 && (
-                    <Row label="Stone / diamond charges" value={<Money paise={product.stoneChargePaise} />} />
+                    <Row label="Stone / diamond charges" value={<Money paise={Math.round((product.stoneChargePaise * 10000) / 10300)} />} />
                   )}
                   <Row label="GST (3%)" value={<Money paise={gst} />} />
                 </div>
