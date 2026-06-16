@@ -6013,6 +6013,21 @@ function PriceCalcHelper({
 
   const metalLabel = metalType === 'SILVER' ? 'Silver rate (₹/g)' : 'Gold rate (₹/g)';
 
+  // Report the active pricing mode's sell total up to the parent (it drives the
+  // Grand Total row). This hook MUST run on every render — i.e. BEFORE the
+  // `isFixedPrice` early-return below. If it sits after the early return, the
+  // hook count changes whenever a category flips between fixed and calculated
+  // pricing (e.g. selecting an "…Tone"/"…plated" category, or a non-precious
+  // metal), which crashes the whole page with React error #310 ("rendered more
+  // hooks than during the previous render"). Reporting the fixed sell total
+  // here also fixes the Grand Total never updating in fixed-price mode.
+  const sellTotalForParent = isFixedPrice
+    ? calcFixed(fixedSellRate).total
+    : calcBreakdown(sellRate, sellMaking).total;
+  useEffect(() => {
+    onSellCalc?.(sellTotalForParent);
+  }, [sellTotalForParent, onSellCalc]);
+
   if (isFixedPrice) {
     const c = calcFixed(fixedCostRate);
     const s = calcFixed(fixedSellRate);
@@ -6068,10 +6083,6 @@ function PriceCalcHelper({
   const cost = calcBreakdown(costRate, costMaking);
   const sell = calcBreakdown(sellRate, sellMaking);
   const hasWeight = weight > 0;
-
-  useEffect(() => {
-    onSellCalc?.(sell.total);
-  }, [sell.total, onSellCalc]);
 
   return (
     <div className="rounded-md border border-brand-200 bg-brand-50/30 p-3 text-sm space-y-3">

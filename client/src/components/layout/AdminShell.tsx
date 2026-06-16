@@ -3,6 +3,7 @@ import { Outlet, useLocation } from 'react-router-dom';
 import { Sidebar } from './Sidebar';
 import { TopBar } from './TopBar';
 import { CommandPalette } from './CommandPalette';
+import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { useMeQuery } from '@/features/auth/authApi';
 import { useAppDispatch } from '@/app/hooks';
 import { setUser } from '@/features/auth/authSlice';
@@ -60,7 +61,12 @@ export function AdminShell(): JSX.Element {
           />
         </div>
         <main className="flex-1 px-3 sm:px-4 lg:px-6 py-4 sm:py-6 print:p-0">
-          <Outlet />
+          {/* Per-page boundary: a crash in one screen shows a contained error
+              card here while the sidebar/topbar stay usable. Keyed by route so
+              navigating to another page clears the error automatically. */}
+          <ErrorBoundary resetKey={location.pathname}>
+            <Outlet />
+          </ErrorBoundary>
         </main>
       </div>
       <CommandPalette open={cmdOpen} onOpenChange={setCmdOpen} />

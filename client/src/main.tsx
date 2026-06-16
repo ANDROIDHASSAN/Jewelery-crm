@@ -5,6 +5,7 @@ import { Toaster } from 'sonner';
 import { store } from '@/app/store';
 import { AppRouter } from '@/app/routes';
 import { DocumentHead } from '@/components/DocumentHead';
+import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { syncPending } from '@/features/pos/offline';
 import '@/styles/globals.css';
 
@@ -15,7 +16,11 @@ createRoot(rootEl).render(
   <StrictMode>
     <Provider store={store}>
       <DocumentHead />
-      <AppRouter />
+      {/* Top-level safety net for routes that don't pass through AdminShell
+          (storefront, POS shell) and for any router-level failure. */}
+      <ErrorBoundary>
+        <AppRouter />
+      </ErrorBoundary>
       <Toaster position="top-right" richColors closeButton />
     </Provider>
   </StrictMode>,

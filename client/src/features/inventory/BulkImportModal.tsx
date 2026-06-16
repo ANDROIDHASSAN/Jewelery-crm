@@ -202,14 +202,17 @@ export function BulkImportModal({ open, onClose }: Props): JSX.Element | null {
                 <p className="text-xs text-ink-500">.xlsx or .csv · up to 8 MB</p>
               </>
             )}
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept=".xlsx,.csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,text/csv"
-              hidden
-              onChange={(e) => onPickFile(e.target.files?.[0] ?? null)}
-            />
           </div>
+          {/* Sibling, not child: when nested inside the dropzone the input's
+              programmatic .click() bubbled back to the dropzone onClick and
+              re-fired the picker — opening the file dialog twice. */}
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept=".xlsx,.csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,text/csv"
+            hidden
+            onChange={(e) => onPickFile(e.target.files?.[0] ?? null)}
+          />
 
           {result && (
             <ResultSummary result={result} />

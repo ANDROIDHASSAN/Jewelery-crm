@@ -5,10 +5,11 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc -b && vite build",
+    "build": "tsc -b && npm run lint:hooks && vite build",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
     "lint": "eslint . --ext .ts,.tsx",
+    "lint:hooks": "eslint . --ext .ts,.tsx --no-eslintrc --config .eslintrc.hooks.cjs",
     "test": "vitest run"
   },
   "dependencies": {

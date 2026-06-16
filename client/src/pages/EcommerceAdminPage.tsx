@@ -1423,20 +1423,24 @@ function ImageUploader({
             Using local image storage (dev mode). Configure Cloudinary in client/.env for hosted uploads.
           </p>
         )}
-        <input
-          ref={fileInputRef}
-          type="file"
-          accept="image/*"
-          multiple
-          className="hidden"
-          onChange={(e) => {
-            const files = e.target.files ? Array.from(e.target.files) : [];
-            if (files.length > 0) void uploadFiles(files);
-            // Reset so picking the same file twice still fires onChange.
-            e.target.value = '';
-          }}
-        />
       </div>
+      {/* Input lives as a SIBLING of the dropzone, not a child. When it was
+          nested, the dropzone's onClick fired fileInputRef.click(), whose
+          synthetic click bubbled back up to the same onClick and re-fired the
+          picker — opening the file dialog twice. */}
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept="image/*"
+        multiple
+        className="hidden"
+        onChange={(e) => {
+          const files = e.target.files ? Array.from(e.target.files) : [];
+          if (files.length > 0) void uploadFiles(files);
+          // Reset so picking the same file twice still fires onChange.
+          e.target.value = '';
+        }}
+      />
 
       {uploading.length > 0 && (
         <ul className="space-y-1.5">
