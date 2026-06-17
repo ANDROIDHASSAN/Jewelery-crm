@@ -70,6 +70,8 @@ import {
   useDeleteVendorMutation,
   useGetPurchaseOrdersQuery,
   useCreatePurchaseOrderMutation,
+  useUpdatePurchaseOrderMutation,
+  useDeletePurchaseOrderMutation,
   useReceivePurchaseOrderMutation,
   useSetPurchaseOrderGstMutation,
   useGetAuditLogQuery,
@@ -234,6 +236,27 @@ function ItemsTab(): JSX.Element {
   const [categoryFilter, setCategoryFilter] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
   const [hallmarkFilter, setHallmarkFilter] = useState('');
+  const [vendorFilter, setVendorFilter] = useState('');
+
+  // Vendor filter is derived from purchase history: items don't carry a vendor
+  // FK, so we map each vendor → the SKUs they were purchased on (every PO line's
+  // itemSku becomes the Item's sku on receive). Selecting a vendor then narrows
+  // the table to items whose sku appears on one of that vendor's POs.
+  const { data: vendorsRes } = useGetVendorsQuery();
+  const { data: poRes } = useGetPurchaseOrdersQuery();
+  const vendorOptions = useMemo(
+    () => (vendorsRes?.data ?? []).map((v) => ({ id: v.id, name: v.name })),
+    [vendorsRes?.data],
+  );
+  const vendorSkuSet = useMemo(() => {
+    if (!vendorFilter) return null;
+    const skus = new Set<string>();
+    for (const po of poRes?.data ?? []) {
+      if (po.vendorId !== vendorFilter) continue;
+      for (const line of po.items) skus.add(line.itemSku);
+    }
+    return skus;
+  }, [vendorFilter, poRes?.data]);
 
   const categoryNameById = useMemo(() => {
     const map = new Map<string, string>();
@@ -314,6 +337,10 @@ function ItemsTab(): JSX.Element {
         onStatusFilter={setStatusFilter}
         hallmarkFilter={hallmarkFilter}
         onHallmarkFilter={setHallmarkFilter}
+        vendorFilter={vendorFilter}
+        onVendorFilter={setVendorFilter}
+        vendors={vendorOptions}
+        vendorSkuSet={vendorSkuSet}
         shops={shopsRes?.data ?? []}
         categories={catRes?.data ?? []}
         shopNameById={shopNameById}
@@ -707,6 +734,10 @@ function InventoryItemsTable({
   onStatusFilter,
   hallmarkFilter,
   onHallmarkFilter,
+  vendorFilter,
+  onVendorFilter,
+  vendors,
+  vendorSkuSet,
   shops,
   categories,
   shopNameById,
@@ -731,6 +762,11 @@ function InventoryItemsTable({
   onStatusFilter: (next: string) => void;
   hallmarkFilter: string;
   onHallmarkFilter: (next: string) => void;
+  vendorFilter: string;
+  onVendorFilter: (next: string) => void;
+  vendors: Array<{ id: string; name: string }>;
+  /** SKUs purchased from the selected vendor; null when no vendor is chosen. */
+  vendorSkuSet: Set<string> | null;
   shops: Array<{ id: string; name: string }>;
   categories: Array<{ id: string; name: string; parentId?: string | null }>;
   shopNameById: Map<string, string>;
@@ -759,9 +795,10 @@ function InventoryItemsTable({
       if (categoryFilterIds && !categoryFilterIds.has(r.categoryId)) return false;
       if (statusFilter && r.status !== statusFilter) return false;
       if (hallmarkFilter && r.hallmarkStatus !== hallmarkFilter) return false;
+      if (vendorSkuSet && !vendorSkuSet.has(r.sku)) return false;
       return true;
     });
-  }, [rows, shopFilter, categoryFilterIds, statusFilter, hallmarkFilter]);
+  }, [rows, shopFilter, categoryFilterIds, statusFilter, hallmarkFilter, vendorSkuSet]);
   const filtered = useTableSearch(
     preFiltered,
     (r) => [r.sku, r.name, r.barcodeData, r.hallmarkRef],
@@ -830,6 +867,16 @@ function InventoryItemsTable({
               { value: 'SUBMITTED', label: 'Submitted' },
               { value: 'CERTIFIED', label: 'Certified' },
               { value: 'EXEMPT', label: 'Exempt' },
+            ],
+          },
+          {
+            key: 'vendor',
+            label: 'Vendor',
+            value: vendorFilter,
+            onChange: onVendorFilter,
+            options: [
+              { value: '', label: 'Any vendor' },
+              ...vendors.map((v) => ({ value: v.id, label: v.name })),
             ],
           },
         ]}
@@ -1003,6 +1050,11 @@ function ValuationTab(): JSX.Element {
             <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-brand-700">Total stock value</p>
             <p className="font-mono text-3xl sm:text-4xl text-ink-900 mt-2 tabular-nums font-semibold">
               <Money paise={v.totalPaise} />
+            </p>
+            <p className="text-xs text-ink-500 mt-2 max-w-md">
+              Live metal at today’s MCX rate + diamond cost; making charges excluded. This matches the
+              “Market value” on Analytics → Inventory value, which also shows cost basis and unrealised
+              profit.
             </p>
           </div>
           <div className="sm:text-right text-sm">
@@ -2631,7 +2683,10 @@ function PurchaseOrdersTab(): JSX.Element {
   const { data: shopsRes } = useGetShopsQuery();
   const { data: catsRes } = useGetCategoriesQuery();
   const [receivePO, { isLoading: receiving }] = useReceivePurchaseOrderMutation();
+  const [deletePO] = useDeletePurchaseOrderMutation();
   const [createOpen, setCreateOpen] = useState(false);
+  // Id of the PO being edited (reuses the create dialog in edit mode).
+  const [editPoId, setEditPoId] = useState<string | null>(null);
   // When multi-shop, we open a Sheet so the user can pick the destination
   // visually. Single-shop tenants auto-receive into their only shop and
   // never see this UI. (Previously this used `window.prompt` which is
@@ -2692,6 +2747,22 @@ function PurchaseOrdersTab(): JSX.Element {
   // Re-derive the open PO from the live list so the drawer reflects fresh data
   // after a GST save or receive (both invalidate the list).
   const detailPo = allRows.find((p) => p.id === detailPoId) ?? null;
+  // PO being edited (full row, incl. line-item detail) for the edit dialog.
+  const editPo = editPoId ? allRows.find((p) => p.id === editPoId) ?? null : null;
+
+  async function handleDelete(poId: string): Promise<void> {
+    if (!window.confirm('Delete this purchase order? This cannot be undone.')) return;
+    try {
+      await deletePO(poId).unwrap();
+      toast.success('Purchase order deleted');
+      setDetailPoId(null);
+    } catch (err) {
+      const message =
+        (err as { data?: { error?: { message?: string } } }).data?.error?.message ??
+        'Could not delete PO';
+      toast.error(message);
+    }
+  }
 
   return (
     <>
@@ -2788,7 +2859,14 @@ function PurchaseOrdersTab(): JSX.Element {
           </div>
         )}
       </div>
-      <CreatePODialog open={createOpen} onClose={() => setCreateOpen(false)} />
+      <CreatePODialog
+        open={createOpen || !!editPo}
+        editPo={editPo}
+        onClose={() => {
+          setCreateOpen(false);
+          setEditPoId(null);
+        }}
+      />
       <ReceivePoShopPicker
         open={!!receiveTargetPo}
         onClose={() => setReceiveTargetPo(null)}
@@ -2809,6 +2887,11 @@ function PurchaseOrdersTab(): JSX.Element {
           setDetailPoId(null);
           void handleReceive(poId);
         }}
+        onEdit={(poId) => {
+          setDetailPoId(null);
+          setEditPoId(poId);
+        }}
+        onDelete={(poId) => void handleDelete(poId)}
       />
     </>
   );
@@ -2888,6 +2971,8 @@ function PoDetailSheet({
   receiving,
   onClose,
   onReceive,
+  onEdit,
+  onDelete,
 }: {
   open: boolean;
   po: PurchaseOrderRow | null;
@@ -2896,6 +2981,8 @@ function PoDetailSheet({
   receiving: boolean;
   onClose: () => void;
   onReceive: (poId: string) => void;
+  onEdit: (poId: string) => void;
+  onDelete: (poId: string) => void;
 }): JSX.Element {
   return (
     <Sheet open={open} onOpenChange={(o) => !o && onClose()}>
@@ -2914,6 +3001,8 @@ function PoDetailSheet({
               categories={categories}
               receiving={receiving}
               onReceive={onReceive}
+              onEdit={onEdit}
+              onDelete={onDelete}
             />
           )}
         </SheetBody>
@@ -2928,12 +3017,16 @@ function PoDetailContent({
   categories,
   receiving,
   onReceive,
+  onEdit,
+  onDelete,
 }: {
   po: PurchaseOrderRow;
   shops: { id: string; name: string; isActive: boolean }[];
   categories: CategoryRow[];
   receiving: boolean;
   onReceive: (poId: string) => void;
+  onEdit: (poId: string) => void;
+  onDelete: (poId: string) => void;
 }): JSX.Element {
   const [setGst, { isLoading: savingGst }] = useSetPurchaseOrderGstMutation();
   const [interState, setInterState] = useState(po.gstInterState);
@@ -2953,6 +3046,11 @@ function PoDetailContent({
 
   const toPaise = (v: string): number => Math.round((parseFloat(v) || 0) * 100);
   const gstPreviewPaise = interState ? toPaise(igst) : toPaise(cgst) + toPaise(sgst);
+  // Line costs are GST-inclusive, so the GST sits *inside* totalPaise.
+  const taxablePaise = po.totalPaise - gstPreviewPaise;
+  // Editable/deletable only before the stock has landed (or been cancelled).
+  const editable = po.status !== 'RECEIVED' && po.status !== 'CANCELLED';
+  const deletable = po.status !== 'RECEIVED';
 
   const receivedShopName = po.receivedShopId
     ? shops.find((s) => s.id === po.receivedShopId)?.name ?? 'Unknown shop'
@@ -2977,6 +3075,27 @@ function PoDetailContent({
 
   return (
     <div className="space-y-5 text-sm">
+      {/* Actions — edit/delete are blocked once the PO is received. */}
+      {(editable || deletable) && (
+        <div className="flex items-center justify-end gap-2">
+          {editable && (
+            <Button size="sm" variant="outline" onClick={() => onEdit(po.id)}>
+              <Pencil className="h-3.5 w-3.5 mr-1" /> Edit
+            </Button>
+          )}
+          {deletable && (
+            <Button
+              size="sm"
+              variant="outline"
+              className="text-rose-600 hover:bg-rose-50 hover:text-rose-700"
+              onClick={() => onDelete(po.id)}
+            >
+              <Trash2 className="h-3.5 w-3.5 mr-1" /> Delete
+            </Button>
+          )}
+        </div>
+      )}
+
       {/* Header facts */}
       <div className="grid grid-cols-2 gap-3">
         <div>
@@ -3132,9 +3251,21 @@ function PoDetailContent({
           </div>
         )}
 
-        <div className="flex items-center justify-between border-t border-ink-100 pt-3">
-          <span className="text-ink-700">Invoice total incl GST</span>
-          <Money paise={po.totalPaise + gstPreviewPaise} className="font-mono text-ink-900" />
+        {/* Line costs are GST-inclusive, so the GST is part of the total — show
+            the taxable split rather than adding GST on top (which double-counts). */}
+        <div className="space-y-1 border-t border-ink-100 pt-3">
+          <div className="flex items-center justify-between text-ink-500">
+            <span>Taxable value</span>
+            <Money paise={taxablePaise} className="font-mono" />
+          </div>
+          <div className="flex items-center justify-between text-ink-500">
+            <span>GST (ITC)</span>
+            <Money paise={gstPreviewPaise} className="font-mono" />
+          </div>
+          <div className="flex items-center justify-between text-ink-900 font-medium">
+            <span>Invoice total incl GST</span>
+            <Money paise={po.totalPaise} className="font-mono" />
+          </div>
         </div>
 
         <Button type="button" className="w-full" disabled={savingGst} onClick={() => void saveGst()}>
@@ -4951,6 +5082,10 @@ interface POLine {
   metalRateRupees?: string;
   /** UI-only: making charge ₹/g used in cost calculator. Not sent to server. */
   makingPerGramCalc?: string;
+  /** UI-only: metal sell rate ₹/g used to auto-compute sellingPriceRupees. Not sent to server. */
+  sellRateRupees?: string;
+  /** UI-only: making charge ₹/g used in the sale calculator. Not sent to server. */
+  sellMakingPerGramCalc?: string;
   // ---- Full item-detail fields (optional, for new pieces) ----
   name?: string;
   description?: string;
@@ -5401,6 +5536,56 @@ function POLineEditor({
         );
       })()}
 
+      {/* ── Sale calculator ── mirrors the cost calculator but fills Selling Price. */}
+      {(lineMetal === 'GOLD' || lineMetal === 'SILVER') && (() => {
+        const w = parseFloat(line.weightG) || 0;
+        const r = parseFloat(line.sellRateRupees ?? '') || 0;
+        const m = parseFloat(line.sellMakingPerGramCalc ?? '') || 0;
+        const metal = w * r; const making = w * m;
+        const subtotal = metal + making; const gst = subtotal * 0.03;
+        const calcTotal = subtotal + gst;
+        const label = lineMetal === 'SILVER' ? 'Silver rate (₹/g)' : 'Gold rate (₹/g)';
+        return (
+          <div className="rounded bg-emerald-50/50 border border-emerald-200 px-2.5 py-2 space-y-1.5">
+            <p className="text-[10px] uppercase tracking-wider text-emerald-700 font-medium">Sale calculator — rate + making + GST</p>
+            <div className="grid grid-cols-2 gap-1.5">
+              <div>
+                <span className="text-[10px] text-ink-500 block mb-0.5">{label}</span>
+                <input type="number" step="0.01" min={0} value={line.sellRateRupees ?? ''}
+                  onChange={(e) => {
+                    const rr = parseFloat(e.target.value) || 0;
+                    const mm = parseFloat(line.sellMakingPerGramCalc ?? '') || 0;
+                    const ww = parseFloat(line.weightG) || 0;
+                    const tot = (ww * rr + ww * mm) * 1.03;
+                    onPatch(index, { sellRateRupees: e.target.value, ...(rr > 0 && ww > 0 ? { sellingPriceRupees: tot.toFixed(2) } : {}) });
+                  }}
+                  className={`${fieldCls} text-xs`} placeholder="e.g. 3500" />
+              </div>
+              <div>
+                <span className="text-[10px] text-ink-500 block mb-0.5">Making (₹/g)</span>
+                <input type="number" step="0.01" min={0} value={line.sellMakingPerGramCalc ?? ''}
+                  onChange={(e) => {
+                    const mm = parseFloat(e.target.value) || 0;
+                    const rr = parseFloat(line.sellRateRupees ?? '') || 0;
+                    const ww = parseFloat(line.weightG) || 0;
+                    const tot = (ww * rr + ww * mm) * 1.03;
+                    onPatch(index, { sellMakingPerGramCalc: e.target.value, ...(rr > 0 && ww > 0 ? { sellingPriceRupees: tot.toFixed(2) } : {}) });
+                  }}
+                  className={`${fieldCls} text-xs`} placeholder="e.g. 200" />
+              </div>
+            </div>
+            {w > 0 && r > 0 && (
+              <div className="text-[10px] font-mono text-ink-600 flex flex-wrap gap-x-3 gap-y-0.5">
+                <span>Metal ₹{metal.toFixed(2)}</span>
+                {making > 0 && <span>Making ₹{making.toFixed(2)}</span>}
+                <span>GST ₹{gst.toFixed(2)}</span>
+                <span className="font-semibold text-emerald-800">Sell ₹{calcTotal.toFixed(2)}</span>
+              </div>
+            )}
+          </div>
+        );
+      })()}
+
       {/* ── Publish toggle ── */}
       <label className="flex items-center gap-2 cursor-pointer select-none">
         <input type="checkbox" checked={line.publishToStorefront ?? false}
@@ -5595,27 +5780,118 @@ function POLineEditor({
   );
 }
 
-function CreatePODialog({ open, onClose }: { open: boolean; onClose: () => void }): JSX.Element {
+// Convert a saved PO row into editable form lines so the Edit dialog pre-fills
+// every field (incl. diamonds, images, collections, making overrides).
+function poRowToLines(po: PurchaseOrderRow): POLine[] {
+  return po.items.map((it) => ({
+    categoryId: it.categoryId ?? '',
+    itemSku: it.itemSku,
+    weightG: String(it.weightMg / 1000),
+    purityCarat: String(it.purity / 100),
+    costRupees: String(it.costPaise / 100),
+    makingPct:
+      it.makingChargeMode !== 'PER_GRAM' && it.makingChargeBps != null
+        ? String(it.makingChargeBps / 100)
+        : '',
+    qty: String(it.quantity ?? 1),
+    sellingPriceRupees: it.sellingPricePaise != null ? String(it.sellingPricePaise / 100) : '',
+    publishToStorefront: it.publishToStorefront ?? false,
+    name: it.name ?? undefined,
+    description: it.description ?? undefined,
+    images: it.images ?? [],
+    hallmarkStatus: it.hallmarkStatus ?? undefined,
+    hallmarkRef: it.hallmarkRef ?? undefined,
+    stoneWeightG: it.stoneWeightMg != null ? String(it.stoneWeightMg / 1000) : undefined,
+    makingMode: it.makingChargeMode ?? undefined,
+    makingPerGramRupees:
+      it.makingChargePerGramPaise != null ? String(it.makingChargePerGramPaise / 100) : undefined,
+    isSerialized: it.isSerialized ?? true,
+    gender: it.gender ?? undefined,
+    collectionIds: it.collectionIds ?? [],
+    diamonds: dbDiamondsToRows(it.diamondsJson),
+  }));
+}
+
+// Create OR edit a PO. When `editPo` is set the form pre-fills and submits an
+// update; otherwise it creates. Mounted keyed by PO id so state re-initialises
+// when switching between create / different edits.
+function CreatePODialog({
+  open,
+  onClose,
+  editPo,
+}: {
+  open: boolean;
+  onClose: () => void;
+  editPo?: PurchaseOrderRow | null;
+}): JSX.Element {
+  return (
+    <Sheet open={open} onOpenChange={(o) => !o && onClose()}>
+      <SheetContent className="!max-w-2xl">
+        <SheetHeader>
+          <SheetTitle>{editPo ? 'Edit purchase order' : 'Create purchase order'}</SheetTitle>
+        </SheetHeader>
+        <SheetBody>
+          {open && <POForm key={editPo?.id ?? 'new'} editPo={editPo ?? null} onClose={onClose} />}
+        </SheetBody>
+      </SheetContent>
+    </Sheet>
+  );
+}
+
+function POForm({ editPo, onClose }: { editPo: PurchaseOrderRow | null; onClose: () => void }): JSX.Element {
   const { data: vendors } = useGetVendorsQuery();
   const { data: catsRes } = useGetCategoriesQuery();
-  const [create, { isLoading }] = useCreatePurchaseOrderMutation();
-  const [vendorId, setVendorId] = useState('');
+  const [create, { isLoading: creating }] = useCreatePurchaseOrderMutation();
+  const [update, { isLoading: updating }] = useUpdatePurchaseOrderMutation();
+  const isLoading = creating || updating;
   const [pickerOpen, setPickerOpen] = useState(false);
   const categories = (catsRes?.data ?? []) as CategoryRow[];
   // Default a new line to the first sub-category (falls back to first category)
   // so items land somewhere sensible, and an empty line for the initial state.
   const defaultCatId = categories.find((c) => c.parentId)?.id ?? categories[0]?.id ?? '';
-  const [lines, setLines] = useState<POLine[]>([
-    { categoryId: '', itemSku: '', weightG: '', purityCarat: '22', costRupees: '', qty: '1' },
-  ]);
 
-  if (!vendorId && vendors?.data[0]) setVendorId(vendors.data[0].id);
-  // Seed the first line's category once categories load.
-  if (defaultCatId && lines.length === 1 && !lines[0]!.categoryId) {
+  const [vendorId, setVendorId] = useState(editPo?.vendorId ?? '');
+  const [lines, setLines] = useState<POLine[]>(
+    editPo
+      ? poRowToLines(editPo)
+      : [{ categoryId: '', itemSku: '', weightG: '', purityCarat: '22', costRupees: '', qty: '1' }],
+  );
+
+  // ── Purchase GST (ITC). Line costs are GST-inclusive, so by default we derive
+  // the embedded 3% GST from the total and keep it in sync as lines change.
+  // Editing a GST field (or an existing PO) switches to manual; "Auto" re-syncs.
+  const [gstInterState, setGstInterState] = useState(editPo?.gstInterState ?? false);
+  const [cgst, setCgst] = useState(editPo?.cgstPaise ? String(editPo.cgstPaise / 100) : '');
+  const [sgst, setSgst] = useState(editPo?.sgstPaise ? String(editPo.sgstPaise / 100) : '');
+  const [igst, setIgst] = useState(editPo?.igstPaise ? String(editPo.igstPaise / 100) : '');
+  const [gstAuto, setGstAuto] = useState(!editPo);
+
+  if (!editPo && !vendorId && vendors?.data[0]) setVendorId(vendors.data[0].id);
+  // Seed the first line's category once categories load (create mode only).
+  if (!editPo && defaultCatId && lines.length === 1 && !lines[0]!.categoryId) {
     setLines((ls) => ls.map((l, i) => (i === 0 && !l.categoryId ? { ...l, categoryId: defaultCatId } : l)));
   }
 
   const total = lines.reduce((s, l) => s + (parseFloat(l.costRupees) || 0) * (parseInt(l.qty, 10) || 1), 0);
+
+  // Auto-derive the embedded GST whenever the total (or intra/inter) changes.
+  useEffect(() => {
+    if (!gstAuto) return;
+    const gstRupees = total - total / 1.03;
+    if (gstInterState) {
+      setIgst(gstRupees > 0 ? gstRupees.toFixed(2) : '');
+      setCgst('');
+      setSgst('');
+    } else {
+      const half = gstRupees / 2;
+      setCgst(gstRupees > 0 ? half.toFixed(2) : '');
+      setSgst(gstRupees > 0 ? half.toFixed(2) : '');
+      setIgst('');
+    }
+  }, [total, gstInterState, gstAuto]);
+
+  const gstEntered = gstInterState ? parseFloat(igst) || 0 : (parseFloat(cgst) || 0) + (parseFloat(sgst) || 0);
+  const taxable = total - gstEntered;
 
   const patchLine = (i: number, patch: Partial<POLine>): void =>
     setLines((ls) => ls.map((l, j) => (j === i ? { ...l, ...patch } : l)));
@@ -5633,6 +5909,7 @@ function CreatePODialog({ open, onClose }: { open: boolean; onClose: () => void 
   const submit = async (e: React.FormEvent): Promise<void> => {
     e.preventDefault();
     if (!vendorId) return void toast.error('Pick a vendor');
+    if (lines.length === 0) return void toast.error('Add at least one line item');
     if (lines.some((l) => !l.categoryId)) return void toast.error('Pick a category for each line');
     const items = lines.map((l) => {
       // Making charge — if makingMode is explicitly set (from expanded form),
@@ -5677,104 +5954,176 @@ function CreatePODialog({ open, onClose }: { open: boolean; onClose: () => void 
     if (items.some((i) => !i.itemSku || !Number.isFinite(i.weightMg) || i.weightMg <= 0 || !Number.isFinite(i.costPaise) || i.costPaise <= 0)) {
       return void toast.error('Each line needs a category, SKU, weight, and cost');
     }
+    const toPaise = (v: string): number => Math.round((parseFloat(v) || 0) * 100);
+    const gstPayload = gstInterState
+      ? { gstInterState: true, igstPaise: toPaise(igst), cgstPaise: 0, sgstPaise: 0 }
+      : { gstInterState: false, cgstPaise: toPaise(cgst), sgstPaise: toPaise(sgst), igstPaise: 0 };
     try {
-      await create({ vendorId, items }).unwrap();
-      toast.success('Purchase order created');
+      if (editPo) {
+        await update({ id: editPo.id, vendorId, items, ...gstPayload }).unwrap();
+        toast.success('Purchase order updated');
+      } else {
+        await create({ vendorId, items, ...gstPayload }).unwrap();
+        toast.success('Purchase order created');
+      }
       onClose();
-      setLines([{ categoryId: defaultCatId, itemSku: '', weightG: '', purityCarat: '22', costRupees: '', qty: '1' }]);
     } catch (err) {
       const message =
-        (err as { data?: { error?: { message?: string } } }).data?.error?.message ?? 'Could not create PO.';
+        (err as { data?: { error?: { message?: string } } }).data?.error?.message ??
+        (editPo ? 'Could not update PO.' : 'Could not create PO.');
       toast.error(message);
     }
   };
 
   return (
     <>
-      <Sheet open={open} onOpenChange={(o) => !o && onClose()}>
-        <SheetContent className="!max-w-2xl">
-          <SheetHeader>
-            <SheetTitle>Create purchase order</SheetTitle>
-          </SheetHeader>
-          <SheetBody>
-            <form onSubmit={submit} className="space-y-4 text-sm">
-              <Field label="Vendor">
-                <select value={vendorId} onChange={(e) => setVendorId(e.target.value)} className={fieldCls} required>
-                  <option value="">Choose vendor…</option>
-                  {(vendors?.data ?? []).map((v) => (
-                    <option key={v.id} value={v.id}>
-                      {v.name}
-                    </option>
-                  ))}
-                </select>
+      <form onSubmit={submit} className="space-y-4 text-sm">
+        <Field label="Vendor">
+          <select value={vendorId} onChange={(e) => setVendorId(e.target.value)} className={fieldCls} required>
+            <option value="">Choose vendor…</option>
+            {(vendors?.data ?? []).map((v) => (
+              <option key={v.id} value={v.id}>
+                {v.name}
+              </option>
+            ))}
+          </select>
+        </Field>
+
+        <div className="space-y-3">
+          <div className="flex items-center justify-between">
+            <p className="text-eyebrow uppercase text-ink-500">Line items</p>
+            <Button type="button" variant="outline" size="sm" onClick={() => setPickerOpen(true)}>
+              <Sparkles className="h-3.5 w-3.5 mr-1" />
+              Browse inventory
+            </Button>
+          </div>
+          {lines.length === 0 && (
+            <p className="text-sm text-ink-400 py-3 text-center border border-dashed border-ink-200 rounded-md">
+              No lines yet — add manually or browse inventory above.
+            </p>
+          )}
+          {lines.map((l, i) => (
+            <POLineEditor
+              key={i}
+              line={l}
+              index={i}
+              categories={categories}
+              onPatch={patchLine}
+              onRemove={(idx) => setLines(lines.filter((_, j) => j !== idx))}
+            />
+          ))}
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={() =>
+              setLines([
+                ...lines,
+                { categoryId: defaultCatId, itemSku: '', weightG: '', purityCarat: '22', costRupees: '', qty: '1' },
+              ])
+            }
+          >
+            + Add line manually
+          </Button>
+        </div>
+
+        {/* ── Purchase GST (input tax credit) — auto-derived from the inclusive total ── */}
+        <div className="rounded-md border border-ink-100 p-4 space-y-3">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <p className="text-eyebrow uppercase text-ink-500">Purchase GST (input tax credit)</p>
+              <p className="text-xs text-ink-500 mt-0.5">
+                Auto-derived from the GST-inclusive line costs (3%). Edit if the vendor invoice differs.
+              </p>
+            </div>
+            {!gstAuto && (
+              <button
+                type="button"
+                onClick={() => setGstAuto(true)}
+                className="text-[11px] text-brand-600 hover:text-brand-700 whitespace-nowrap shrink-0"
+              >
+                ↻ Auto from total
+              </button>
+            )}
+          </div>
+
+          <div className="inline-flex rounded-md border border-ink-200 overflow-hidden">
+            <button
+              type="button"
+              onClick={() => setGstInterState(false)}
+              className={cn(
+                'px-3 h-9 text-sm transition-colors duration-fast',
+                !gstInterState ? 'bg-brand-500 text-white' : 'bg-ink-0 text-ink-700 hover:bg-ink-25',
+              )}
+            >
+              Intra-state (CGST + SGST)
+            </button>
+            <button
+              type="button"
+              onClick={() => setGstInterState(true)}
+              className={cn(
+                'px-3 h-9 text-sm border-l border-ink-200 transition-colors duration-fast',
+                gstInterState ? 'bg-brand-500 text-white' : 'bg-ink-0 text-ink-700 hover:bg-ink-25',
+              )}
+            >
+              Inter-state (IGST)
+            </button>
+          </div>
+
+          {gstInterState ? (
+            <Field label="IGST (₹)">
+              <input
+                type="number" step="0.01" min="0" value={igst}
+                onChange={(e) => { setGstAuto(false); setIgst(e.target.value); }}
+                className={fieldCls} placeholder="0.00"
+              />
+            </Field>
+          ) : (
+            <div className="grid grid-cols-2 gap-3">
+              <Field label="CGST (₹)">
+                <input
+                  type="number" step="0.01" min="0" value={cgst}
+                  onChange={(e) => { setGstAuto(false); setCgst(e.target.value); }}
+                  className={fieldCls} placeholder="0.00"
+                />
               </Field>
+              <Field label="SGST (₹)">
+                <input
+                  type="number" step="0.01" min="0" value={sgst}
+                  onChange={(e) => { setGstAuto(false); setSgst(e.target.value); }}
+                  className={fieldCls} placeholder="0.00"
+                />
+              </Field>
+            </div>
+          )}
 
-              <div className="space-y-3">
-                <div className="flex items-center justify-between">
-                  <p className="text-eyebrow uppercase text-ink-500">Line items</p>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    onClick={() => setPickerOpen(true)}
-                  >
-                    <Sparkles className="h-3.5 w-3.5 mr-1" />
-                    Browse inventory
-                  </Button>
-                </div>
-                {lines.length === 0 && (
-                  <p className="text-sm text-ink-400 py-3 text-center border border-dashed border-ink-200 rounded-md">
-                    No lines yet — add manually or browse inventory above.
-                  </p>
-                )}
-                {lines.map((l, i) => (
-                  <POLineEditor
-                    key={i}
-                    line={l}
-                    index={i}
-                    categories={categories}
-                    onPatch={patchLine}
-                    onRemove={(idx) => setLines(lines.filter((_, j) => j !== idx))}
-                  />
-                ))}
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  onClick={() =>
-                    setLines([
-                      ...lines,
-                      { categoryId: defaultCatId, itemSku: '', weightG: '', purityCarat: '22', costRupees: '', qty: '1' },
-                    ])
-                  }
-                >
-                  + Add line manually
-                </Button>
-              </div>
+          <div className="space-y-1 border-t border-ink-100 pt-3 font-mono text-sm">
+            <div className="flex justify-between text-ink-500">
+              <span>Taxable value</span>
+              <span>₹{taxable.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+            </div>
+            <div className="flex justify-between text-ink-500">
+              <span>GST (ITC)</span>
+              <span>₹{gstEntered.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+            </div>
+            <div className="flex justify-between text-ink-900 font-semibold">
+              <span>Invoice total incl GST</span>
+              <span>₹{total.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+            </div>
+          </div>
+        </div>
 
-              <div className="flex items-center justify-between text-ink-700 border-t border-ink-100 pt-3">
-                <span className="text-eyebrow uppercase">Total</span>
-                <span className="font-mono text-lg">₹{total.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</span>
-              </div>
+        <div className="flex gap-2">
+          <Button variant="outline" type="button" onClick={onClose} disabled={isLoading}>
+            Cancel
+          </Button>
+          <Button type="submit" className="flex-1" disabled={isLoading}>
+            {isLoading ? (editPo ? 'Saving…' : 'Creating…') : editPo ? 'Save changes' : 'Create PO'}
+          </Button>
+        </div>
+      </form>
 
-              <div className="flex gap-2">
-                <Button variant="outline" type="button" onClick={onClose} disabled={isLoading}>
-                  Cancel
-                </Button>
-                <Button type="submit" className="flex-1" disabled={isLoading}>
-                  {isLoading ? 'Creating…' : 'Create PO'}
-                </Button>
-              </div>
-            </form>
-          </SheetBody>
-        </SheetContent>
-      </Sheet>
-
-      <ItemPickerSheet
-        open={pickerOpen}
-        onClose={() => setPickerOpen(false)}
-        onAdd={handlePickerAdd}
-      />
+      <ItemPickerSheet open={pickerOpen} onClose={() => setPickerOpen(false)} onAdd={handlePickerAdd} />
     </>
   );
 }

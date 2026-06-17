@@ -73,6 +73,31 @@ export interface PurchaseOrderRow {
     quantity: number;
     makingChargeBps: number | null;
     sellingPricePaise: number | null;
+    // Full item-detail fields persisted on the line — needed to pre-fill the
+    // Edit PO form so every field (incl. diamonds) round-trips.
+    publishToStorefront: boolean;
+    description: string | null;
+    images: string[];
+    hallmarkStatus: string | null;
+    hallmarkRef: string | null;
+    stoneWeightMg: number | null;
+    makingChargeMode: 'PERCENTAGE' | 'PER_GRAM' | null;
+    makingChargePerGramPaise: number | null;
+    isSerialized: boolean;
+    gender: 'MEN' | 'WOMEN' | null;
+    collectionIds: string[];
+    diamondsJson: Array<{
+      shape?: string | null;
+      caratWeightX100?: number;
+      cut?: string | null;
+      clarity?: string | null;
+      color?: string | null;
+      count?: number;
+      costPaise?: number;
+      sellingPricePaise?: number | null;
+      purchaseRatePaise?: number | null;
+      sellRatePaise?: number | null;
+    }>;
   }>;
 }
 
@@ -346,6 +371,15 @@ export const inventoryApi = baseApi.injectEndpoints({
       query: (body) => ({ url: '/inventory/purchase-orders', method: 'POST', body }),
       invalidatesTags: [{ type: 'PurchaseOrder', id: 'LIST' }],
     }),
+    // Edit an existing PO (vendor + lines + GST). Update body mirrors create.
+    updatePurchaseOrder: b.mutation<ApiOne<PurchaseOrderRow>, { id: string } & PurchaseOrderCreate>({
+      query: ({ id, ...body }) => ({ url: `/inventory/purchase-orders/${id}`, method: 'PATCH', body }),
+      invalidatesTags: [{ type: 'PurchaseOrder', id: 'LIST' }],
+    }),
+    deletePurchaseOrder: b.mutation<void, string>({
+      query: (id) => ({ url: `/inventory/purchase-orders/${id}`, method: 'DELETE' }),
+      invalidatesTags: [{ type: 'PurchaseOrder', id: 'LIST' }],
+    }),
     receivePurchaseOrder: b.mutation<
       ApiOne<PurchaseOrderRow>,
       { id: string; shopId: string; categoryId: string }
@@ -451,6 +485,8 @@ export const {
   useCreateVendorMutation,
   useGetPurchaseOrdersQuery,
   useCreatePurchaseOrderMutation,
+  useUpdatePurchaseOrderMutation,
+  useDeletePurchaseOrderMutation,
   useReceivePurchaseOrderMutation,
   useSetPurchaseOrderGstMutation,
   useUpdateVendorMutation,

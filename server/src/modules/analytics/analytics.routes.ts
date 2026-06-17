@@ -241,16 +241,35 @@ analyticsRouter.get('/dashboard', async (req, res, next) => {
     else start.setUTCDate(now.getUTCDate() - 30);
 
     const where = { createdAt: { gte: start, lte: now }, ...(q.shopId ? { shopId: q.shopId } : {}) };
-    const [bills, leadCount] = await Promise.all([
+    // Paid online orders are revenue too. They aren't POS bills and aren't
+    // shop-scoped, so an online-first tenant (0 bills) otherwise reads ₹0 here
+    // while Finance / Overview and the 7-day trend — both of which fold in paid
+    // orders — show the real number. Keyed by paidAt (money-in), and skipped
+    // when filtered to a physical shop since online sales aren't branch-attributable.
+    const [bills, leadCount, ecomAgg] = await Promise.all([
       prisma.bill.findMany({ where, select: { totalPaise: true } }),
       prisma.lead.count({ where: { createdAt: { gte: start } } }),
+      q.shopId
+        ? Promise.resolve(null)
+        : prisma.order.aggregate({
+            where: {
+              paymentStatus: PaymentStatus.PAID,
+              status: { notIn: [OrderStatus.CANCELLED, OrderStatus.RETURNED] },
+              paidAt: { gte: start, lte: now },
+            },
+            _sum: { totalPaise: true },
+            _count: { _all: true },
+          }),
     ]);
+
+    const ecomRevenuePaise = ecomAgg?._sum.totalPaise ?? 0;
+    const ecomOrderCount = ecomAgg?._count._all ?? 0;
 
     res.json({
       data: {
         period: q.period,
-        revenuePaise: sumPaise(bills.map((b) => b.totalPaise)),
-        billCount: bills.length,
+        revenuePaise: sumPaise(bills.map((b) => b.totalPaise)) + ecomRevenuePaise,
+        billCount: bills.length + ecomOrderCount,
         newLeads: leadCount,
         asOf: now.toISOString(),
       },
@@ -581,6 +600,11 @@ analyticsRouter.get('/inventory-valuation', async (req, res, next) => {
           // per-piece value (count, weight, cost, market) by units.
           isSerialized: true,
           quantityOnHand: true,
+          // Diamond lines are booked with their own cost, separate from the
+          // metal cost on costPricePaise (M2 §1). Pull them so both cost basis
+          // and market value include diamond cost — keeping this surface equal
+          // to the Inventory → Valuation tab (gold + Σ diamond cost).
+          diamonds: { select: { costPaise: true } },
           // Pull the category tree info so we can aggregate by main category
           // (parentId === null) → sub category → individual items. `parent`
           // joins one level up; we treat parent.id as the "main" bucket. If
@@ -648,12 +672,19 @@ analyticsRouter.get('/inventory-valuation', async (req, res, next) => {
       const isNonPreciousMetal = itemMetalType === 'STAINLESS_STEEL' || itemMetalType === 'OTHER';
       // Per-piece market value at today's rate; we scale by `units` below so
       // a lot row of 23 gold bars contributes 23× the value, not 1×.
-      const marketPerPiece = isNonPreciousMetal
+      // Diamond cost is booked separately from the metal (M2 §1). Fold it into
+      // BOTH cost basis and market value so this surface matches the Inventory →
+      // Valuation tab (gold + Σ diamond cost). Diamonds carry no spot rate, so
+      // they add equally to cost and market and net to zero in unrealized P&L —
+      // which then reflects metal-rate movement only.
+      const diamondCostPerPiece = it.diamonds.reduce((sum, d) => sum + d.costPaise, 0);
+      const metalPerPiece = isNonPreciousMetal
         ? it.costPricePaise
         : computeGoldValuePaise(it.weightMg, it.purityCaratX100, rate);
+      const marketPerPiece = metalPerPiece + diamondCostPerPiece;
       const units = it.isSerialized ? 1 : it.quantityOnHand;
       const weightTotal = it.weightMg * units;
-      const costTotal = it.costPricePaise * units;
+      const costTotal = (it.costPricePaise + diamondCostPerPiece) * units;
       const marketTotal = marketPerPiece * units;
 
       total = {

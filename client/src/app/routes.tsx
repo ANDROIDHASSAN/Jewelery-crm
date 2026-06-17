@@ -42,6 +42,7 @@ import { StockRequestPage } from '@/pos-app/StockRequestPage';
 
 import { StorefrontHome } from '@/pages/storefront/StorefrontHome';
 import { CollectionPage } from '@/pages/storefront/CollectionPage';
+import { SaleCollectionPage } from '@/pages/storefront/SaleCollectionPage';
 import { ProductDetailPage } from '@/pages/storefront/ProductDetailPage';
 import { StorePage } from '@/pages/storefront/StorePage';
 import { CartPage } from '@/pages/storefront/CartPage';
@@ -108,6 +109,7 @@ const MAIN_HOST_ROUTES = [
       { index: true, element: <StorefrontHome /> },
       { path: 'collections', element: <CollectionPage /> },
       { path: 'collections/:slug', element: <CollectionPage /> },
+      { path: 'sale', element: <SaleCollectionPage /> },
       { path: 'products/:slug', element: <ProductDetailPage /> },
       { path: 'locations', element: <StorePage /> },
       { path: 'cart', element: <CartPage /> },
@@ -130,6 +132,7 @@ const MAIN_HOST_ROUTES = [
       { index: true, element: <StorefrontHome /> },
       { path: 'collections', element: <CollectionPage /> },
       { path: 'collections/:slug', element: <CollectionPage /> },
+      { path: 'sale', element: <SaleCollectionPage /> },
       { path: 'products/:slug', element: <ProductDetailPage /> },
       { path: 'locations', element: <StorePage /> },
       { path: 'cart', element: <CartPage /> },

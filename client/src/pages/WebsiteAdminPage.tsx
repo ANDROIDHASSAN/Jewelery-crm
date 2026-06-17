@@ -2732,12 +2732,25 @@ const SECTION_LABEL_GROUPS: Array<{
   title: string;
   fields: Array<{ key: SectionLabelKey; label: string; type?: 'text' | 'textarea' }>;
 }> = [
+  // Ordered top-to-bottom to match how the sections actually appear on the
+  // storefront homepage, so editors can scan the CMS in the same order they
+  // see the live site: Browse by category → Season Sales → Shop by occasion →
+  // Watch & wear reels → Customer reviews → Visit our showrooms → Newsletter.
   {
     title: 'Browse by category',
     fields: [
       { key: 'categoriesEyebrow', label: 'Eyebrow' },
       { key: 'categoriesTitle', label: 'Title' },
       { key: 'categoriesSub', label: 'Sub-copy', type: 'textarea' },
+    ],
+  },
+  {
+    title: 'Season Sales',
+    fields: [
+      { key: 'seasonSaleEyebrow', label: 'Eyebrow' },
+      { key: 'seasonSaleTitle', label: 'Title' },
+      { key: 'seasonSaleSub', label: 'Sub-copy', type: 'textarea' },
+      { key: 'seasonSaleCtaLabel', label: '"View all" button label' },
     ],
   },
   {
@@ -2775,6 +2788,16 @@ const SECTION_LABEL_GROUPS: Array<{
     ],
   },
   {
+    title: 'Newsletter',
+    fields: [
+      { key: 'newsletterEyebrow', label: 'Eyebrow' },
+      { key: 'newsletterTitle', label: 'Title' },
+      { key: 'newsletterSub', label: 'Sub-copy', type: 'textarea' },
+    ],
+  },
+  // Legacy strips — kept editable for older layouts but no longer rendered on
+  // the current homepage, so they sit at the end rather than mid-flow.
+  {
     title: 'Deals of the week',
     fields: [
       { key: 'dealsEyebrow', label: 'Eyebrow' },
@@ -2788,14 +2811,6 @@ const SECTION_LABEL_GROUPS: Array<{
     title: 'Trust band',
     fields: [
       { key: 'trustEyebrow', label: 'Eyebrow' },
-    ],
-  },
-  {
-    title: 'Newsletter',
-    fields: [
-      { key: 'newsletterEyebrow', label: 'Eyebrow' },
-      { key: 'newsletterTitle', label: 'Title' },
-      { key: 'newsletterSub', label: 'Sub-copy', type: 'textarea' },
     ],
   },
 ];

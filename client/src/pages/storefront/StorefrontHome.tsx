@@ -16,7 +16,7 @@ import type {
   PublicCategory,
   PublicGoldRateResponse,
 } from '@/features/storefront/storefrontApi';
-import type { DoorCard, TestimonialCard, TrustBadge } from '@/features/storefront/storefrontContentSlice';
+import type { DoorCard, SectionLabels, TestimonialCard, TrustBadge } from '@/features/storefront/storefrontContentSlice';
 import { storefrontTotalPaise, productMetaLabel, computeSalePrice } from '@/features/storefront/pricing';
 import { HeroCarousel } from './HeroCarousel';
 
@@ -186,11 +186,15 @@ function ProductShowcase({
 function SeasonSales({
   liveRate,
   categoryNameById,
+  labels,
 }: {
   liveRate: PublicGoldRateResponse | undefined;
   categoryNameById: Map<string, string>;
+  labels: SectionLabels;
 }): JSX.Element | null {
   const { data: saleProducts = [] } = useGetPublicSaleItemsQuery();
+  // Show the first 8 (a 4×2 grid) on the homepage; the "View all" button below
+  // links to the dedicated sale page that lists the full pool.
   const visible = saleProducts.slice(0, 8);
   if (visible.length === 0) return null;
   // Sale-wide Buy-1-Get-1 is the same flag on every sale item.
@@ -199,16 +203,16 @@ function SeasonSales({
     <section className="bg-[#FFF7F0] border-b border-[#EFE0D2]/60">
       <div className="max-w-[1280px] mx-auto px-4 sm:px-6 py-14 sm:py-20">
         <div className="text-center mb-7 sm:mb-9">
-          <p className="text-eyebrow uppercase text-brand-700">Limited time</p>
+          <p className="text-eyebrow uppercase text-brand-700">{labels.seasonSaleEyebrow}</p>
           <h2 className="font-display text-3xl sm:text-[36px] md:text-[44px] leading-tight text-ink-900 mt-2">
-            Season Sales
+            {labels.seasonSaleTitle}
           </h2>
           {bogoActive && (
             <p className="mt-3 inline-flex items-center bg-brand-600 text-ink-0 text-xs font-semibold uppercase tracking-[0.12em] px-3 py-1.5 rounded-sm">
               Buy 1 Get 1 Free — on every piece
             </p>
           )}
-          <p className="mt-3 text-sm text-ink-600">Handpicked pieces at a special price — while stocks last.</p>
+          {labels.seasonSaleSub && <p className="mt-3 text-sm text-ink-600">{labels.seasonSaleSub}</p>}
         </div>
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-x-3 gap-y-8 sm:gap-x-5 sm:gap-y-10">
           {visible.map((p: PublicSaleProduct) => {
@@ -264,6 +268,15 @@ function SeasonSales({
               </Link>
             );
           })}
+        </div>
+        <div className="text-center mt-9 sm:mt-12">
+          <Link
+            to="/store/sale"
+            className="inline-flex items-center gap-2 h-11 px-7 rounded-full border border-ink-300 text-ink-900 text-sm font-medium hover:bg-ink-900 hover:text-ink-0 transition-colors duration-fast"
+          >
+            {labels.seasonSaleCtaLabel || 'View all'}
+            <ArrowRight className="h-4 w-4" />
+          </Link>
         </div>
       </div>
     </section>
@@ -466,7 +479,7 @@ export function StorefrontHome(): JSX.Element {
 
       {/* Season Sales — curated discounted pieces (Inventory → Season sales).
           Renders nothing when the sale pool is empty. Sits below Top Styles. */}
-      <SeasonSales liveRate={liveRate} categoryNameById={categoryNameById} />
+      <SeasonSales liveRate={liveRate} categoryNameById={categoryNameById} labels={L} />
 
       {/* Shop by occasion — 6 tall body-shot tiles with dark gradient overlay
           showing category name + product count. Replaces the older 4-card TOC. */}

@@ -12,6 +12,7 @@ import type {
   ItemInput,
   VendorInput,
   PurchaseOrderCreate,
+  PurchaseOrderUpdate,
   PurchaseOrderGst,
   AddStock,
 } from '@goldos/shared/types';
@@ -1100,13 +1101,15 @@ export async function computeValuation(opts: { shopId?: string }) {
   const byCategory = new Map<string, { totalPaise: number; itemCount: number }>();
   for (const it of items) {
     const ratePerGramPaise = rateByPurity.get(it.purityCaratX100) ?? 642_000;
-    // Per-piece value (weight is recorded per piece for both modes). Stainless
-    // steel is non-precious — it has no live metal rate, so we value it at its
-    // recorded cost price instead of recomputing off the gold rate.
-    const metalPerPiece =
-      it.category.metalType === 'STAINLESS_STEEL'
-        ? it.costPricePaise
-        : computeGoldValuePaise(it.weightMg, it.purityCaratX100, ratePerGramPaise);
+    // Per-piece value (weight is recorded per piece for both modes). Non-precious
+    // metals (stainless steel, OTHER) have no live spot rate, so we value them at
+    // their recorded cost price instead of recomputing off the gold rate. Kept in
+    // lockstep with the Analytics → Inventory value surface.
+    const isNonPreciousMetal =
+      it.category.metalType === 'STAINLESS_STEEL' || it.category.metalType === 'OTHER';
+    const metalPerPiece = isNonPreciousMetal
+      ? it.costPricePaise
+      : computeGoldValuePaise(it.weightMg, it.purityCaratX100, ratePerGramPaise);
     // Diamond cost is booked separately from the metal (M2 §1) and added on top
     // of the metal value so a diamond ring is valued at gold + Σ diamond cost.
     const diamondCost = it.diamonds.reduce((sum, d) => sum + d.costPaise, 0);
@@ -1317,46 +1320,125 @@ export async function listPurchaseOrders() {
   return { data: pos, page: { hasMore: false } };
 }
 
+// Map one PO create/update line to the Prisma nested-create shape. Shared by
+// create + update so both persist the identical column set.
+function poLineCreateData(i: PurchaseOrderCreate['items'][number]) {
+  return {
+    itemSku: i.itemSku,
+    categoryId: i.categoryId ?? null,
+    weightMg: i.weightMg,
+    purity: i.purity,
+    costPaise: i.costPaise,
+    makingChargeBps: i.makingChargeBps ?? null,
+    sellingPricePaise: i.sellingPricePaise ?? null,
+    publishToStorefront: i.publishToStorefront ?? false,
+    quantity: i.quantity ?? 1,
+    // Full item-detail fields
+    name: i.name ?? null,
+    description: i.description ?? null,
+    images: (i.images ?? []) as Prisma.InputJsonValue,
+    hallmarkStatus: i.hallmarkStatus ?? 'PENDING',
+    hallmarkRef: i.hallmarkRef ?? null,
+    stoneWeightMg: i.stoneWeightMg ?? null,
+    makingChargeMode: i.makingChargeMode ?? null,
+    makingChargePerGramPaise: i.makingChargePerGramPaise ?? null,
+    isSerialized: i.isSerialized ?? true,
+    gender: i.gender ?? null,
+    collectionIds: (i.collectionIds ?? []) as Prisma.InputJsonValue,
+    diamondsJson: (i.diamonds ?? []) as Prisma.InputJsonValue,
+  };
+}
+
+// PO line costs are GST-inclusive, so the order total is GST-inclusive too.
+// Resolve the embedded purchase GST (claimed as ITC): prefer the values sent
+// from the GST card (editable), else derive the 3% embedded split (intra-state
+// CGST+SGST). The unused side is always zeroed by `interState`.
+function resolvePoGst(
+  input: { gstInterState?: boolean; cgstPaise?: number; sgstPaise?: number; igstPaise?: number },
+  totalPaise: number,
+): { gstInterState: boolean; cgstPaise: number; sgstPaise: number; igstPaise: number } {
+  const provided =
+    input.gstInterState !== undefined ||
+    input.cgstPaise !== undefined ||
+    input.sgstPaise !== undefined ||
+    input.igstPaise !== undefined;
+  if (provided) {
+    const interState = input.gstInterState ?? false;
+    return {
+      gstInterState: interState,
+      cgstPaise: interState ? 0 : input.cgstPaise ?? 0,
+      sgstPaise: interState ? 0 : input.sgstPaise ?? 0,
+      igstPaise: interState ? input.igstPaise ?? 0 : 0,
+    };
+  }
+  const gst = Math.max(0, totalPaise - taxableFromInclusivePaise(totalPaise));
+  const cgst = Math.floor(gst / 2);
+  return { gstInterState: false, cgstPaise: cgst, sgstPaise: gst - cgst, igstPaise: 0 };
+}
+
 export async function createPurchaseOrder(input: PurchaseOrderCreate) {
   const tenantId = getTenantId();
   if (!tenantId) throw new Error('tenantId missing');
-  const totalPaise = input.items.reduce((s, i) => s + i.costPaise, 0);
+  // Line costs are GST-inclusive; total = Σ (cost × qty).
+  const totalPaise = input.items.reduce((s, i) => s + i.costPaise * (i.quantity ?? 1), 0);
+  const gst = resolvePoGst(input, totalPaise);
   const po = await prisma.purchaseOrder.create({
     data: {
       tenantId,
       vendorId: input.vendorId,
       totalPaise,
-      items: {
-        create: input.items.map((i) => ({
-          itemSku: i.itemSku,
-          categoryId: i.categoryId ?? null,
-          weightMg: i.weightMg,
-          purity: i.purity,
-          costPaise: i.costPaise,
-          makingChargeBps: i.makingChargeBps ?? null,
-          sellingPricePaise: i.sellingPricePaise ?? null,
-          publishToStorefront: i.publishToStorefront ?? false,
-          quantity: i.quantity ?? 1,
-          // Full item-detail fields
-          name: i.name ?? null,
-          description: i.description ?? null,
-          images: (i.images ?? []) as Prisma.InputJsonValue,
-          hallmarkStatus: i.hallmarkStatus ?? 'PENDING',
-          hallmarkRef: i.hallmarkRef ?? null,
-          stoneWeightMg: i.stoneWeightMg ?? null,
-          makingChargeMode: i.makingChargeMode ?? null,
-          makingChargePerGramPaise: i.makingChargePerGramPaise ?? null,
-          isSerialized: i.isSerialized ?? true,
-          gender: i.gender ?? null,
-          collectionIds: (i.collectionIds ?? []) as Prisma.InputJsonValue,
-          diamondsJson: (i.diamonds ?? []) as Prisma.InputJsonValue,
-        })),
-      },
+      ...gst,
+      items: { create: input.items.map(poLineCreateData) },
     },
     include: { items: true, vendor: { select: { id: true, name: true } } },
   });
   void writeAudit('PurchaseOrder', po.id, 'CREATE', null, po);
   return po;
+}
+
+// Edit a PO — replaces vendor, line items and GST wholesale. Only allowed while
+// the PO has not been received or cancelled; once stock has landed, editing the
+// order would desync inventory, so it's blocked.
+export async function updatePurchaseOrder(poId: string, input: PurchaseOrderUpdate, userId?: string) {
+  const tenantId = getTenantId();
+  if (!tenantId) throw new Error('tenantId missing');
+  const before = await prisma.purchaseOrder.findUnique({ where: { id: poId }, include: { items: true } });
+  if (!before) throw new NotFoundError('Purchase order not found');
+  if (before.status === 'RECEIVED')
+    throw new BusinessRuleError('PO_RECEIVED', 'A received PO cannot be edited — its stock is already in inventory.');
+  if (before.status === 'CANCELLED')
+    throw new BusinessRuleError('PO_CANCELLED', 'A cancelled PO cannot be edited.');
+
+  const totalPaise = input.items.reduce((s, i) => s + i.costPaise * (i.quantity ?? 1), 0);
+  const gst = resolvePoGst(input, totalPaise);
+  const updated = await prisma.$transaction(async (tx) => {
+    await tx.purchaseOrderItem.deleteMany({ where: { poId } });
+    return tx.purchaseOrder.update({
+      where: { id: poId },
+      data: {
+        vendorId: input.vendorId,
+        totalPaise,
+        ...gst,
+        items: { create: input.items.map(poLineCreateData) },
+      },
+      include: { items: true, vendor: { select: { id: true, name: true } } },
+    });
+  });
+  void writeAudit('PurchaseOrder', poId, 'UPDATE', before, updated, userId);
+  return updated;
+}
+
+// Delete a PO. Blocked once received (stock already exists); otherwise the order
+// and its lines are hard-deleted (items cascade via the FK).
+export async function deletePurchaseOrder(poId: string, userId?: string) {
+  const tenantId = getTenantId();
+  if (!tenantId) throw new Error('tenantId missing');
+  const before = await prisma.purchaseOrder.findUnique({ where: { id: poId } });
+  if (!before) throw new NotFoundError('Purchase order not found');
+  if (before.status === 'RECEIVED')
+    throw new BusinessRuleError('PO_RECEIVED', 'A received PO cannot be deleted — its stock is already in inventory.');
+  await prisma.purchaseOrder.delete({ where: { id: poId } });
+  void writeAudit('PurchaseOrder', poId, 'DELETE', before, null, userId);
 }
 
 // Receive a PO: mark it RECEIVED and turn each PO line into an Item +
@@ -1384,6 +1466,12 @@ export async function receivePurchaseOrder(
   // the PO was built, so a single PO can stock items across many categories.
   const fallbackCategory = await prisma.category.findUnique({ where: { id: categoryId } });
   if (!fallbackCategory) throw new NotFoundError('Category not found');
+
+  // Items whose linked storefront Product should be (created and) published once
+  // the transaction commits. Publishing INSIDE the tx fails: createProductMirror
+  // runs on the global client and can't see the not-yet-committed Item row (the
+  // Product→Item FK throws), so the publish silently no-ops. Defer it.
+  const publishItemIds: string[] = [];
 
   const updated = await prisma.$transaction(async (tx) => {
     for (const line of po.items) {
@@ -1420,16 +1508,8 @@ export async function receivePurchaseOrder(
             performedByUserId: userId ?? null,
           },
         });
-        // Publish to storefront if requested and a linked Product exists
-        if (line.publishToStorefront) {
-          const linkedProduct = await tx.product.findFirst({
-            where: { linkedItemId: existing.id },
-            select: { id: true },
-          });
-          if (linkedProduct) {
-            await tx.product.update({ where: { id: linkedProduct.id }, data: { isPublished: true } });
-          }
-        }
+        // Publish to storefront if requested — deferred to after commit.
+        if (line.publishToStorefront) publishItemIds.push(existing.id);
       } else {
         // Item doesn't exist yet — create it fresh with the original SKU.
         // A lot if qty > 1 OR if the PO line explicitly marks it as non-serialized.
@@ -1502,26 +1582,8 @@ export async function receivePurchaseOrder(
             performedByUserId: userId ?? null,
           },
         });
-        // Publish to storefront if requested.
-        // If item has a name + images, create a Product mirror and publish it.
-        // Otherwise find an existing linked Product and publish it.
-        if (line.publishToStorefront) {
-          try {
-            if (item.name && item.images.length > 0) {
-              await createProductMirror(tenantId, item);
-            } else {
-              const linkedProduct = await tx.product.findFirst({
-                where: { linkedItemId: item.id },
-                select: { id: true },
-              });
-              if (linkedProduct) {
-                await tx.product.update({ where: { id: linkedProduct.id }, data: { isPublished: true } });
-              }
-            }
-          } catch (err) {
-            console.error('[receivePurchaseOrder] publish failed for item', sku, err);
-          }
-        }
+        // Publish to storefront if requested — deferred to after commit.
+        if (line.publishToStorefront) publishItemIds.push(item.id);
       }
     }
     return tx.purchaseOrder.update({
@@ -1533,6 +1595,30 @@ export async function receivePurchaseOrder(
       include: { items: true, vendor: { select: { id: true, name: true } } },
     });
   });
+
+  // Post-commit storefront publish. Now that the Items are committed, mirror or
+  // publish each one: publish the existing linked Product if there is one, else
+  // create a fresh published mirror when the item has a name + at least one
+  // image (the storefront's minimum). Per-item try/catch so one failure can't
+  // abort the rest — the stock is already safely received.
+  for (const itemId of publishItemIds) {
+    try {
+      const item = await prisma.item.findUnique({ where: { id: itemId } });
+      if (!item) continue;
+      const linkedProduct = await prisma.product.findFirst({
+        where: { linkedItemId: item.id },
+        select: { id: true },
+      });
+      if (linkedProduct) {
+        await prisma.product.update({ where: { id: linkedProduct.id }, data: { isPublished: true } });
+      } else if (item.name && item.images.length > 0) {
+        await createProductMirror(tenantId, item);
+      }
+    } catch (err) {
+      console.error('[receivePurchaseOrder] publish failed for item', itemId, err);
+    }
+  }
+
   void writeAudit('PurchaseOrder', poId, 'RECEIVE', po, updated, userId);
   return updated;
 }

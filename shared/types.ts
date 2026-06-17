@@ -34,6 +34,7 @@ import type {
   VendorInputSchema,
   PurchaseOrderSchema,
   PurchaseOrderCreateSchema,
+  PurchaseOrderUpdateSchema,
   PurchaseOrderItemInputSchema,
   PurchaseOrderGstSchema,
   WastageInputSchema,
@@ -99,6 +100,7 @@ export type Vendor = z.infer<typeof VendorSchema>;
 export type VendorInput = z.infer<typeof VendorInputSchema>;
 export type PurchaseOrder = z.infer<typeof PurchaseOrderSchema>;
 export type PurchaseOrderCreate = z.infer<typeof PurchaseOrderCreateSchema>;
+export type PurchaseOrderUpdate = z.infer<typeof PurchaseOrderUpdateSchema>;
 export type PurchaseOrderItemInput = z.infer<typeof PurchaseOrderItemInputSchema>;
 export type PurchaseOrderGst = z.infer<typeof PurchaseOrderGstSchema>;
 export type WastageInput = z.infer<typeof WastageInputSchema>;

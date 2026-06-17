@@ -89,6 +89,10 @@ export interface SectionLabels {
   reviewsEyebrow?: string;
   reviewsTitle?: string;
   reviewsSub?: string;
+  seasonSaleEyebrow?: string;
+  seasonSaleTitle?: string;
+  seasonSaleSub?: string;
+  seasonSaleCtaLabel?: string;
   trustEyebrow?: string;
   visitEyebrow?: string;
   visitTitle?: string;
@@ -547,6 +551,10 @@ export const DEFAULT_CONTENT: StorefrontContent = {
     reviewsEyebrow: 'Loved by jewellery families across Haryana',
     reviewsTitle: '50,000+ verified customers since 1972',
     reviewsSub: 'Transparent pricing, BIS-hallmarked gold, and a WhatsApp update on every piece — that\u2019s why families trust us for bridal, festive, and gifting.',
+    seasonSaleEyebrow: 'Limited time',
+    seasonSaleTitle: 'Season Sales',
+    seasonSaleSub: 'Handpicked pieces at a special price — while stocks last.',
+    seasonSaleCtaLabel: 'View all',
     trustEyebrow: '',
     visitEyebrow: 'Visit our jewellery showrooms',
     visitTitle: 'Two BIS-certified showrooms in Gurugram & Karnal. Walk in, weigh, decide.',

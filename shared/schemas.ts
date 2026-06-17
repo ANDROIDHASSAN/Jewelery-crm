@@ -571,7 +571,18 @@ export const PurchaseOrderItemInputSchema = z.object({
 export const PurchaseOrderCreateSchema = z.object({
   vendorId: CuidSchema,
   items: z.array(PurchaseOrderItemInputSchema).min(1).max(200),
+  // Optional purchase (input) GST captured at creation time. The line costs are
+  // GST-inclusive, so this is the GST *embedded* in the total (auto-derived in
+  // the UI and editable). interState → igst; else cgst + sgst. Omitted = 0.
+  gstInterState: z.boolean().optional(),
+  cgstPaise: PaiseSchema.optional(),
+  sgstPaise: PaiseSchema.optional(),
+  igstPaise: PaiseSchema.optional(),
 });
+
+// Editing an existing PO replaces the whole order (vendor + lines + GST). Same
+// shape as create; the service rejects it once the PO is RECEIVED/CANCELLED.
+export const PurchaseOrderUpdateSchema = PurchaseOrderCreateSchema;
 
 // Purchase (input) GST entered against a PO's vendor invoice. One total per PO:
 // intraState → cgst + sgst, interState → igst. The service zeroes the unused
@@ -953,6 +964,10 @@ export const SectionLabelsSchema = z.object({
   reviewsEyebrow: z.string().max(80),
   reviewsTitle: z.string().max(240),
   reviewsSub: z.string().max(400),
+  seasonSaleEyebrow: z.string().max(80),
+  seasonSaleTitle: z.string().max(240),
+  seasonSaleSub: z.string().max(400),
+  seasonSaleCtaLabel: z.string().max(60),
   trustEyebrow: z.string().max(80),
   visitEyebrow: z.string().max(80),
   visitTitle: z.string().max(240),

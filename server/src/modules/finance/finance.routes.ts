@@ -51,6 +51,50 @@ function shopWhere(shopId?: string): { shopId: string } | Record<string, never> 
   return shopId ? { shopId } : {};
 }
 
+// Online orders aren't stored against a physical shop, so for per-shop finance
+// filtering we derive one from the sold items: each OrderItem → Product →
+// linked inventory Item → shopId (the shop that stocks & published the piece).
+// An order is attributed to the shop holding the largest line value — a single
+// GST invoice can't be split across shops for filing, so we keep it whole.
+// Returns null when no line links to a stock item (legacy storefront products
+// not bound to inventory); those orders surface only in the consolidated view.
+type OrderShopLines = Array<{
+  qty: number;
+  pricePaise: number;
+  product: { linkedItem: { shopId: string } | null };
+}>;
+
+function attributeOrderShopId(items: OrderShopLines): string | null {
+  const valueByShop = new Map<string, number>();
+  for (const it of items) {
+    const shopId = it.product.linkedItem?.shopId;
+    if (!shopId) continue;
+    valueByShop.set(shopId, (valueByShop.get(shopId) ?? 0) + it.pricePaise * it.qty);
+  }
+  let best: string | null = null;
+  let bestValue = -1;
+  for (const [shopId, value] of valueByShop) {
+    if (value > bestValue) {
+      best = shopId;
+      bestValue = value;
+    }
+  }
+  return best;
+}
+
+// Select fragment that pulls the per-line shop attribution data for an Order.
+// `satisfies` keeps the literal `true`s (so Prisma still infers the narrow
+// result type) while validating the shape against the generated OrderSelect.
+const ORDER_SHOP_LINES_SELECT = {
+  items: {
+    select: {
+      qty: true,
+      pricePaise: true,
+      product: { select: { linkedItem: { select: { shopId: true } } } },
+    },
+  },
+} satisfies Prisma.OrderSelect;
+
 function noTenantError(): { error: { code: string; message: string } } {
   return { error: { code: 'NO_TENANT', message: 'Tenant context missing' } };
 }
@@ -127,8 +171,7 @@ financeRouter.get('/summary', async (req, res, next) => {
       openLoansAgg,
       vendorDuesAgg,
       activeAdvancesAgg,
-      mtdEcomAgg,
-      trendEcomOrders,
+      trendEcomOrdersRaw,
     ] = await Promise.all([
       prisma.bill.aggregate({
         where: { tenantId, voidedAt: null, ...shopFilter, createdAt: { gte: monthStart, lte: now } },
@@ -201,27 +244,24 @@ financeRouter.get('/summary', async (req, res, next) => {
         _sum: { amountPaise: true },
         _count: { _all: true },
       }),
-      // Ecommerce order MTD aggregate
-      prisma.order.aggregate({
+      // Ecommerce orders over the 6-month trend window, with their lines so
+      // each can be attributed to the shop that stocks the sold items. MTD
+      // totals, the per-month trend and the per-branch rollup are all derived
+      // from this in JS — a specific-shop view then reflects that shop's
+      // online sales, and each branch row includes its online revenue/GST.
+      prisma.order.findMany({
         where: {
           paymentStatus: PaymentStatus.PAID,
           status: { notIn: [OrderStatus.CANCELLED, OrderStatus.RETURNED] },
-          paidAt: { gte: monthStart, lte: now },
+          paidAt: { gte: trendStart, lte: now },
         },
-        _sum: { totalPaise: true, taxPaise: true },
-        _count: { _all: true },
+        select: {
+          paidAt: true,
+          totalPaise: true,
+          taxPaise: true,
+          ...ORDER_SHOP_LINES_SELECT,
+        },
       }),
-      // Ecommerce 6-month revenue trend
-      prisma.$queryRaw<Array<{ month: Date; revenue: bigint }>>`
-        SELECT date_trunc('month', "paidAt") AS month, SUM("totalPaise")::bigint AS revenue
-        FROM "Order"
-        WHERE "tenantId" = ${tenantId}
-          AND "paymentStatus" = 'PAID'
-          AND "status" NOT IN ('CANCELLED', 'RETURNED')
-          AND "paidAt" >= ${trendStart}
-        GROUP BY 1
-        ORDER BY 1 ASC
-      `,
     ]);
 
     const monthKeys: string[] = [];
@@ -239,9 +279,24 @@ financeRouter.get('/summary', async (req, res, next) => {
     for (const r of trendExpenses) {
       expByMonth.set(new Date(r.month).toISOString().slice(0, 7), Number(r.expense));
     }
+    // Attribute every trend-window order to the shop that stocks its items.
+    // The per-month trend and MTD totals respect the shop filter; the branch
+    // rollup below always uses all shops (it IS the per-shop breakdown).
+    const trendEcomAttributed = trendEcomOrdersRaw.map((o) => ({
+      paidAt: o.paidAt,
+      totalPaise: o.totalPaise,
+      taxPaise: o.taxPaise,
+      attributedShopId: attributeOrderShopId(o.items),
+    }));
+    const trendEcomFiltered = q.shopId
+      ? trendEcomAttributed.filter((o) => o.attributedShopId === q.shopId)
+      : trendEcomAttributed;
+
     const ecomRevByMonth = new Map<string, number>();
-    for (const r of trendEcomOrders) {
-      ecomRevByMonth.set(new Date(r.month).toISOString().slice(0, 7), Number(r.revenue));
+    for (const o of trendEcomFiltered) {
+      if (!o.paidAt) continue;
+      const k = o.paidAt.toISOString().slice(0, 7);
+      ecomRevByMonth.set(k, (ecomRevByMonth.get(k) ?? 0) + o.totalPaise);
     }
     const trend = monthKeys.map((k, i) => ({
       month: k,
@@ -250,22 +305,44 @@ financeRouter.get('/summary', async (req, res, next) => {
       expensePaise: expByMonth.get(k) ?? 0,
     }));
 
+    // MTD (this month) online totals — the shop-filtered subset of the trend
+    // orders that fall in the current month.
+    const mtdEcomFiltered = trendEcomFiltered.filter(
+      (o) => o.paidAt && o.paidAt >= monthStart,
+    );
     const posRevenuePaise = mtdBillAgg._sum.totalPaise ?? 0;
-    const ecomRevenuePaise = mtdEcomAgg._sum.totalPaise ?? 0;
+    const ecomRevenuePaise = sumPaise(mtdEcomFiltered.map((o) => o.totalPaise));
+    const ecomOrderCount = mtdEcomFiltered.length;
     const revenuePaise = posRevenuePaise + ecomRevenuePaise;
     const expensePaise = mtdExpenseAgg._sum.amountPaise ?? 0;
     const posGstPaise =
       (mtdBillAgg._sum.cgstPaise ?? 0) +
       (mtdBillAgg._sum.sgstPaise ?? 0) +
       (mtdBillAgg._sum.igstPaise ?? 0);
-    const ecomGstPaise = mtdEcomAgg._sum.taxPaise ?? 0;
+    const ecomGstPaise = sumPaise(mtdEcomFiltered.map((o) => o.taxPaise));
     const gstPaise = posGstPaise + ecomGstPaise;
 
+    // Per-shop online rollup for MTD across ALL shops (the branch breakdown is
+    // always all-shops). Unattributed orders (legacy products with no linked
+    // stock item) are excluded here — they still count in the MTD totals.
+    const mtdEcomByShop = new Map<string, { revenuePaise: number; gstPaise: number; count: number }>();
+    for (const o of trendEcomAttributed) {
+      if (!o.attributedShopId || !o.paidAt || o.paidAt < monthStart) continue;
+      const e = mtdEcomByShop.get(o.attributedShopId) ?? { revenuePaise: 0, gstPaise: 0, count: 0 };
+      e.revenuePaise += o.totalPaise;
+      e.gstPaise += o.taxPaise;
+      e.count += 1;
+      mtdEcomByShop.set(o.attributedShopId, e);
+    }
+
     // Build branch-level rollup (shop name lookup happens in one extra query).
+    // Shops surface here if they have POS bills, expenses, OR attributed online
+    // sales this month.
     const branchShopIds = Array.from(
       new Set([
         ...branchBills.map((b) => b.shopId),
         ...branchExpenses.map((b) => b.shopId),
+        ...mtdEcomByShop.keys(),
       ]),
     );
     const branchShops = await prisma.shop.findMany({
@@ -276,19 +353,33 @@ financeRouter.get('/summary', async (req, res, next) => {
     const branchExpenseById = new Map(
       branchExpenses.map((b) => [b.shopId, b._sum.amountPaise ?? 0]),
     );
-    const branches = branchBills
-      .map((b) => {
-        const rev = b._sum.totalPaise ?? 0;
-        const exp = branchExpenseById.get(b.shopId) ?? 0;
+    // Unify POS bills + attributed online into one revenue/GST figure per shop.
+    const branchAgg = new Map<string, { revenuePaise: number; gstPaise: number; billCount: number }>();
+    for (const b of branchBills) {
+      branchAgg.set(b.shopId, {
+        revenuePaise: b._sum.totalPaise ?? 0,
+        gstPaise: (b._sum.cgstPaise ?? 0) + (b._sum.sgstPaise ?? 0) + (b._sum.igstPaise ?? 0),
+        billCount: b._count._all,
+      });
+    }
+    for (const [sid, e] of mtdEcomByShop) {
+      const cur = branchAgg.get(sid) ?? { revenuePaise: 0, gstPaise: 0, billCount: 0 };
+      cur.revenuePaise += e.revenuePaise;
+      cur.gstPaise += e.gstPaise;
+      cur.billCount += e.count;
+      branchAgg.set(sid, cur);
+    }
+    const branches = Array.from(branchAgg.entries())
+      .map(([shopId, v]) => {
+        const exp = branchExpenseById.get(shopId) ?? 0;
         return {
-          shopId: b.shopId,
-          shopName: shopNameById.get(b.shopId) ?? b.shopId.slice(-6),
-          revenuePaise: rev,
+          shopId,
+          shopName: shopNameById.get(shopId) ?? shopId.slice(-6),
+          revenuePaise: v.revenuePaise,
           expensePaise: exp,
-          netPaise: rev - exp,
-          billCount: b._count._all,
-          gstPaise:
-            (b._sum.cgstPaise ?? 0) + (b._sum.sgstPaise ?? 0) + (b._sum.igstPaise ?? 0),
+          netPaise: v.revenuePaise - exp,
+          billCount: v.billCount,
+          gstPaise: v.gstPaise,
         };
       })
       .sort((a, b) => b.revenuePaise - a.revenuePaise);
@@ -298,7 +389,7 @@ financeRouter.get('/summary', async (req, res, next) => {
       mtd: {
         revenuePaise,
         ecomRevenuePaise,
-        ecomOrderCount: mtdEcomAgg._count._all,
+        ecomOrderCount,
         expensePaise,
         gstPaise,
         netPaise: revenuePaise - expensePaise,
@@ -392,7 +483,7 @@ financeRouter.get('/daily-sales', async (req, res, next) => {
       paidAt: { gte: from, lte: to },
     };
 
-    const [bills, payments, refundAgg, byShop, byDay, ecomAgg, ecomByDay] = await Promise.all([
+    const [bills, payments, refundAgg, byShop, byDay, ecomOrdersRaw] = await Promise.all([
       prisma.bill.aggregate({
         where: { tenantId, ...shopFilter, createdAt: { gte: from, lte: to }, voidedAt: null },
         _sum: { totalPaise: true, cgstPaise: true, sgstPaise: true, igstPaise: true, discountPaise: true },
@@ -435,37 +526,87 @@ financeRouter.get('/daily-sales', async (req, res, next) => {
         GROUP BY 1
         ORDER BY 1 ASC
       `,
-      // Ecommerce orders aggregate
-      prisma.order.aggregate({
+      // Ecommerce orders for the window, with their lines so each can be
+      // attributed to the shop that stocks the sold items (see
+      // attributeOrderShopId). The aggregate / day / per-shop rollups are
+      // computed in JS below so a specific-shop view includes that shop's
+      // online sales alongside its POS bills.
+      prisma.order.findMany({
         where: ecomDailyWhere,
-        _sum: { totalPaise: true, taxPaise: true },
-        _count: { _all: true },
+        orderBy: { paidAt: 'desc' },
+        select: {
+          id: true,
+          paidAt: true,
+          subtotalPaise: true,
+          taxPaise: true,
+          totalPaise: true,
+          shippingState: true,
+          customer: { select: { name: true } },
+          ...ORDER_SHOP_LINES_SELECT,
+        },
       }),
-      // Ecommerce day-by-day
-      prisma.$queryRaw<Array<{ day: Date; revenue: bigint; cnt: bigint }>>`
-        SELECT date_trunc('day', "paidAt") AS day,
-               SUM("totalPaise")::bigint AS revenue,
-               COUNT(*)::bigint AS cnt
-        FROM "Order"
-        WHERE "tenantId" = ${tenantId}
-          AND "paymentStatus" = 'PAID'
-          AND "status" NOT IN ('CANCELLED', 'RETURNED')
-          AND "paidAt" BETWEEN ${from} AND ${to}
-        GROUP BY 1
-        ORDER BY 1 ASC
-      `,
     ]);
 
-    const shopIds = byShop.map((b) => b.shopId);
+    // Attribute each online order to the shop that stocks its items, then keep
+    // only the selected shop's orders when a shop filter is applied (the POS
+    // data above is already shop-scoped); "All shops" keeps every order.
+    const ecomAttributed = ecomOrdersRaw.map((o) => ({
+      ...o,
+      attributedShopId: attributeOrderShopId(o.items),
+    }));
+    const ecomOrders = q.shopId
+      ? ecomAttributed.filter((o) => o.attributedShopId === q.shopId)
+      : ecomAttributed;
+
+    const ecomRevenuePaise = sumPaise(ecomOrders.map((o) => o.totalPaise));
+    const ecomGstPaise = sumPaise(ecomOrders.map((o) => o.taxPaise));
+    const ecomOrderCount = ecomOrders.length;
+
+    // Per-shop online rollup (by attributed shop) — folded into byShop so each
+    // branch's revenue/GST includes its online sales. Unattributed orders
+    // (legacy products with no linked stock item) stay in the totals only.
+    const ecomByShop = new Map<string, { revenuePaise: number; gstPaise: number; count: number }>();
+    for (const o of ecomOrders) {
+      if (!o.attributedShopId) continue;
+      const e = ecomByShop.get(o.attributedShopId) ?? { revenuePaise: 0, gstPaise: 0, count: 0 };
+      e.revenuePaise += o.totalPaise;
+      e.gstPaise += o.taxPaise;
+      e.count += 1;
+      ecomByShop.set(o.attributedShopId, e);
+    }
+
+    const shopIds = Array.from(new Set([...byShop.map((b) => b.shopId), ...ecomByShop.keys()]));
     const shops = await prisma.shop.findMany({
       where: { tenantId, id: { in: shopIds } },
       select: { id: true, name: true },
     });
     const nameById = new Map(shops.map((s) => [s.id, s.name]));
 
-    const ecomRevenuePaise = ecomAgg._sum.totalPaise ?? 0;
-    const ecomGstPaise = ecomAgg._sum.taxPaise ?? 0;
-    const ecomOrderCount = ecomAgg._count._all;
+    // POS per-shop totals + attributed online, unified into one row per shop.
+    const byShopMap = new Map<string, { revenuePaise: number; gstPaise: number; billCount: number }>();
+    for (const b of byShop) {
+      byShopMap.set(b.shopId, {
+        revenuePaise: b._sum.totalPaise ?? 0,
+        gstPaise: (b._sum.cgstPaise ?? 0) + (b._sum.sgstPaise ?? 0) + (b._sum.igstPaise ?? 0),
+        billCount: b._count._all,
+      });
+    }
+    for (const [sid, e] of ecomByShop) {
+      const cur = byShopMap.get(sid) ?? { revenuePaise: 0, gstPaise: 0, billCount: 0 };
+      cur.revenuePaise += e.revenuePaise;
+      cur.gstPaise += e.gstPaise;
+      cur.billCount += e.count;
+      byShopMap.set(sid, cur);
+    }
+    const byShopRows = Array.from(byShopMap.entries())
+      .map(([shopId, v]) => ({
+        shopId,
+        shopName: nameById.get(shopId) ?? shopId.slice(-6),
+        revenuePaise: v.revenuePaise,
+        gstPaise: v.gstPaise,
+        billCount: v.billCount,
+      }))
+      .sort((a, b) => b.revenuePaise - a.revenuePaise);
 
     // Merge byDay arrays (POS bill days + ecommerce order days)
     const dayMap = new Map<string, { revenuePaise: number; billCount: number }>();
@@ -473,14 +614,15 @@ financeRouter.get('/daily-sales', async (req, res, next) => {
       const key = new Date(d.day).toISOString().slice(0, 10);
       dayMap.set(key, { revenuePaise: Number(d.revenue), billCount: Number(d.cnt) });
     }
-    for (const d of ecomByDay) {
-      const key = new Date(d.day).toISOString().slice(0, 10);
+    for (const o of ecomOrders) {
+      if (!o.paidAt) continue;
+      const key = o.paidAt.toISOString().slice(0, 10);
       const existing = dayMap.get(key);
       if (existing) {
-        existing.revenuePaise += Number(d.revenue);
-        existing.billCount += Number(d.cnt);
+        existing.revenuePaise += o.totalPaise;
+        existing.billCount += 1;
       } else {
-        dayMap.set(key, { revenuePaise: Number(d.revenue), billCount: Number(d.cnt) });
+        dayMap.set(key, { revenuePaise: o.totalPaise, billCount: 1 });
       }
     }
     const mergedByDay = Array.from(dayMap.entries())
@@ -490,42 +632,26 @@ financeRouter.get('/daily-sales', async (req, res, next) => {
     // Sales Bills report — bill-level detail for the window so the Daily Sales
     // tab can list each sale with its GST split (same shape as the GST tab).
     // POS bills carry a stored split; e-commerce orders are split on the fly by
-    // place of supply. E-commerce isn't shop-scoped, so it's always included
-    // (matching the Revenue total, which also always includes online orders).
+    // place of supply. Online orders are listed via the shop-attributed
+    // `ecomOrders` set above, so a specific-shop view shows that shop's orders.
     const homeStateCode = await getHomeStateCode();
-    const [billRows, ecomOrderRows] = await Promise.all([
-      prisma.bill.findMany({
-        where: { tenantId, ...shopFilter, createdAt: { gte: from, lte: to }, voidedAt: null },
-        orderBy: { createdAt: 'desc' },
-        take: 100,
-        select: {
-          id: true,
-          billNumber: true,
-          createdAt: true,
-          subtotalPaise: true,
-          cgstPaise: true,
-          sgstPaise: true,
-          igstPaise: true,
-          totalPaise: true,
-          shop: { select: { name: true } },
-          customer: { select: { name: true } },
-        },
-      }),
-      prisma.order.findMany({
-        where: ecomDailyWhere,
-        orderBy: { paidAt: 'desc' },
-        take: 100,
-        select: {
-          id: true,
-          paidAt: true,
-          subtotalPaise: true,
-          taxPaise: true,
-          totalPaise: true,
-          shippingState: true,
-          customer: { select: { name: true } },
-        },
-      }),
-    ]);
+    const billRows = await prisma.bill.findMany({
+      where: { tenantId, ...shopFilter, createdAt: { gte: from, lte: to }, voidedAt: null },
+      orderBy: { createdAt: 'desc' },
+      take: 100,
+      select: {
+        id: true,
+        billNumber: true,
+        createdAt: true,
+        subtotalPaise: true,
+        cgstPaise: true,
+        sgstPaise: true,
+        igstPaise: true,
+        totalPaise: true,
+        shop: { select: { name: true } },
+        customer: { select: { name: true } },
+      },
+    });
 
     const salesBills = [
       ...billRows.map((b) => ({
@@ -541,7 +667,7 @@ financeRouter.get('/daily-sales', async (req, res, next) => {
         shopName: b.shop?.name ?? '—',
         customerName: b.customer?.name ?? null,
       })),
-      ...ecomOrderRows.map((o) => {
+      ...ecomOrders.map((o) => {
         const split = splitTaxByPlaceOfSupply(o.taxPaise, o.shippingState, homeStateCode);
         return {
           id: o.id,
@@ -602,16 +728,7 @@ financeRouter.get('/daily-sales', async (req, res, next) => {
           amountPaise: Number(p.amount),
           count: Number(p.cnt),
         })),
-        byShop: byShop
-          .map((b) => ({
-            shopId: b.shopId,
-            shopName: nameById.get(b.shopId) ?? b.shopId.slice(-6),
-            revenuePaise: b._sum.totalPaise ?? 0,
-            gstPaise:
-              (b._sum.cgstPaise ?? 0) + (b._sum.sgstPaise ?? 0) + (b._sum.igstPaise ?? 0),
-            billCount: b._count._all,
-          }))
-          .sort((a, b) => b.revenuePaise - a.revenuePaise),
+        byShop: byShopRows,
         byDay: mergedByDay.map((d) => ({
           day: d.day,
           revenuePaise: d.revenuePaise,
@@ -652,14 +769,20 @@ financeRouter.get('/pl', async (req, res, next) => {
       status: { notIn: [OrderStatus.CANCELLED, OrderStatus.RETURNED] },
     };
 
-    const [bills, ecomOrders, expenses, expensesByCat] = await Promise.all([
+    const [bills, ecomOrdersRaw, expenses, expensesByCat] = await Promise.all([
       prisma.bill.findMany({
         where,
         select: { totalPaise: true, cgstPaise: true, sgstPaise: true, igstPaise: true, oldGoldValuePaise: true, makingChargesPaise: true, discountPaise: true },
       }),
       prisma.order.findMany({
         where: ecomWhere,
-        select: { totalPaise: true, taxPaise: true, subtotalPaise: true, shippingPaise: true },
+        select: {
+          totalPaise: true,
+          taxPaise: true,
+          subtotalPaise: true,
+          shippingPaise: true,
+          ...ORDER_SHOP_LINES_SELECT,
+        },
       }),
       prisma.expense.findMany({
         where: { paidAt: { gte: q.from, lte: q.to }, ...shopWhere(q.shopId) },
@@ -672,6 +795,13 @@ financeRouter.get('/pl', async (req, res, next) => {
         _count: { _all: true },
       }),
     ]);
+
+    // Online orders belong to the shop that stocks the sold items — include
+    // only the selected shop's orders when filtering (POS bills are already
+    // shop-scoped via `where`); "All shops" keeps every order.
+    const ecomOrders = q.shopId
+      ? ecomOrdersRaw.filter((o) => attributeOrderShopId(o.items) === q.shopId)
+      : ecomOrdersRaw;
 
     const posRevenuePaise = sumPaise(bills.map((b) => b.totalPaise));
     const posGstPaise = sumPaise(bills.map((b) => b.cgstPaise + b.sgstPaise + b.igstPaise));
@@ -1000,8 +1130,8 @@ financeRouter.get(
       for (const po of purchaseOrders) {
         const date = (po.receivedAt ?? po.createdAt).toISOString().slice(0, 10);
         const voucher = `PO-${po.id.slice(-6)}`;
-        const taxable = po.totalPaise; // cost is GST-exclusive; GST is on top
         const gstTotal = po.cgstPaise + po.sgstPaise + po.igstPaise;
+        const taxable = po.totalPaise - gstTotal; // total is GST-inclusive; GST sits inside it
         const creditor = `Sundry Creditors — ${po.vendor.name}`;
         rows.push([date, 'Purchase', voucher, 'Purchase A/c', r(taxable), '', `Purchase from ${po.vendor.name}`]);
         if (po.cgstPaise > 0) rows.push([date, 'Purchase', voucher, 'Input CGST', r(po.cgstPaise), '', 'CGST on purchase']);
@@ -1159,7 +1289,9 @@ function buildTallyXml(args: {
   // (Sundry Creditor). Mirrors the sales voucher but with the signs flipped.
   for (const po of args.purchaseOrders) {
     const date = ymd(po.receivedAt ?? po.createdAt);
-    const taxablePaise = po.totalPaise;
+    // PO totals are GST-inclusive — the GST sits inside totalPaise, so the
+    // taxable (Purchase A/c) portion is the total minus the input GST.
+    const taxablePaise = po.totalPaise - (po.cgstPaise + po.sgstPaise + po.igstPaise);
     const creditor = `Sundry Creditors — ${po.vendor.name}`;
     const entries: string[] = [];
     entries.push(`<ALLLEDGERENTRIES.LIST>
@@ -1235,22 +1367,33 @@ financeRouter.get('/gst-summary', async (req, res, next) => {
     const [year, monthStr] = q.month.split('-');
     const from = new Date(Date.UTC(Number(year), Number(monthStr) - 1, 1));
     const to = new Date(Date.UTC(Number(year), Number(monthStr), 1));
-    const [bills, ecomOrders] = await Promise.all([
+    const [bills, ecomOrdersRaw] = await Promise.all([
       prisma.bill.findMany({
         where: { createdAt: { gte: from, lt: to }, ...shopWhere(q.shopId) },
         select: { cgstPaise: true, sgstPaise: true, igstPaise: true, totalPaise: true },
       }),
       // E-commerce orders: tax stored as a single field; split per place of
-      // supply (shippingState vs our home state) below.
+      // supply (shippingState vs our home state) below. We also pull each
+      // order's lines so it can be attributed to the shop that stocks the sold
+      // items — a specific-shop view then shows that shop's online sales
+      // alongside its POS bills, while "All shops" includes every order.
       prisma.order.findMany({
         where: {
           paidAt: { gte: from, lt: to },
           paymentStatus: PaymentStatus.PAID,
           status: { notIn: [OrderStatus.CANCELLED, OrderStatus.RETURNED] },
         },
-        select: { totalPaise: true, taxPaise: true, shippingState: true },
+        select: {
+          totalPaise: true,
+          taxPaise: true,
+          shippingState: true,
+          ...ORDER_SHOP_LINES_SELECT,
+        },
       }),
     ]);
+    const ecomOrders = q.shopId
+      ? ecomOrdersRaw.filter((o) => attributeOrderShopId(o.items) === q.shopId)
+      : ecomOrdersRaw;
     const homeStateCode = await getHomeStateCode();
     const ecomSplits = ecomOrders.map((o) =>
       splitTaxByPlaceOfSupply(o.taxPaise, o.shippingState, homeStateCode),
@@ -1315,7 +1458,7 @@ financeRouter.get('/gst-bills', async (req, res, next) => {
     const [year, monthStr] = q.month.split('-');
     const from = new Date(Date.UTC(Number(year), Number(monthStr) - 1, 1));
     const to = new Date(Date.UTC(Number(year), Number(monthStr), 1));
-    const [bills, ecomOrders] = await Promise.all([
+    const [bills, ecomOrdersRaw] = await Promise.all([
       prisma.bill.findMany({
         where: { createdAt: { gte: from, lt: to }, ...shopWhere(q.shopId) },
         orderBy: { createdAt: 'asc' },
@@ -1333,6 +1476,10 @@ financeRouter.get('/gst-bills', async (req, res, next) => {
           customer: { select: { name: true } },
         },
       }),
+      // Online orders carry their lines so each can be attributed to the shop
+      // that stocks the sold items (see attributeOrderShopId). A specific-shop
+      // view then lists that shop's online orders next to its POS bills; the
+      // consolidated ("All shops") view lists every order.
       prisma.order.findMany({
         where: {
           paidAt: { gte: from, lt: to },
@@ -1349,9 +1496,13 @@ financeRouter.get('/gst-bills', async (req, res, next) => {
           totalPaise: true,
           shippingState: true,
           customer: { select: { name: true } },
+          ...ORDER_SHOP_LINES_SELECT,
         },
       }),
     ]);
+    const ecomOrders = q.shopId
+      ? ecomOrdersRaw.filter((o) => attributeOrderShopId(o.items) === q.shopId)
+      : ecomOrdersRaw;
 
     const homeStateCode = await getHomeStateCode();
 

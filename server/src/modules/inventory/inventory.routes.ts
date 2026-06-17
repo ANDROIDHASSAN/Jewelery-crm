@@ -4,6 +4,7 @@ import {
   ItemInputSchema,
   VendorInputSchema,
   PurchaseOrderCreateSchema,
+  PurchaseOrderUpdateSchema,
   PurchaseOrderGstSchema,
   WastageInputSchema,
   AddStockSchema,
@@ -643,6 +644,27 @@ inventoryRouter.post('/purchase-orders', requirePermission('inventory.purchase_o
     const body = PurchaseOrderCreateSchema.parse(req.body);
     const po = await svc.createPurchaseOrder(body);
     res.status(201).json({ data: po });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Edit a PO (vendor + lines + GST). Blocked once received/cancelled.
+inventoryRouter.patch('/purchase-orders/:id', requirePermission('inventory.purchase_order'), async (req, res, next) => {
+  try {
+    const body = PurchaseOrderUpdateSchema.parse(req.body);
+    const po = await svc.updatePurchaseOrder(req.params['id']!, body, req.user?.userId);
+    res.json({ data: po });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Delete a PO. Blocked once received (stock already in inventory).
+inventoryRouter.delete('/purchase-orders/:id', requirePermission('inventory.purchase_order'), async (req, res, next) => {
+  try {
+    await svc.deletePurchaseOrder(req.params['id']!, req.user?.userId);
+    res.status(204).end();
   } catch (err) {
     next(err);
   }

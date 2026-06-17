@@ -196,7 +196,9 @@ accountingRouter.get('/day-book', async (req, res, next) => {
       const date = (po.receivedAt ?? po.createdAt).toISOString();
       const voucherNumber = `PO-${po.id.slice(-6).toUpperCase()}`;
       const gstTotal = po.cgstPaise + po.sgstPaise + po.igstPaise;
-      // Purchase of stock — credit the vendor (Sundry Creditor), debit stock.
+      // PO totals are GST-inclusive, so the GST sits *inside* totalPaise. Book
+      // the taxable portion to stock and the GST to ITC separately; together
+      // they credit the vendor for the full invoice (totalPaise).
       vouchers.push({
         date,
         voucherType: 'PURCHASE',
@@ -205,7 +207,7 @@ accountingRouter.get('/day-book', async (req, res, next) => {
         narration: 'Stock purchase',
         debitAccount: 'Purchases / Inventory',
         creditAccount: `Sundry Creditors (Vendor)`,
-        amountPaise: po.totalPaise,
+        amountPaise: po.totalPaise - gstTotal,
       });
       // Input GST paid on the purchase — claimable as ITC.
       if (gstTotal > 0) {

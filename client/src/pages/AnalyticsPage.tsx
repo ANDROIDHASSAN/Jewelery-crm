@@ -904,6 +904,13 @@ function InventoryValuationSection(): JSX.Element {
             />
           </section>
 
+          <p className="text-xs text-ink-500 -mt-1">
+            Market value = metal at today’s MCX rate{' '}
+            <strong className="font-medium text-ink-700">+ diamond cost</strong> — the same total as the
+            Inventory → Valuation tab. Cost basis is metal + diamond purchase cost (making charges
+            excluded). Diamonds carry no spot rate, so unrealised profit reflects metal-rate movement only.
+          </p>
+
           <section className="grid grid-cols-1 lg:grid-cols-2 gap-3 sm:gap-4">
             <ChartCard title="By shop" eyebrow="Branches">
               <RankedBarChart
