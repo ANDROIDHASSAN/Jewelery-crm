@@ -219,9 +219,50 @@ function RealTimeSection(): JSX.Element {
     [staff],
   );
 
+  const periodLabel = period === 'week' ? 'last 7 days' : period === 'month' ? 'last 30 days' : 'last 90 days';
+  const hasData = Boolean(today || week || month) || staff.length > 0 || trendData.length > 0;
+
+  function handleCsv(): void {
+    // `today` (the local data object) shadows the module-level today() helper here,
+    // so derive the filename date inline.
+    const fileDate = new Date().toISOString().slice(0, 10);
+    const staffSorted = [...staff].sort((a, b) => b.revenuePaise - a.revenuePaise);
+    const out: (string | number)[][] = [
+      ['Real-time sales dashboard', `Generated ${new Date().toLocaleString('en-IN')}`],
+      [],
+      ['Summary'],
+      ['Metric', 'Value'],
+      ['Revenue today (₹)', paiseToRupeeString(today?.revenuePaise ?? 0)],
+      ['Bills today', today?.billCount ?? 0],
+      ['Today vs daily avg', todayVsAvg !== null ? `${todayVsAvg >= 0 ? '+' : ''}${todayVsAvg}%` : '—'],
+      ['Revenue this week (₹)', paiseToRupeeString(week?.revenuePaise ?? 0)],
+      ['Bills this week', week?.billCount ?? 0],
+      ['Revenue this month (₹)', paiseToRupeeString(month?.revenuePaise ?? 0)],
+      ['New leads this month', month?.newLeads ?? 0],
+      [],
+      ['Sales · last 7 days'],
+      ['Date', 'Revenue (₹)'],
+      ...(summary?.sevenDay ?? []).map((p) => [
+        new Date(p.date).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }),
+        paiseToRupeeString(p.revenuePaise),
+      ]),
+      [],
+      [`Staff leaderboard · ${periodLabel}`],
+      ['Rank', 'Staff', 'Role', 'Bills', 'Revenue (₹)'],
+      ...staffSorted.map((r, i) => [
+        i + 1,
+        r.userName ?? '—',
+        r.userRole ?? '—',
+        r.billCount,
+        paiseToRupeeString(r.revenuePaise),
+      ]),
+    ];
+    downloadCsv(`realtime-dashboard-${fileDate}.csv`, out);
+  }
+
   return (
     <div className="space-y-4 sm:space-y-6">
-      <div className="flex justify-end">
+      <div className="flex flex-wrap justify-end items-center gap-2">
         <div className="inline-flex rounded-md border border-ink-200 overflow-hidden text-xs sm:text-sm">
           {(['week', 'month', 'quarter'] as const).map((p) => (
             <button
@@ -237,6 +278,9 @@ function RealTimeSection(): JSX.Element {
             </button>
           ))}
         </div>
+        <Button variant="outline" size="sm" onClick={handleCsv} disabled={!hasData}>
+          <Download className="h-4 w-4" /> CSV
+        </Button>
       </div>
 
       <section className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
@@ -1339,11 +1383,37 @@ function CustomerAcquisitionSection(): JSX.Element {
   });
   const rep = data?.data;
 
+  function handleCsv(): void {
+    if (!rep) return;
+    downloadCsv(`customer-acquisition-${from}-to-${to}.csv`, [
+      ['Customer acquisition', `${from} → ${to}`],
+      [],
+      ['Summary'],
+      ['Metric', 'Value'],
+      ['Total leads', rep.totals.totalLeads],
+      ['Converted', rep.totals.converted],
+      ['Conversion %', rep.totals.conversionPct.toFixed(1)],
+      ['New customers', rep.totals.newCustomers],
+      ['Returning customers', rep.totals.returningCustomers],
+      ['New customer revenue (₹)', paiseToRupeeString(rep.totals.newRevenuePaise)],
+      ['Returning customer revenue (₹)', paiseToRupeeString(rep.totals.returningRevenuePaise)],
+      [],
+      ['Leads by channel'],
+      ['Source', 'Leads', 'Share %'],
+      ...rep.bySource.map((s) => [s.source, s.leadCount, s.sharePct.toFixed(1)]),
+    ]);
+  }
+
   return (
     <div className="space-y-4 sm:space-y-6">
       <FilterRow>
         <DateInput label="From" value={from} onChange={setFrom} />
         <DateInput label="To" value={to} onChange={setTo} />
+        <div className="sm:col-span-2 flex items-end justify-end">
+          <Button variant="outline" size="sm" onClick={handleCsv} disabled={!rep}>
+            <Download className="h-4 w-4" /> CSV
+          </Button>
+        </div>
       </FilterRow>
 
       {rep && (
@@ -1443,8 +1513,36 @@ function FestiveTrendSection(): JSX.Element {
   const totalPrevious = (rep?.series ?? []).reduce((a, s) => a + s.previousRevenuePaise, 0);
   const yoyPct = totalPrevious > 0 ? ((totalCurrent - totalPrevious) / totalPrevious) * 100 : null;
 
+  function handleCsv(): void {
+    if (!rep) return;
+    downloadCsv(`festive-trend-FY${rep.previousYear}-vs-FY${rep.currentYear}.csv`, [
+      ['Festive season YoY comparison', `FY${rep.previousYear} vs FY${rep.currentYear}`],
+      [],
+      ['Month', `${rep.currentYear} revenue (₹)`, `${rep.previousYear} revenue (₹)`, 'Δ%', 'Festive'],
+      ...rep.series.map((s) => {
+        const delta =
+          s.previousRevenuePaise > 0
+            ? ((s.currentRevenuePaise - s.previousRevenuePaise) / s.previousRevenuePaise) * 100
+            : null;
+        return [
+          s.monthLabel,
+          paiseToRupeeString(s.currentRevenuePaise),
+          paiseToRupeeString(s.previousRevenuePaise),
+          delta !== null ? `${delta >= 0 ? '+' : ''}${delta.toFixed(1)}%` : '—',
+          s.isFestive ? 'Yes' : 'No',
+        ];
+      }),
+    ]);
+  }
+
   return (
     <div className="space-y-4 sm:space-y-6">
+      <div className="flex justify-end">
+        <Button variant="outline" size="sm" onClick={handleCsv} disabled={!rep || rep.series.length === 0}>
+          <Download className="h-4 w-4" /> CSV
+        </Button>
+      </div>
+
       {rep && (
         <section className="grid grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4">
           <MetricCard
@@ -1641,11 +1739,39 @@ function AdRoiSection(): JSX.Element {
   });
   const rep = data?.data;
 
+  function handleCsv(): void {
+    if (!rep) return;
+    downloadCsv(`ad-roi-${from}-to-${to}.csv`, [
+      ['Ad ROI report', `${from} → ${to}`],
+      [],
+      ['Summary'],
+      ['Metric', 'Value'],
+      ['Marketing spend (₹)', paiseToRupeeString(rep.totals.spendPaise)],
+      ['Attributed revenue (₹)', paiseToRupeeString(rep.totals.attributedRevenuePaise)],
+      ['ROI', rep.totals.roiX !== null ? `${rep.totals.roiX.toFixed(2)}x` : '—'],
+      [],
+      ['By campaign'],
+      ['Campaign', 'Leads', 'Converted', 'Conv %', 'Attributed revenue (₹)'],
+      ...rep.campaigns.map((c) => [
+        c.campaign,
+        c.leadCount,
+        c.convertedCount,
+        c.conversionPct.toFixed(1),
+        paiseToRupeeString(c.attributedRevenuePaise),
+      ]),
+    ]);
+  }
+
   return (
     <div className="space-y-4 sm:space-y-6">
       <FilterRow>
         <DateInput label="From" value={from} onChange={setFrom} />
         <DateInput label="To" value={to} onChange={setTo} />
+        <div className="sm:col-span-2 flex items-end justify-end">
+          <Button variant="outline" size="sm" onClick={handleCsv} disabled={!rep || rep.campaigns.length === 0}>
+            <Download className="h-4 w-4" /> CSV
+          </Button>
+        </div>
       </FilterRow>
 
       {rep && (
@@ -1736,8 +1862,37 @@ function GoldRateImpactSection(): JSX.Element {
     revenue: s.revenuePaise,
   }));
 
+  function handleCsv(): void {
+    if (!rep) return;
+    downloadCsv(`gold-rate-impact-${new Date().toISOString().slice(0, 10)}.csv`, [
+      ['Gold rate impact on revenue', `${rep.meta.observationCount} days observed`],
+      [],
+      ['Summary'],
+      ['Metric', 'Value'],
+      ['Rate change · 60d', `${rep.meta.rateChangePct >= 0 ? '+' : ''}${rep.meta.rateChangePct.toFixed(2)}%`],
+      ['Revenue · 60d (₹)', paiseToRupeeString(rep.meta.totalRevenuePaise)],
+      ['Observation days', rep.meta.observationCount],
+      [],
+      ['Daily detail'],
+      ['Date', '24K / g (₹)', '22K / g (₹)', 'Revenue (₹)', 'Bills'],
+      ...rep.series.map((s) => [
+        s.date,
+        paiseToRupeeString(s.rate24KPaise),
+        paiseToRupeeString(s.rate22KPaise),
+        paiseToRupeeString(s.revenuePaise),
+        s.billCount,
+      ]),
+    ]);
+  }
+
   return (
     <div className="space-y-4 sm:space-y-6">
+      <div className="flex justify-end">
+        <Button variant="outline" size="sm" onClick={handleCsv} disabled={!rep || rep.series.length === 0}>
+          <Download className="h-4 w-4" /> CSV
+        </Button>
+      </div>
+
       {rep && (
         <section className="grid grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4">
           <MetricCard
