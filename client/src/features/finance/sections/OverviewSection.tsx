@@ -3,15 +3,20 @@
 // cached request from the backend (60s tenant cache) keeps it snappy.
 
 import { useMemo } from 'react';
-import { Banknote, TrendingDown, TrendingUp, Wallet, Building2, Users } from 'lucide-react';
+import { Banknote, Download, TrendingDown, TrendingUp, Wallet, Building2, Users } from 'lucide-react';
+import { toast } from 'sonner';
 import { MetricCard } from '@/components/ui/MetricCard';
 import { Money } from '@/components/ui/money';
+import { Button } from '@/components/ui/button';
 import { ChartCard, CurrencyBarChart, CurrencyDonutChart, RankedBarChart } from '@/components/ui/charts';
 import {
   useGetFinanceSummaryQuery,
   type ExpenseRow,
   type BranchSummary,
 } from '@/features/finance/financeApi';
+import { downloadCsv, paiseToRupeeString } from '@/features/finance/lib/export';
+import { useLazyGetMonthlyCategoryItemQuery } from '@/features/analytics/analyticsApi';
+import { monthlyPivotCsvBlocks } from '@/features/analytics/monthlyPivotCsv';
 import { useGetShopsQuery } from '@/features/shops/shopsApi';
 
 export function OverviewSection({ shopId }: { shopId?: string }): JSX.Element {
@@ -48,6 +53,72 @@ export function OverviewSection({ shopId }: { shopId?: string }): JSX.Element {
   }, [gst]);
   const gstTotal = gst ? gst.cgstPaise + gst.sgstPaise + gst.igstPaise : 0;
 
+  const [fetchMonthly, monthlyState] = useLazyGetMonthlyCategoryItemQuery();
+
+  async function handleCsv(): Promise<void> {
+    if (!summary) return;
+    const fileDate = new Date().toISOString().slice(0, 10);
+    const out: (string | number)[][] = [
+      ['Finance overview — Multi-shop P&L', `Generated ${new Date().toLocaleString('en-IN')}`],
+      [],
+      ['Month to date'],
+      ['Metric', 'Value'],
+      ['Revenue (₹)', paiseToRupeeString(mtd?.revenuePaise ?? 0)],
+      ['Expenses (₹)', paiseToRupeeString(mtd?.expensePaise ?? 0)],
+      ['Net (₹)', paiseToRupeeString(mtd?.netPaise ?? 0)],
+      ['GST collected (₹)', paiseToRupeeString(mtd?.gstPaise ?? 0)],
+      ['POS bills', mtd?.billCount ?? 0],
+      ['Online orders', mtd?.ecomOrderCount ?? 0],
+      ['Expense entries', mtd?.expenseCount ?? 0],
+      [],
+      ['Position'],
+      ['Vendor dues (₹)', paiseToRupeeString(summary.vendorDues.outstandingPaise), `${summary.vendorDues.vendorCount} vendors`],
+      ['Open gold loans (₹)', paiseToRupeeString(summary.openLoans.principalPaise), `${summary.openLoans.count} active`],
+      ['Customer advances (₹)', paiseToRupeeString(summary.activeAdvances.amountPaise), `${summary.activeAdvances.count} active`],
+      [],
+      ['Revenue vs expenses — last 6 months'],
+      ['Month', 'Revenue (₹)', 'Expenses (₹)'],
+      ...trend.map((t) => [t.label, paiseToRupeeString(t.revenuePaise), paiseToRupeeString(t.expensePaise)]),
+      [],
+      [`GST split — ${gst?.month ?? ''}`],
+      ['CGST (₹)', 'SGST (₹)', 'IGST (₹)', 'Total (₹)', 'Taxable (₹)', 'Bills'],
+      [
+        paiseToRupeeString(gst?.cgstPaise ?? 0),
+        paiseToRupeeString(gst?.sgstPaise ?? 0),
+        paiseToRupeeString(gst?.igstPaise ?? 0),
+        paiseToRupeeString(gstTotal),
+        paiseToRupeeString(gst?.taxableRevenuePaise ?? 0),
+        gst?.billCount ?? 0,
+      ],
+      [],
+      ['Branch-wise P&L — month to date'],
+      ['Branch', 'Revenue (₹)', 'Expenses (₹)', 'Net (₹)', 'GST (₹)', 'Bills'],
+      ...branches.map((b) => [
+        b.shopName,
+        paiseToRupeeString(b.revenuePaise),
+        paiseToRupeeString(b.expensePaise),
+        paiseToRupeeString(b.netPaise),
+        paiseToRupeeString(b.gstPaise),
+        b.billCount,
+      ]),
+      [],
+      ['Expenses by category — month to date'],
+      ['Category', 'Amount (₹)', 'Entries'],
+      ...expensesByCat.map((c) => [c.category, paiseToRupeeString(c.amountPaise), c.count]),
+    ];
+
+    // Append the month-wise sub-category & item breakdown (last 12 months,
+    // POS + online), scoped to the selected branch when one is chosen.
+    try {
+      const monthly = await fetchMonthly(shopId ? { shopId } : {}, true).unwrap();
+      out.push([], ...monthlyPivotCsvBlocks(monthly.data));
+    } catch {
+      toast.error('Could not load the monthly breakdown — exported the summary only.');
+    }
+
+    downloadCsv(`finance-overview-${fileDate}.csv`, out);
+  }
+
   return (
     <div className="space-y-4 sm:space-y-6">
       {isError && (
@@ -55,6 +126,17 @@ export function OverviewSection({ shopId }: { shopId?: string }): JSX.Element {
           Couldn&apos;t load the finance summary. Retrying every minute.
         </div>
       )}
+
+      <div className="flex justify-end">
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => void handleCsv()}
+          disabled={!summary || monthlyState.isLoading}
+        >
+          <Download className="h-4 w-4" /> {monthlyState.isLoading ? 'Preparing…' : 'CSV'}
+        </Button>
+      </div>
 
       {/* KPI tiles */}
       <section className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">

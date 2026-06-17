@@ -303,6 +303,36 @@ export interface ReturnsReport {
   };
 }
 
+// Month-by-month sales pivot, broken down by sub-category and by item,
+// combining POS bills + online orders. `byMonth` is keyed by the YYYY-MM
+// strings listed in `months`; a missing key means no sales that month.
+export interface MonthlyPivotCell {
+  qty: number;
+  revenuePaise: number;
+}
+export interface MonthlySubcategoryRow {
+  categoryId: string | null;
+  name: string;
+  mainCategoryName: string | null;
+  byMonth: Record<string, MonthlyPivotCell>;
+  totalQty: number;
+  totalRevenuePaise: number;
+}
+export interface MonthlyItemRow {
+  name: string;
+  subCategoryName: string | null;
+  byMonth: Record<string, MonthlyPivotCell>;
+  totalQty: number;
+  totalRevenuePaise: number;
+}
+export interface MonthlyCategoryItem {
+  from: string;
+  to: string;
+  months: string[];
+  subcategories: MonthlySubcategoryRow[];
+  items: MonthlyItemRow[];
+}
+
 // ---------------------------------------------------------------------
 // Endpoints
 // ---------------------------------------------------------------------
@@ -319,6 +349,13 @@ export const analyticsApi = baseApi.injectEndpoints({
     getStaffReport: b.query<ApiList<StaffRow>, { from: string; to: string }>({
       query: (params) => ({ url: '/analytics/staff', params }),
       providesTags: ['StaffReport'],
+    }),
+    getMonthlyCategoryItem: b.query<
+      ApiOne<MonthlyCategoryItem>,
+      { from?: string; to?: string; shopId?: string } | void
+    >({
+      query: (params) => ({ url: '/analytics/monthly-category-item', params: params ?? undefined }),
+      providesTags: ['SalesReport'],
     }),
     getTopProducts: b.query<
       { data: TopProductRow[]; groupBy?: 'product' | 'category' | 'subcategory' | 'collection' },
@@ -452,6 +489,8 @@ export const analyticsApi = baseApi.injectEndpoints({
 export const {
   useGetAnalyticsDashboardQuery,
   useGetStaffReportQuery,
+  useGetMonthlyCategoryItemQuery,
+  useLazyGetMonthlyCategoryItemQuery,
   useGetTopProductsQuery,
   useGetTopCategoriesQuery,
   useGetTopSubcategoriesQuery,

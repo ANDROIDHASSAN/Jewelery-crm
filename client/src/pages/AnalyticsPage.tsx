@@ -30,6 +30,7 @@ import {
 import {
   useGetAnalyticsDashboardQuery,
   useGetStaffReportQuery,
+  useLazyGetMonthlyCategoryItemQuery,
   useGetTopProductsQuery,
   useGetTopCategoriesQuery,
   useGetTopSubcategoriesQuery,
@@ -58,6 +59,7 @@ import {
   ShopPicker,
 } from '@/features/finance/components/FinanceFilters';
 import { downloadCsv, paiseToRupeeString, printSection } from '@/features/finance/lib/export';
+import { monthlyPivotCsvBlocks } from '@/features/analytics/monthlyPivotCsv';
 import { cn } from '@/lib/cn';
 
 type TabKey =
@@ -221,8 +223,9 @@ function RealTimeSection(): JSX.Element {
 
   const periodLabel = period === 'week' ? 'last 7 days' : period === 'month' ? 'last 30 days' : 'last 90 days';
   const hasData = Boolean(today || week || month) || staff.length > 0 || trendData.length > 0;
+  const [fetchMonthly, monthlyState] = useLazyGetMonthlyCategoryItemQuery();
 
-  function handleCsv(): void {
+  async function handleCsv(): Promise<void> {
     // `today` (the local data object) shadows the module-level today() helper here,
     // so derive the filename date inline.
     const fileDate = new Date().toISOString().slice(0, 10);
@@ -257,6 +260,16 @@ function RealTimeSection(): JSX.Element {
         paiseToRupeeString(r.revenuePaise),
       ]),
     ];
+
+    // Append the month-wise sub-category & item breakdown (last 12 months,
+    // POS + online). Fetched on demand so the dashboard itself stays light.
+    try {
+      const monthly = await fetchMonthly({}, true).unwrap();
+      out.push([], ...monthlyPivotCsvBlocks(monthly.data));
+    } catch {
+      toast.error('Could not load the monthly breakdown — exported the summary only.');
+    }
+
     downloadCsv(`realtime-dashboard-${fileDate}.csv`, out);
   }
 
@@ -278,8 +291,13 @@ function RealTimeSection(): JSX.Element {
             </button>
           ))}
         </div>
-        <Button variant="outline" size="sm" onClick={handleCsv} disabled={!hasData}>
-          <Download className="h-4 w-4" /> CSV
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => void handleCsv()}
+          disabled={!hasData || monthlyState.isLoading}
+        >
+          <Download className="h-4 w-4" /> {monthlyState.isLoading ? 'Preparing…' : 'CSV'}
         </Button>
       </div>
 

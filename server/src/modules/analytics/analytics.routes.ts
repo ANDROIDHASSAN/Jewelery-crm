@@ -472,6 +472,197 @@ analyticsRouter.get('/top-products', async (req, res, next) => {
 });
 
 // =====================================================================
+// /monthly-category-item — month-by-month sales pivot, broken down by
+// sub-category and by item, combining POS bills + online orders. Powers
+// the "Monthly by sub-category & item" CSV on the Real-time & Finance
+// overview dashboards. Sub-categories merge cleanly because POS Items and
+// storefront Products both reference the same Category table; items merge
+// on normalised display name (a POS Item and its mirrored Product are one).
+// =====================================================================
+
+analyticsRouter.get('/monthly-category-item', async (req, res, next) => {
+  try {
+    const q = z
+      .object({
+        from: z.coerce.date().optional(),
+        to: z.coerce.date().optional(),
+        shopId: z.string().optional(),
+        itemLimit: z.coerce.number().int().min(1).max(1000).default(200),
+      })
+      .parse(req.query);
+    const tenantId = getTenantId();
+    if (!tenantId) return noTenant(res);
+
+    const now = new Date();
+    const to = q.to ?? now;
+    // Default window: the last 12 calendar months (this month + 11 back).
+    const from = q.from ?? new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 11, 1));
+
+    // Chronological list of YYYY-MM buckets spanning [from, to].
+    const months: string[] = [];
+    {
+      let cur = new Date(Date.UTC(from.getUTCFullYear(), from.getUTCMonth(), 1));
+      const end = new Date(Date.UTC(to.getUTCFullYear(), to.getUTCMonth(), 1));
+      while (cur <= end) {
+        months.push(`${cur.getUTCFullYear()}-${String(cur.getUTCMonth() + 1).padStart(2, '0')}`);
+        cur = new Date(Date.UTC(cur.getUTCFullYear(), cur.getUTCMonth() + 1, 1));
+      }
+    }
+
+    // --- Online orders (OrderItem → Product → Category) ----------------
+    // Revenue is SUM(unit × qty); exclude carts/cancellations/returns.
+    const onlineRows = await prisma.$queryRaw<
+      Array<{ month: string; productId: string; qty: number; revenuePaise: bigint }>
+    >(Prisma.sql`
+      SELECT to_char(date_trunc('month', o."createdAt"), 'YYYY-MM') AS month,
+             oi."productId"                        AS "productId",
+             SUM(oi.qty)::int                      AS qty,
+             SUM(oi."pricePaise" * oi.qty)::bigint AS "revenuePaise"
+      FROM "OrderItem" oi
+      JOIN "Order" o ON o.id = oi."orderId"
+      ${q.shopId
+        ? Prisma.sql`JOIN "Product" p ON p.id = oi."productId"
+                     LEFT JOIN "Item" li ON li.id = p."linkedItemId"`
+        : Prisma.empty}
+      WHERE o."tenantId" = ${tenantId}
+        AND o.status::text NOT IN ('PENDING', 'CANCELLED', 'RETURNED')
+        AND o."createdAt" >= ${from} AND o."createdAt" <= ${to}
+        ${q.shopId ? Prisma.sql`AND li."shopId" = ${q.shopId}` : Prisma.empty}
+      GROUP BY 1, 2
+    `);
+
+    // --- POS bills (BillLine → Item → Category) ------------------------
+    // Each BillLine is one sold piece (no qty column), so qty = COUNT(*).
+    // Revenue is the line value; voided bills excluded.
+    const posRows = await prisma.$queryRaw<
+      Array<{ month: string; itemId: string; qty: number; revenuePaise: bigint }>
+    >(Prisma.sql`
+      SELECT to_char(date_trunc('month', b."createdAt"), 'YYYY-MM') AS month,
+             bl."itemId"                 AS "itemId",
+             COUNT(*)::int               AS qty,
+             SUM(bl."linePaise")::bigint AS "revenuePaise"
+      FROM "BillLine" bl
+      JOIN "Bill" b ON b.id = bl."billId"
+      WHERE b."tenantId" = ${tenantId}
+        AND b."voidedAt" IS NULL
+        AND b."createdAt" >= ${from} AND b."createdAt" <= ${to}
+        ${q.shopId ? Prisma.sql`AND b."shopId" = ${q.shopId}` : Prisma.empty}
+      GROUP BY 1, 2
+    `);
+
+    // Resolve product + item metadata (name + leaf/main category).
+    const productIds = [...new Set(onlineRows.map((r) => r.productId))];
+    const itemIds = [...new Set(posRows.map((r) => r.itemId))];
+    const [products, items] = await Promise.all([
+      productIds.length
+        ? prisma.product.findMany({
+            where: { id: { in: productIds } },
+            select: {
+              id: true,
+              name: true,
+              category: { select: { id: true, name: true, parent: { select: { id: true, name: true } } } },
+            },
+          })
+        : Promise.resolve([]),
+      itemIds.length
+        ? prisma.item.findMany({
+            where: { id: { in: itemIds } },
+            select: {
+              id: true,
+              name: true,
+              sku: true,
+              category: { select: { id: true, name: true, parent: { select: { id: true, name: true } } } },
+            },
+          })
+        : Promise.resolve([]),
+    ]);
+    const productById = new Map(products.map((p) => [p.id, p]));
+    const itemById = new Map(items.map((i) => [i.id, i]));
+
+    type Bucket = {
+      name: string;
+      mainCategoryName: string | null;
+      subCategoryName: string | null;
+      categoryId: string | null;
+      byMonth: Map<string, { qty: number; revenuePaise: number }>;
+      totalQty: number;
+      totalRevenuePaise: number;
+    };
+    const subAgg = new Map<string, Bucket>();
+    const itemAgg = new Map<string, Bucket>();
+
+    const add = (
+      map: Map<string, Bucket>,
+      key: string,
+      seed: Omit<Bucket, 'byMonth' | 'totalQty' | 'totalRevenuePaise'>,
+      month: string,
+      qty: number,
+      rev: number,
+    ): void => {
+      let b = map.get(key);
+      if (!b) {
+        b = { ...seed, byMonth: new Map(), totalQty: 0, totalRevenuePaise: 0 };
+        map.set(key, b);
+      }
+      const cell = b.byMonth.get(month) ?? { qty: 0, revenuePaise: 0 };
+      cell.qty += qty;
+      cell.revenuePaise += rev;
+      b.byMonth.set(month, cell);
+      b.totalQty += qty;
+      b.totalRevenuePaise += rev;
+    };
+
+    for (const r of onlineRows) {
+      const p = productById.get(r.productId);
+      const leaf = p?.category ?? null;
+      const subName = leaf?.name ?? 'Uncategorised';
+      const mainName = leaf?.parent?.name ?? null;
+      const rev = Number(r.revenuePaise);
+      add(subAgg, leaf?.id ?? 'uncategorized', { name: subName, mainCategoryName: mainName, subCategoryName: null, categoryId: leaf?.id ?? null }, r.month, r.qty, rev);
+      const itemName = p?.name ?? 'Unknown';
+      add(itemAgg, itemName.trim().toLowerCase(), { name: itemName, mainCategoryName: mainName, subCategoryName: subName, categoryId: null }, r.month, r.qty, rev);
+    }
+    for (const r of posRows) {
+      const it = itemById.get(r.itemId);
+      const leaf = it?.category ?? null;
+      const subName = leaf?.name ?? 'Uncategorised';
+      const mainName = leaf?.parent?.name ?? null;
+      const rev = Number(r.revenuePaise);
+      add(subAgg, leaf?.id ?? 'uncategorized', { name: subName, mainCategoryName: mainName, subCategoryName: null, categoryId: leaf?.id ?? null }, r.month, r.qty, rev);
+      const itemName = it?.name ?? it?.sku ?? 'Unknown';
+      add(itemAgg, itemName.trim().toLowerCase(), { name: itemName, mainCategoryName: mainName, subCategoryName: subName, categoryId: null }, r.month, r.qty, rev);
+    }
+
+    const subcategories = Array.from(subAgg.values())
+      .sort((a, b) => b.totalRevenuePaise - a.totalRevenuePaise)
+      .map((b) => ({
+        categoryId: b.categoryId,
+        name: b.name,
+        mainCategoryName: b.mainCategoryName,
+        byMonth: Object.fromEntries(b.byMonth),
+        totalQty: b.totalQty,
+        totalRevenuePaise: b.totalRevenuePaise,
+      }));
+    const itemsOut = Array.from(itemAgg.values())
+      .sort((a, b) => b.totalRevenuePaise - a.totalRevenuePaise)
+      .slice(0, q.itemLimit)
+      .map((b) => ({
+        name: b.name,
+        subCategoryName: b.subCategoryName,
+        byMonth: Object.fromEntries(b.byMonth),
+        totalQty: b.totalQty,
+        totalRevenuePaise: b.totalRevenuePaise,
+      }));
+
+    res.json({
+      data: { from: from.toISOString(), to: to.toISOString(), months, subcategories, items: itemsOut },
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// =====================================================================
 // /staff — staff sales leaderboard
 // =====================================================================
 
