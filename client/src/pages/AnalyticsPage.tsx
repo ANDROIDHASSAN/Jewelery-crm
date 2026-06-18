@@ -878,6 +878,27 @@ function InventoryValuationSection(): JSX.Element {
     byProductSearch,
   );
 
+  // Per-table export of just the "By product" rows currently shown (respects
+  // the search filter). Separate from the full-report CSV in the filter row.
+  function handleByProductCsv(): void {
+    if (byProduct.length === 0) return;
+    downloadCsv(`inventory-by-product-${today()}.csv`, [
+      ['Inventory valuation — by product', rep ? new Date(rep.asOf).toLocaleString('en-IN') : ''],
+      [],
+      ['Product', 'Category', 'Metal', 'Qty in stock', 'Weight (g)', 'Cost (₹)', 'Market (₹)', 'Unrealized (₹)'],
+      ...byProduct.map((p) => [
+        p.productName,
+        p.categoryName,
+        p.metalType,
+        p.count,
+        (p.weightMg / 1000).toFixed(3),
+        paiseToRupeeString(p.costPaise),
+        paiseToRupeeString(p.marketPaise),
+        paiseToRupeeString(p.unrealizedProfitPaise),
+      ]),
+    ]);
+  }
+
   function handleCsv(): void {
     if (!rep) return;
     downloadCsv(`inventory-valuation-${today()}.csv`, [
@@ -1019,9 +1040,14 @@ function InventoryValuationSection(): JSX.Element {
             countLabel={byProduct.length === 1 ? 'product' : 'products'}
           />
           <section className="rounded-md border border-ink-100 bg-ink-0 overflow-x-auto">
-            <header className="px-4 py-3 border-b border-ink-100 flex items-center justify-between">
+            <header className="px-4 py-3 border-b border-ink-100 flex items-center justify-between gap-3">
               <h2 className="text-md font-medium text-ink-900">By product</h2>
-              <p className="text-xs text-ink-500">{byProduct.length} of {allByProduct.length} products</p>
+              <div className="flex items-center gap-3">
+                <p className="text-xs text-ink-500">{byProduct.length} of {allByProduct.length} products</p>
+                <Button variant="outline" size="sm" onClick={handleByProductCsv} disabled={byProduct.length === 0}>
+                  <Download className="h-4 w-4" /> CSV
+                </Button>
+              </div>
             </header>
             {allByProduct.length === 0 ? (
               <p className="px-4 py-6 text-sm text-ink-500">No in-stock products to value.</p>
@@ -1092,6 +1118,55 @@ function InventoryValuationTree({
     });
   }
 
+  // Flatten the Main → Sub → Item hierarchy into one CSV, mirroring the rows
+  // on screen. A "Level" column distinguishes the three tiers so the file
+  // stays readable / pivot-able in Excel regardless of which rows are expanded.
+  function handleTreeCsv(): void {
+    if (tree.length === 0) return;
+    const rows: (string | number)[][] = [
+      ['Inventory valuation — by category'],
+      [],
+      ['Level', 'Category', 'Metal', 'Qty', 'Weight (g)', 'Cost (₹)', 'Market (₹)', 'Unrealized (₹)'],
+    ];
+    for (const main of tree) {
+      rows.push([
+        'Main category',
+        main.mainCategoryName,
+        main.metalType,
+        main.count,
+        (main.weightMg / 1000).toFixed(3),
+        paiseToRupeeString(main.costPaise),
+        paiseToRupeeString(main.marketPaise),
+        paiseToRupeeString(main.unrealizedProfitPaise),
+      ]);
+      for (const sub of main.subs) {
+        rows.push([
+          'Sub category',
+          sub.subCategoryName,
+          '',
+          sub.count,
+          (sub.weightMg / 1000).toFixed(3),
+          paiseToRupeeString(sub.costPaise),
+          paiseToRupeeString(sub.marketPaise),
+          paiseToRupeeString(sub.unrealizedProfitPaise),
+        ]);
+        for (const item of sub.items) {
+          rows.push([
+            'Item',
+            `${item.productName} (${item.itemId})`,
+            '',
+            item.count,
+            (item.weightMg / 1000).toFixed(3),
+            paiseToRupeeString(item.costPaise),
+            paiseToRupeeString(item.marketPaise),
+            paiseToRupeeString(item.unrealizedProfitPaise),
+          ]);
+        }
+      }
+    }
+    downloadCsv(`inventory-by-category-${today()}.csv`, rows);
+  }
+
   if (tree.length === 0) {
     return (
       <section className="rounded-md border border-ink-100 bg-ink-0">
@@ -1115,9 +1190,14 @@ function InventoryValuationTree({
             Main category → sub category → items. Click any row to drill in.
           </p>
         </div>
-        <p className="text-xs text-ink-500">
-          {tree.length} main categor{tree.length === 1 ? 'y' : 'ies'}
-        </p>
+        <div className="flex items-center gap-3">
+          <p className="text-xs text-ink-500">
+            {tree.length} main categor{tree.length === 1 ? 'y' : 'ies'}
+          </p>
+          <Button variant="outline" size="sm" onClick={handleTreeCsv}>
+            <Download className="h-4 w-4" /> CSV
+          </Button>
+        </div>
       </header>
       <table className="w-full text-sm min-w-[860px]">
         <thead className="text-eyebrow uppercase text-ink-500 bg-ink-25">
