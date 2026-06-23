@@ -50,6 +50,8 @@ server/vitest.config.ts.timestamp-*
 
 # Local DB backups (may contain real customer data — never commit)
 backup-*.sql
+backups/
+*.dump
 
 # Playwright MCP snapshots + root-level smoke-test screenshots
 .playwright-mcp/

@@ -25,7 +25,12 @@ import {
   type AdminOrder,
   type OrderPatchPayload,
 } from '@/features/ecommerce/ecommerceApi';
-import { useGetCategoriesQuery } from '@/features/inventory/inventoryApi';
+import { skipToken } from '@reduxjs/toolkit/query';
+import { useGetCategoriesQuery, useGetItemQuery } from '@/features/inventory/inventoryApi';
+// Reuse the inventory Add/Edit-Item flow so the catalog stays inventory-backed:
+// "Add product" creates a stock-tracked Item + linked Product, and "Edit" on an
+// inventory-backed product opens the full Edit Item dialog (same as Inventory).
+import { AddItemDialog, EditItemDialog } from './InventoryPage';
 import {
   ORDER_STATUSES,
   type OrderStatus,
@@ -51,6 +56,13 @@ const RESERVATION_PAYMENT_METHOD = 'reserve-at-store';
 export function EcommerceAdminPage(): JSX.Element {
   const [tab, setTab] = useState<'products' | 'orders' | 'reservations'>('products');
   const [productDialog, setProductDialog] = useState<{ open: boolean; editing?: AdminProduct }>({ open: false });
+  // "Add product" now opens the inventory Add-Item sheet (creates Item + linked
+  // Product). ProductDialog is kept only for editing legacy catalog-only products
+  // (no linked inventory Item). Inventory-backed products edit via EditItemDialog,
+  // loaded by the linked item id below.
+  const [addItemOpen, setAddItemOpen] = useState(false);
+  const [editItemId, setEditItemId] = useState<string | null>(null);
+  const { data: editItemRes } = useGetItemQuery(editItemId ?? skipToken);
   const [orderDrawer, setOrderDrawer] = useState<AdminOrder | null>(null);
   const [statusFilter, setStatusFilter] = useState<OrderStatus | ''>('');
   // Orders sub-view: flat list or kanban board (status pipeline).
@@ -159,7 +171,7 @@ export function EcommerceAdminPage(): JSX.Element {
         title="Products & orders"
         description="Catalog, online orders, in-store reservations — synced from the storefront and POS on a 10-second cadence."
         actions={
-          <Button onClick={() => setProductDialog({ open: true })}>
+          <Button onClick={() => setAddItemOpen(true)}>
             <Plus className="h-4 w-4" /> Add product
           </Button>
         }
@@ -213,7 +225,11 @@ export function EcommerceAdminPage(): JSX.Element {
         <ProductsTable
           products={products}
           loading={productsLoading}
-          onEdit={(p) => setProductDialog({ open: true, editing: p })}
+          onEdit={(p) =>
+            p.linkedItem?.id
+              ? setEditItemId(p.linkedItem.id)
+              : setProductDialog({ open: true, editing: p })
+          }
         />
       )}
 
@@ -263,6 +279,21 @@ export function EcommerceAdminPage(): JSX.Element {
         <ReservationsTable reservations={reservations} loading={ordersLoading} />
       )}
 
+      {/* Add = inventory-backed (Item + linked Product). Inventory-backed edits
+          open the full Edit Item dialog; legacy catalog-only products fall back
+          to the ProductDialog below. */}
+      <AddItemDialog
+        open={addItemOpen}
+        onClose={() => setAddItemOpen(false)}
+        redirectToLabelsOnCreate={false}
+      />
+      {editItemRes?.data && (
+        <EditItemDialog
+          open={!!editItemId}
+          item={editItemRes.data}
+          onClose={() => setEditItemId(null)}
+        />
+      )}
       <ProductDialog
         open={productDialog.open}
         editing={productDialog.editing}

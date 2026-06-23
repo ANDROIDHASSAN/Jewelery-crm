@@ -93,7 +93,11 @@ async function diamondValuePaiseForItem(itemId: string): Promise<number> {
 // a display name + at least one image (ProductInputSchema enforces min(1));
 // callers must gate on that before calling. Resolves a unique per-tenant slug,
 // appending a short id-derived suffix on collision.
-async function createProductMirror(tenantId: string, item: ItemForMirror): Promise<void> {
+async function createProductMirror(
+  tenantId: string,
+  item: ItemForMirror,
+  sizes?: { label: string; weightMg: number }[],
+): Promise<void> {
   const baseSlug = slugifyForProduct(item.name ?? item.sku);
   const existing = await prisma.product.findUnique({
     where: { tenantId_slug: { tenantId, slug: baseSlug } },
@@ -120,6 +124,9 @@ async function createProductMirror(tenantId: string, item: ItemForMirror): Promi
       fixedPricePaise: pricing.fixedPricePaise,
       stoneChargePaise,
       gender: item.gender ?? null,
+      // Size variants (made-to-order). When present the storefront renders a
+      // size selector and prices each size off the base by weight.
+      ...(sizes && sizes.length > 0 ? { sizes } : {}),
       isPublished: true,
     },
   });
@@ -154,7 +161,7 @@ export async function listItems(opts: { shopId?: string; categoryId?: string; cu
       // Surface the linked storefront Product's publish flag so the Edit
       // dialog's "Publish on storefront" checkbox reflects reality instead of
       // always defaulting to false (it's a Product column, not an Item one).
-      storefrontProduct: { select: { isPublished: true } },
+      storefrontProduct: { select: { isPublished: true, sizes: true } },
     },
   });
   const hasMore = items.length > take;
@@ -169,7 +176,7 @@ export async function listItems(opts: { shopId?: string; categoryId?: string; cu
 function withCollectionIds<
   T extends {
     collections: { collectionId: string }[];
-    storefrontProduct?: { isPublished: boolean } | null;
+    storefrontProduct?: { isPublished: boolean; sizes?: unknown } | null;
   },
 >(item: T) {
   const { storefrontProduct, ...rest } = item;
@@ -177,7 +184,26 @@ function withCollectionIds<
     ...rest,
     collectionIds: item.collections.map((c) => c.collectionId),
     isPublished: storefrontProduct?.isPublished ?? false,
+    // Size variants live on the linked Product; surface them so the Edit Item
+    // dialog can round-trip them (it submits `sizes` back). Null when unsized.
+    sizes: parseItemSizes(storefrontProduct?.sizes),
   };
+}
+
+// Normalise the Product.sizes JSON into a typed [{label, weightMg}] array,
+// dropping malformed entries. Returns [] when absent so the client can treat it
+// uniformly.
+function parseItemSizes(raw: unknown): { label: string; weightMg: number }[] {
+  if (!Array.isArray(raw)) return [];
+  const out: { label: string; weightMg: number }[] = [];
+  for (const s of raw) {
+    const label = (s as { label?: unknown })?.label;
+    const weightMg = (s as { weightMg?: unknown })?.weightMg;
+    if (typeof label === 'string' && typeof weightMg === 'number' && weightMg > 0) {
+      out.push({ label, weightMg });
+    }
+  }
+  return out;
 }
 
 export async function getItem(id: string) {
@@ -186,7 +212,7 @@ export async function getItem(id: string) {
     include: {
       diamonds: true,
       collections: { select: { collectionId: true } },
-      storefrontProduct: { select: { isPublished: true } },
+      storefrontProduct: { select: { isPublished: true, sizes: true } },
     },
   });
   if (!item) throw new NotFoundError();
@@ -196,9 +222,10 @@ export async function getItem(id: string) {
 export async function createItem(input: ItemInput, performedByUserId?: string) {
   const tenantId = getTenantId();
   if (!tenantId) throw new Error('tenantId missing');
-  // `publishToWebsite`, `collectionIds` and `diamonds` are write-time fields,
-  // not Item columns — strip them before handing the row to Prisma.
-  const { publishToWebsite, collectionIds, diamonds, ...itemData } = input;
+  // `publishToWebsite`, `collectionIds`, `diamonds` and `sizes` are write-time
+  // fields, not Item columns — strip them before handing the row to Prisma.
+  // `sizes` lives on the linked storefront Product (Product.sizes JSON).
+  const { publishToWebsite, collectionIds, diamonds, sizes, ...itemData } = input;
   const item = await prisma.item.create({
     data: {
       ...itemData,
@@ -250,7 +277,7 @@ export async function createItem(input: ItemInput, performedByUserId?: string) {
   // the admin can publish later from the e-commerce tab.
   if (publishToWebsite && item.name && item.images.length > 0) {
     try {
-      await createProductMirror(tenantId, item);
+      await createProductMirror(tenantId, item, sizes);
     } catch (err) {
       // Mirror failure must not break the primary Item create — log and move
       // on. The admin will see the inventory row landed; storefront publish
@@ -266,10 +293,34 @@ export async function updateItem(id: string, patch: Partial<ItemInput>, performe
   const tenantId = getTenantId();
   const before = await prisma.item.findUnique({ where: { id } });
   if (!before) throw new NotFoundError();
-  // `publishToWebsite`, `collectionIds`, `diamonds` are write-only — never
-  // persist them as Item columns. `publishToWebsite` is handled below (it
-  // creates / publishes / unpublishes the linked storefront Product).
-  const { publishToWebsite, collectionIds, diamonds, ...itemPatch } = patch;
+  // `publishToWebsite`, `collectionIds`, `diamonds`, `sizes` are write-only —
+  // never persist them as Item columns. `publishToWebsite` creates / publishes /
+  // unpublishes the linked Product; `sizes` is mirrored onto Product.sizes below.
+  const { publishToWebsite, collectionIds, diamonds, sizes, ...itemPatch } = patch;
+
+  // SKU is editable from the Edit dialog. When it changes, enforce the
+  // (tenantId, shopId, sku) unique key with a friendly error instead of a raw
+  // P2002 500, and keep barcodeData in lockstep — it mirrors the SKU at create
+  // time and POS scans match on either, so a re-printed label encodes the new
+  // code. Historical BillItem / PurchaseOrderItem.itemSku are string snapshots
+  // and intentionally keep the SKU recorded at the time of sale/purchase.
+  if (itemPatch.sku !== undefined && itemPatch.sku.trim() !== before.sku) {
+    const newSku = itemPatch.sku.trim();
+    const shopId = itemPatch.shopId ?? before.shopId;
+    const clash = await prisma.item.findFirst({
+      where: { tenantId: before.tenantId, shopId, sku: newSku, NOT: { id } },
+      select: { id: true },
+    });
+    if (clash) {
+      throw new BusinessRuleError(
+        'ITEM_DUPLICATE_SKU',
+        `Another item in this shop already uses the SKU "${newSku}". Pick a different one.`,
+      );
+    }
+    itemPatch.sku = newSku;
+    if (itemPatch.barcodeData === undefined) itemPatch.barcodeData = newSku;
+  }
+
   const item = await prisma.item.update({ where: { id }, data: itemPatch });
 
   // Replace diamond lines when the patch includes them (full-set semantics:
@@ -322,6 +373,11 @@ export async function updateItem(id: string, patch: Partial<ItemInput>, performe
   // and the PDP "Diamond value" breakup track the new stones.
   if (diamonds !== undefined) {
     mirrorPatch.stoneChargePaise = await diamondValuePaiseForItem(id);
+  }
+  // Size variants → Product.sizes JSON. `[]` clears them (back to single-weight);
+  // Prisma's JSON null sentinel removes the value cleanly.
+  if (sizes !== undefined) {
+    mirrorPatch.sizes = sizes.length > 0 ? sizes : Prisma.JsonNull;
   }
   if (itemPatch.name !== undefined && itemPatch.name !== null) mirrorPatch.name = itemPatch.name;
   if (itemPatch.description !== undefined && itemPatch.description !== null) {
@@ -398,7 +454,7 @@ export async function updateItem(id: string, patch: Partial<ItemInput>, performe
         } else if (item.name && item.images.length > 0) {
           // No mirror yet — create one (published). Needs a name + image, same
           // gate as create; the Edit form blocks publishing without an image.
-          await createProductMirror(tenantId, item);
+          await createProductMirror(tenantId, item, sizes);
         }
       } else if (existingProduct) {
         await prisma.product.update({ where: { id: existingProduct.id }, data: { isPublished: false } });

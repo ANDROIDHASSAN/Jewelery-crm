@@ -27,6 +27,7 @@ import {
 } from '@/features/storefront/pricing';
 import { openRazorpayCheckout } from '@/lib/razorpay';
 import { StarRating } from './OrderReviewSheet';
+import { SizeGuideDialog } from './SizeGuideDialog';
 
 // Fallback 22K rate used only when the live /website/gold-rate feed hasn't
 // hydrated yet (e.g. cold-start, first paint). The header + PDP both prefer
@@ -44,6 +45,7 @@ export function ProductDetailPage(): JSX.Element {
   const [qty, setQty] = useState(1);
   const [openSection, setOpenSection] = useState<string | null>('specs');
   const [reserveOpen, setReserveOpen] = useState(false);
+  const [sizeGuideOpen, setSizeGuideOpen] = useState(false);
   const shop = useShopActions();
   const navigate = useNavigate();
   const wishlisted = useAppSelector((s) => s.shop.wishlist.some((w) => w.slug === slug));
@@ -112,10 +114,9 @@ export function ProductDetailPage(): JSX.Element {
   // bypass the live metal-rate calc for EVERY metal type and price off the
   // pre-GST fixed base (mirrored onto basePricePaise), so the displayed total
   // matches what POS + checkout charge. Routing through the non-precious branch
-  // below (metalValue = basePricePaise) does exactly that.
-  // Sized pieces are always priced live off the metal rate — one fixed price
-  // can't express several weights — so a fixed price is ignored when sizes exist.
-  const isFixed = product.fixedPricePaise != null && sizeOptions.length === 0;
+  // below (metalValue = basePricePaise) does exactly that. Sized fixed-price
+  // pieces scale that base by the selected size's weight (handled in that branch).
+  const isFixed = product.fixedPricePaise != null;
   const isGold = !isFixed && (product.metalType === 'GOLD' || product.metalType === 'DIAMOND' || product.metalType === null);
   const isSilver = !isFixed && product.metalType === 'SILVER';
 
@@ -158,9 +159,14 @@ export function ProductDetailPage(): JSX.Element {
     displayRatePerGramPaise = ratePerGramPaise;
     metalValuePaise = Math.round((effectiveWeightMg * ratePerGramPaise) / 1000);
   } else {
-    // For Stainless Steel / Platinum / Other: basePricePaise is the actual 
-    // cost set for the item.
-    metalValuePaise = product.basePricePaise;
+    // Fixed price / Stainless Steel / Platinum / Other: basePricePaise is the
+    // pre-GST base. For sized pieces, scale that base by the selected size's
+    // weight (per-gram from base) so heavier sizes cost proportionally more —
+    // matching the Add/Edit Item size preview and the server checkout calc.
+    metalValuePaise =
+      sizeOptions.length > 0 && product.weightMg > 0
+        ? Math.round((product.basePricePaise * effectiveWeightMg) / product.weightMg)
+        : product.basePricePaise;
   }
 
   const gold = metalValuePaise; // kept as `gold` for downstream compatibility
@@ -366,12 +372,13 @@ export function ProductDetailPage(): JSX.Element {
           <div>
             <div className="flex items-center justify-between mb-3">
               <span className="text-eyebrow uppercase text-ink-500">Size</span>
-              <a
-                href="/store/help"
+              <button
+                type="button"
+                onClick={() => setSizeGuideOpen(true)}
                 className="text-xs text-ink-700 underline decoration-ink-200 underline-offset-4 hover:decoration-ink-500"
               >
                 Size guide
-              </a>
+              </button>
             </div>
             <div className="flex flex-wrap gap-2">
               {sizeOptions.map((s) => (
@@ -802,6 +809,8 @@ export function ProductDetailPage(): JSX.Element {
         qty={qty}
         totalPaise={total}
       />
+
+      <SizeGuideDialog open={sizeGuideOpen} onClose={() => setSizeGuideOpen(false)} />
     </div>
     </div>
   );

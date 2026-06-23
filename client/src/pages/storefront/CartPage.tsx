@@ -39,6 +39,14 @@ export function CartPage(): JSX.Element {
     } catch { setSidebarPricing(null); }
   }, [cart, computeSidebarPricing]);
 
+  // Compute the full breakdown (incl. sale-wide Buy-1-Get-1) on mount and on
+  // every cart/coupon change, so the sidebar summary matches the checkout
+  // dialog. Without this, sidebarPricing stays null and PriceSummary falls back
+  // to subtotal + GST only — hiding the BOGO discount until checkout.
+  useEffect(() => {
+    void refreshSidebarPricing(couponCode);
+  }, [refreshSidebarPricing, couponCode]);
+
   if (cart.length === 0) {
     return (
       <div className="bg-[#FDF8F4] min-h-[60vh]">
@@ -143,8 +151,8 @@ export function CartPage(): JSX.Element {
             <div className="space-y-1">
               <p className="text-[11px] uppercase tracking-wider text-ink-500">Have a coupon?</p>
               <CouponInput
-                onApply={(code) => { setCouponCode(code); void refreshSidebarPricing(code); }}
-                onRemove={() => { setCouponCode(null); void refreshSidebarPricing(null); }}
+                onApply={(code) => setCouponCode(code)}
+                onRemove={() => setCouponCode(null)}
                 appliedCode={couponCode}
                 discountPaise={sidebarPricing?.couponDiscountPaise ?? 0}
                 error={sidebarPricing?.couponError ?? null}

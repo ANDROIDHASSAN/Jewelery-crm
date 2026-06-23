@@ -24,10 +24,10 @@ export interface AdminProduct {
   // be in several; still a single inventory record).
   sections?: string[];
   createdAt: string;
-  // Pulled from the bridged inventory Item (Product.linkedItemId). Surfaces
-  // the real stock-keeping SKU in the admin table without joining client-side.
-  // Null when the product was created without an inventory link.
-  linkedItem?: { sku: string } | null;
+  // Pulled from the bridged inventory Item (Product.linkedItemId). Surfaces the
+  // real stock-keeping id + SKU so the admin table can show the SKU and route
+  // "Edit" to the full Edit Item dialog. Null when the product has no link.
+  linkedItem?: { id: string; sku: string } | null;
 }
 
 export interface AdminOrderItem {

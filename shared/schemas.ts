@@ -344,6 +344,16 @@ export const ItemSchema = z.object({
   createdAt: z.coerce.date(),
 });
 
+// A size variant for a made-to-order piece (rings, bangles, chains). `label` is
+// the size shown to the customer (ring size, length); `weightMg` is that size's
+// weight. One SKU, many sizes — each size re-prices off the item's base cost /
+// sell per-gram by its weight. Mirrors the existing Product.sizes JSON shape.
+export const ItemSizeSchema = z.object({
+  label: z.string().min(1).max(40),
+  weightMg: z.number().int().positive(),
+});
+export type ItemSize = z.infer<typeof ItemSizeSchema>;
+
 export const ItemInputSchema = ItemSchema.omit({
   id: true,
   tenantId: true,
@@ -360,6 +370,10 @@ export const ItemInputSchema = ItemSchema.omit({
   // column. Optional so legacy callers + bulk-import keep working.
   collectionIds: z.array(CuidSchema).max(50).optional(),
   diamonds: z.array(ItemDiamondSchema).max(50).optional(),
+  // Write-time only: size variants synced to the linked Product.sizes JSON. The
+  // server scales each size's price off the base per-gram by its weight. Omitted
+  // = single-weight piece (unchanged). Empty array clears all sizes.
+  sizes: z.array(ItemSizeSchema).max(20).optional(),
 });
 
 // AddStock — used by POST /inventory/items/:id/add-stock.

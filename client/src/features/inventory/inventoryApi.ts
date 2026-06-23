@@ -172,13 +172,36 @@ export const inventoryApi = baseApi.injectEndpoints({
             ]
           : [{ type: 'Item' as const, id: 'LIST' }],
     }),
+    // Single item with its extras (collectionIds, diamonds, sizes, isPublished) —
+    // used to open the full Edit Item dialog from the E-commerce catalog, where
+    // only the linked item id is to hand.
+    getItem: b.query<ApiOne<Item>, string>({
+      query: (id) => ({ url: `/inventory/items/${id}` }),
+      providesTags: (_r, _e, id) => [{ type: 'Item', id }],
+    }),
     createItem: b.mutation<ApiOne<Item>, ItemInput>({
       query: (body) => ({ url: '/inventory/items', method: 'POST', body }),
-      invalidatesTags: [{ type: 'Item', id: 'LIST' }, 'StockValuation'],
+      // Publishing to the website creates a linked storefront Product, so also
+      // refresh the e-commerce catalog + public storefront feeds (shared baseApi
+      // tags) — this is what lets the E-commerce "Add product" flow, which reuses
+      // AddItemDialog, show the new piece without waiting for the 10s poll.
+      invalidatesTags: [
+        { type: 'Item', id: 'LIST' },
+        'StockValuation',
+        { type: 'Product', id: 'LIST' },
+        { type: 'Product', id: 'PUBLIC' },
+      ],
     }),
     updateItem: b.mutation<ApiOne<Item>, { id: string; patch: Partial<ItemInput> }>({
       query: ({ id, patch }) => ({ url: `/inventory/items/${id}`, method: 'PATCH', body: patch }),
-      invalidatesTags: (_r, _e, a) => [{ type: 'Item', id: a.id }, { type: 'Item', id: 'LIST' }],
+      // Edits sync the linked storefront Product (name, price, sizes, publish), so
+      // refresh the e-commerce catalog + public feeds too (shared baseApi tags).
+      invalidatesTags: (_r, _e, a) => [
+        { type: 'Item', id: a.id },
+        { type: 'Item', id: 'LIST' },
+        { type: 'Product', id: 'LIST' },
+        { type: 'Product', id: 'PUBLIC' },
+      ],
     }),
     recordWastage: b.mutation<ApiOne<ItemMovementRow>, { id: string; reason: string }>({
       query: ({ id, reason }) => ({ url: `/inventory/items/${id}/wastage`, method: 'POST', body: { reason } }),
@@ -454,6 +477,7 @@ export const inventoryApi = baseApi.injectEndpoints({
 
 export const {
   useGetItemsQuery,
+  useGetItemQuery,
   useCreateItemMutation,
   useUpdateItemMutation,
   useRecordWastageMutation,

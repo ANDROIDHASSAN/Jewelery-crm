@@ -80,11 +80,11 @@ ecommerceRouter.get('/products', async (req, res, next) => {
         ...(q.cursor ? { cursor: { id: q.cursor }, skip: 1 } : {}),
         include: {
           category: { select: { metalType: true } },
-          // Surface the linked inventory item's SKU so the admin product
-          // table can show it as a real identifier (slug is for URLs, SKU
-          // is for stock). Null for products created without a linked
-          // inventory row.
-          linkedItem: { select: { sku: true } },
+          // Surface the linked inventory item's id + SKU so the admin product
+          // table can show the real identifier (slug is for URLs, SKU is for
+          // stock) and route "Edit" to the full Edit Item dialog. Null for
+          // products created without a linked inventory row.
+          linkedItem: { select: { id: true, sku: true } },
           sections: { select: { section: true } },
         },
       }),

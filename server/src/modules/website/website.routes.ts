@@ -671,11 +671,16 @@ function resolveLineWeightMg(p: { weightMg: number; sizes?: unknown }, sizeLabel
 
 // Pre-GST line price (metal value + making + stone) for `weightMg` mg of this
 // product. Mirrors the storefront PDP calc. A fixed selling price overrides the
-// live-rate calc — UNLESS the piece is sized, since one price can't express
-// several weights, so sized pieces always price live off the metal rate.
+// live-rate calc. Sized fixed-price pieces scale that base linearly by the
+// selected size's weight (per-gram from base), so heavier sizes cost
+// proportionally more — matching the Add/Edit Item size preview.
 function computeLinePricePaise(p: PriceableProduct, weightMg: number, rates: RateLookup): number {
-  if (p.fixedPricePaise != null && !productHasSizes(p)) {
-    return applySaleToPrePaise(p.fixedPricePaise, p.linkedItem?.saleItem);
+  if (p.fixedPricePaise != null) {
+    const base =
+      productHasSizes(p) && p.weightMg > 0
+        ? Math.round((p.fixedPricePaise * weightMg) / p.weightMg)
+        : p.fixedPricePaise;
+    return applySaleToPrePaise(base, p.linkedItem?.saleItem);
   }
   const metalType = p.linkedItem?.category?.metalType;
   const isGold = metalType === 'GOLD' || metalType === 'DIAMOND' || metalType == null;

@@ -2533,6 +2533,14 @@ function ProductPickerEditor({
     next[target] = tmp;
     onChange(next);
   }
+  // Materialise the showcase as an explicit, reorderable list: keep the chosen
+  // picks first (in their current order), then append every other eligible
+  // category product after them, capped at `max`. The admin can then drag the
+  // order with ↑/↓ or trim pieces — instead of clearing to a passive auto-fill.
+  const restCandidates = candidates.map((c) => c.slug).filter((s) => !selectedSet.has(s));
+  function fillFromCategory(): void {
+    onChange([...slugs, ...restCandidates].slice(0, max));
+  }
 
   return (
     <div className="space-y-3">
@@ -2640,13 +2648,26 @@ function ProductPickerEditor({
         )}
       </div>
 
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between gap-2">
         <p className="text-[11px] text-ink-500">
           Empty = auto-fill from the category · {candidates.length} eligible
         </p>
-        <p className="text-xs text-ink-500">
-          {slugs.length} / {max}
-        </p>
+        <div className="flex items-center gap-3">
+          {restCandidates.length > 0 && slugs.length < max && (
+            <button
+              type="button"
+              onClick={fillFromCategory}
+              className="inline-flex items-center gap-1.5 text-xs text-brand-700 hover:text-brand-800 hover:underline"
+              title="Fill the grid with category products — your picks stay first; reorder with ↑/↓ below"
+            >
+              <Plus className="h-3.5 w-3.5" />
+              Fill from category
+            </button>
+          )}
+          <p className="text-xs text-ink-500">
+            {slugs.length} / {max}
+          </p>
+        </div>
       </div>
     </div>
   );

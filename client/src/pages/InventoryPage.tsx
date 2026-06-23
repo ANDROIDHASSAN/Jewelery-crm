@@ -3471,7 +3471,18 @@ function AuditTab(): JSX.Element {
 // ----------------------------------------------------------------------------
 // Add-item dialog.
 
-function AddItemDialog({ open, onClose }: { open: boolean; onClose: () => void }): JSX.Element {
+export function AddItemDialog({
+  open,
+  onClose,
+  redirectToLabelsOnCreate = true,
+}: {
+  open: boolean;
+  onClose: () => void;
+  // After a successful create the Inventory flow jumps to the label printer.
+  // Callers outside Inventory (e.g. the E-commerce "Add product" button) pass
+  // false to stay in context; the catalog refreshes via cache tags instead.
+  redirectToLabelsOnCreate?: boolean;
+}): JSX.Element {
   const navigate = useNavigate();
   const { data: cats } = useGetCategoriesQuery();
   const { data: shops } = useGetShopsQuery();
@@ -3502,6 +3513,7 @@ function AddItemDialog({ open, onClose }: { open: boolean; onClose: () => void }
   const [images, setImages] = useState<string[]>([]);
   const [collectionIds, setCollectionIds] = useState<string[]>([]);
   const [diamonds, setDiamonds] = useState<DiamondRow[]>([]);
+  const [sizes, setSizes] = useState<SizeRow[]>([]);
   const [publishToWebsite, setPublishToWebsite] = useState(true);
   const [uploading, setUploading] = useState<{ name: string; progress: number }[]>([]);
   const [calcSellTotal, setCalcSellTotal] = useState(0);
@@ -3666,6 +3678,7 @@ function AddItemDialog({ open, onClose }: { open: boolean; onClose: () => void }
         publishToWebsite,
         collectionIds,
         diamonds: diamondRowsToInput(diamonds),
+        sizes: sizeRowsToInput(sizes),
       }).unwrap();
       const newSku = form.sku.trim();
       const stockLabel = isSerialized ? '' : ` (${quantityOnHand} in stock)`;
@@ -3677,8 +3690,11 @@ function AddItemDialog({ open, onClose }: { open: boolean; onClose: () => void }
       onClose();
       // Jump straight to the label printer for the piece we just added so its
       // tag can be printed immediately, without hunting for it in the list. The
-      // print page pre-selects this SKU via router state.
-      navigate('/admin/inventory/print-labels', { state: { skus: [newSku] } });
+      // print page pre-selects this SKU via router state. Skipped when opened
+      // from outside Inventory (the catalog refreshes via cache invalidation).
+      if (redirectToLabelsOnCreate) {
+        navigate('/admin/inventory/print-labels', { state: { skus: [newSku] } });
+      }
     } catch (err) {
       const message =
         (err as { data?: { error?: { message?: string } } }).data?.error?.message ?? 'Could not save item.';
@@ -3748,7 +3764,7 @@ function AddItemDialog({ open, onClose }: { open: boolean; onClose: () => void }
               />
             </Field>
 
-            <Field label="Item images">
+            <FieldGroup label="Item images">
               <div className="space-y-2">
                 <div
                   onClick={() => fileInputRef.current?.click()}
@@ -3840,7 +3856,7 @@ function AddItemDialog({ open, onClose }: { open: boolean; onClose: () => void }
                   </ul>
                 )}
               </div>
-            </Field>
+            </FieldGroup>
 
             <Field label="SKU">
               <input
@@ -4071,6 +4087,16 @@ function AddItemDialog({ open, onClose }: { open: boolean; onClose: () => void }
               <DiamondsEditor rows={diamonds} onChange={setDiamonds} />
             </Field>
 
+            <Field label="Sizes (optional)">
+              <SizesEditor
+                rows={sizes}
+                onChange={setSizes}
+                baseWeightG={form.weightG}
+                baseCostRupees={form.costPriceRupees}
+                baseSellRupees={form.sellingPriceRupees}
+              />
+            </Field>
+
             {calcSellTotal > 0 && diamonds.length > 0 && (() => {
               const diamondSell = diamonds.reduce((s, r) => s + (parseFloat(r.sellingPriceRupees) || 0), 0);
               return diamondSell > 0 ? (
@@ -4129,7 +4155,7 @@ function AddItemDialog({ open, onClose }: { open: boolean; onClose: () => void }
 // for those flows. SKU is also locked so existing barcode + bill-line FKs
 // don't dangle.
 
-function EditItemDialog({
+export function EditItemDialog({
   open,
   onClose,
   item,
@@ -4175,9 +4201,11 @@ function EditItemDialog({
     description?: string | null;
     collectionIds?: string[];
     diamonds?: Array<{ shape?: string | null; caratWeightX100?: number; cut?: string | null; clarity?: string | null; color?: string | null; count?: number; costPaise?: number; sellingPricePaise?: number | null; purchaseRatePaise?: number | null; sellRatePaise?: number | null }>;
+    sizes?: { label: string; weightMg: number }[] | null;
   };
   const [form, setForm] = useState({
     name: item.name ?? '',
+    sku: item.sku,
     description: itemExt.description ?? '',
     shopId: item.shopId,
     categoryId: item.categoryId,
@@ -4197,6 +4225,7 @@ function EditItemDialog({
   const [images, setImages] = useState<string[]>(item.images ?? []);
   const [collectionIds, setCollectionIds] = useState<string[]>(itemExt.collectionIds ?? []);
   const [diamonds, setDiamonds] = useState<DiamondRow[]>(dbDiamondsToRows(itemExt.diamonds));
+  const [sizes, setSizes] = useState<SizeRow[]>(dbSizesToRows(itemExt.sizes));
   const [calcSellTotal, setCalcSellTotal] = useState(0);
   const [publishToWebsite, setPublishToWebsite] = useState<boolean>(
     (item as Item & { isPublished?: boolean }).isPublished ?? false,
@@ -4212,6 +4241,7 @@ function EditItemDialog({
     if (!open) return;
     setForm({
       name: item.name ?? '',
+      sku: item.sku,
       description: itemExt.description ?? '',
       shopId: item.shopId,
       categoryId: item.categoryId,
@@ -4231,6 +4261,7 @@ function EditItemDialog({
     setImages(item.images ?? []);
     setCollectionIds(itemExt.collectionIds ?? []);
     setDiamonds(dbDiamondsToRows(itemExt.diamonds));
+    setSizes(dbSizesToRows(itemExt.sizes));
     setPublishToWebsite((item as Item & { isPublished?: boolean }).isPublished ?? false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, item.id]);
@@ -4274,6 +4305,7 @@ function EditItemDialog({
     const purityCaratX100 = Math.round(parseFloat(form.purityCarat) * 100);
     const costPricePaise = Math.round(parseFloat(form.costPriceRupees) * 100);
     if (!form.name.trim()) return void toast.error('Item name is required');
+    if (form.sku.trim().length < 2) return void toast.error('SKU must be at least 2 characters');
     if (!Number.isFinite(weightMg) || weightMg <= 0) return void toast.error('Weight must be > 0');
     if (metalType === 'GOLD' && (purityCaratX100 < 0 || purityCaratX100 > 2400)) {
       return void toast.error('Purity must be between 0K and 24K for Gold');
@@ -4302,6 +4334,7 @@ function EditItemDialog({
         id: item.id,
         patch: {
           name: form.name.trim(),
+          sku: form.sku.trim(),
           description: form.description.trim() || null,
           shopId: form.shopId,
           categoryId: form.categoryId,
@@ -4319,6 +4352,7 @@ function EditItemDialog({
           gender: form.gender || null,
           collectionIds,
           diamonds: diamondRowsToInput(diamonds),
+          sizes: sizeRowsToInput(sizes),
           publishToWebsite,
         },
       }).unwrap();
@@ -4340,7 +4374,7 @@ function EditItemDialog({
         <SheetBody>
           <form onSubmit={submit} className="space-y-4 text-sm">
             <p className="text-xs text-ink-500">
-              SKU + stock type are locked. Change name, photos, weight, hallmark, pricing here;
+              Stock type is locked. Change the SKU, name, photos, weight, hallmark and pricing here;
               use Add Stock / Wastage for stock-level changes.
             </p>
 
@@ -4353,7 +4387,21 @@ function EditItemDialog({
               />
             </Field>
 
-            <Field label="Item images">
+            <Field label="SKU">
+              <input
+                value={form.sku}
+                onChange={(e) => setForm({ ...form, sku: e.target.value })}
+                className={fieldCls}
+                placeholder="DW-0001"
+                required
+              />
+              <p className="mt-1 text-[11px] text-ink-500">
+                Must be unique within this shop. The scannable barcode updates to match — re-print
+                the label after renaming.
+              </p>
+            </Field>
+
+            <FieldGroup label="Item images">
               <div className="space-y-2">
                 <div
                   onClick={() => fileInputRef.current?.click()}
@@ -4444,7 +4492,7 @@ function EditItemDialog({
                   </ul>
                 )}
               </div>
-            </Field>
+            </FieldGroup>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <Field label="Shop">
@@ -4612,6 +4660,16 @@ function EditItemDialog({
 
             <Field label="Diamonds (4 Cs)">
               <DiamondsEditor rows={diamonds} onChange={setDiamonds} />
+            </Field>
+
+            <Field label="Sizes (optional)">
+              <SizesEditor
+                rows={sizes}
+                onChange={setSizes}
+                baseWeightG={form.weightG}
+                baseCostRupees={form.costPriceRupees}
+                baseSellRupees={form.sellingPriceRupees}
+              />
             </Field>
 
             {calcSellTotal > 0 && diamonds.length > 0 && (() => {
@@ -6143,6 +6201,19 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
   );
 }
 
+// Like Field, but wraps content in a <div> instead of a <label>. Use for fields
+// whose body has its own click target (e.g. the image-upload dropzone): inside a
+// <label>, a click on the dropzone both fires our onClick AND is forwarded by the
+// browser to the contained file <input>, re-opening the picker twice.
+function FieldGroup({ label, children }: { label: string; children: React.ReactNode }): JSX.Element {
+  return (
+    <div className="block">
+      <span className="text-eyebrow uppercase text-ink-500 block mb-1">{label}</span>
+      {children}
+    </div>
+  );
+}
+
 // Purity picker — preset chips for the common gold carats (24K / 22K / 18K /
 // 14K) plus a "Custom" mode that exposes a number input. Stores the raw
 // carat value as a string in `form.purityCarat` (e.g. "21" for 21K) so the
@@ -6308,6 +6379,116 @@ export function diamondRowsToInput(rows: DiamondRow[]) {
         ? Math.round((parseFloat(r.sellingRateRupees) || 0) * 100)
         : null,
     }));
+}
+
+// ── Size variants ────────────────────────────────────────────────────────────
+// Made-to-order sizes for a single SKU (ring size, bangle / chain length). Each
+// row is a {label, weight}; the storefront re-prices every size off the item's
+// base cost / sell per-gram by its weight. Form rows carry weight as grams (a
+// string) like the rest of the Item form.
+export type SizeRow = { label: string; weightG: string };
+
+export function dbSizesToRows(
+  sizes: { label: string; weightMg: number }[] | null | undefined,
+): SizeRow[] {
+  return (sizes ?? []).map((s) => ({ label: s.label, weightG: String(s.weightMg / 1000) }));
+}
+
+// Form rows → API shape. Drops rows missing a label or a positive weight.
+export function sizeRowsToInput(rows: SizeRow[]): { label: string; weightMg: number }[] {
+  return rows
+    .map((r) => ({ label: r.label.trim(), weightMg: Math.round((parseFloat(r.weightG) || 0) * 1000) }))
+    .filter((r) => r.label.length > 0 && r.weightMg > 0);
+}
+
+// Size editor — "Add size" rows of {label, weight}. Shows a live cost & sell
+// preview per size, scaled off the item's base weight & prices (per-gram). Used
+// by both the Add and Edit Item dialogs.
+function SizesEditor({
+  rows,
+  onChange,
+  baseWeightG,
+  baseCostRupees,
+  baseSellRupees,
+}: {
+  rows: SizeRow[];
+  onChange: (rows: SizeRow[]) => void;
+  baseWeightG: string;
+  baseCostRupees: string;
+  baseSellRupees: string;
+}): JSX.Element {
+  const set = (i: number, patch: Partial<SizeRow>): void =>
+    onChange(rows.map((r, idx) => (idx === i ? { ...r, ...patch } : r)));
+  const baseW = parseFloat(baseWeightG) || 0;
+  const baseCost = parseFloat(baseCostRupees) || 0;
+  const baseSell = parseFloat(baseSellRupees) || 0;
+  const costPerG = baseW > 0 ? baseCost / baseW : 0;
+  const sellPerG = baseW > 0 ? baseSell / baseW : 0;
+  const fmt = (n: number): string => `₹${Math.round(n).toLocaleString('en-IN')}`;
+  return (
+    <div className="space-y-2">
+      <p className="text-[11px] text-ink-500">
+        One SKU, made-to-order. Cost &amp; sell auto-scale off this item&apos;s base weight
+        ({baseW > 0 ? `${baseW.toFixed(3)} g` : 'set weight above'}) by each size&apos;s weight.
+      </p>
+      {rows.length === 0 && (
+        <p className="text-[11px] text-ink-400 italic">
+          No sizes — single-weight piece. Click “Add size” to offer multiple sizes.
+        </p>
+      )}
+      {rows.map((r, i) => {
+        const w = parseFloat(r.weightG) || 0;
+        const showCalc = w > 0 && baseW > 0;
+        return (
+          <div key={i} className="rounded-md border border-ink-200 p-2.5 space-y-2">
+            <div className="grid grid-cols-2 gap-2">
+              <input
+                value={r.label}
+                onChange={(e) => set(i, { label: e.target.value })}
+                placeholder="Size (e.g. 6, M, 18in)"
+                className={`${fieldCls} text-xs`}
+              />
+              <input
+                type="number" step="0.001" min={0} value={r.weightG}
+                onChange={(e) => set(i, { weightG: e.target.value })}
+                placeholder="Weight (g)" className={`${fieldCls} text-xs`}
+              />
+            </div>
+            {showCalc && (
+              <div className="rounded bg-amber-50/60 border border-amber-100 px-2.5 py-1.5 text-[11px] font-mono text-ink-700 flex flex-wrap items-center gap-x-3 gap-y-0.5">
+                <span>{w.toFixed(3)} g</span>
+                <span>cost <span className="font-semibold text-ink-900">{fmt(costPerG * w)}</span></span>
+                <span>
+                  sell{' '}
+                  {baseSell > 0 ? (
+                    <span className="font-semibold text-emerald-700">{fmt(sellPerG * w)}</span>
+                  ) : (
+                    <span className="text-ink-500">priced live by weight</span>
+                  )}
+                </span>
+              </div>
+            )}
+            <div className="flex justify-end">
+              <button
+                type="button"
+                onClick={() => onChange(rows.filter((_, idx) => idx !== i))}
+                className="text-[11px] text-ink-500 hover:text-danger-700"
+              >
+                Remove
+              </button>
+            </div>
+          </div>
+        );
+      })}
+      <button
+        type="button"
+        onClick={() => onChange([...rows, { label: '', weightG: '' }])}
+        className="inline-flex items-center gap-1.5 text-xs text-brand-700 hover:text-brand-800 hover:underline"
+      >
+        <Plus className="h-3.5 w-3.5" /> Add size
+      </button>
+    </div>
+  );
 }
 
 // ── Price Calculator ─────────────────────────────────────────────────────────
