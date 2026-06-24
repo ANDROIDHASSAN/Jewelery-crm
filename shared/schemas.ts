@@ -655,15 +655,28 @@ export const OldGoldExchangeInputSchema = z.object({
   purityCaratX100: PuritySchema,
 });
 
-export const BillCreateSchema = z.object({
-  shopId: CuidSchema,
-  customerId: CuidSchema.optional().nullable(),
-  lines: z.array(BillLineInputSchema).min(1),
-  discountPaise: PaiseSchema.default(0),
-  oldGoldExchange: OldGoldExchangeInputSchema.optional().nullable(),
-  payments: z.array(PaymentInputSchema).min(1),
-  idempotencyKey: IdempotencyKeySchema,
-});
+export const BillCreateSchema = z
+  .object({
+    shopId: CuidSchema,
+    customerId: CuidSchema.optional().nullable(),
+    lines: z.array(BillLineInputSchema).min(1),
+    discountPaise: PaiseSchema.default(0),
+    oldGoldExchange: OldGoldExchangeInputSchema.optional().nullable(),
+    payments: z.array(PaymentInputSchema).default([]),
+    // Advance receipts (ADV-…) the customer is redeeming against this bill.
+    // The server loads each, books an ADVANCE-mode payment for its amount,
+    // and flips the advance to CONSUMED in the same transaction. Optional so
+    // existing callers (and offline drafts) need not carry the field.
+    redeemAdvanceIds: z.array(CuidSchema).max(20).optional(),
+    idempotencyKey: IdempotencyKeySchema,
+  })
+  // A bill must be settled by at least one tendered payment OR a redeemed
+  // advance. (Empty payments with no advance is still rejected — keeps the
+  // "no free bills" invariant while allowing an advance to fully cover.)
+  .refine((d) => d.payments.length > 0 || (d.redeemAdvanceIds?.length ?? 0) > 0, {
+    message: 'At least one payment or redeemed advance is required',
+    path: ['payments'],
+  });
 
 export const BillSchema = z.object({
   id: CuidSchema,
@@ -1297,14 +1310,24 @@ export const RepairUpdateSchema = z.object({
   notes: z.string().max(800).optional().nullable(),
 });
 
-export const AdvanceInputSchema = z.object({
-  shopId: CuidSchema,
-  customerId: CuidSchema,
-  amountPaise: PaiseSchema.refine((n) => n > 0, 'Amount must be positive'),
-  lockRates: z.boolean().default(false),
-  validDays: z.number().int().min(1).max(365).default(90),
-  notes: z.string().max(400).optional().nullable(),
-});
+export const AdvanceInputSchema = z
+  .object({
+    shopId: CuidSchema,
+    // Either pick an existing CRM customer (customerId) OR create one inline
+    // from name + phone — the service upserts by phone so a walk-in can put
+    // money down without a prior CRM record.
+    customerId: CuidSchema.optional().nullable(),
+    customerName: z.string().min(1).max(120).optional(),
+    customerPhone: IndianPhoneSchema.optional(),
+    amountPaise: PaiseSchema.refine((n) => n > 0, 'Amount must be positive'),
+    lockRates: z.boolean().default(false),
+    validDays: z.number().int().min(1).max(365).default(90),
+    notes: z.string().max(400).optional().nullable(),
+  })
+  .refine((d) => Boolean(d.customerId) || (Boolean(d.customerName) && Boolean(d.customerPhone)), {
+    message: 'Pick a customer or enter their name and phone',
+    path: ['customerId'],
+  });
 
 export const RefundInputSchema = z.object({
   billId: CuidSchema,

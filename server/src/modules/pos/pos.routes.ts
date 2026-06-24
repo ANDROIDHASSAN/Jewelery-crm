@@ -273,6 +273,22 @@ posRouter.get('/customers/lookup', async (req, res, next) => {
   }
 });
 
+// Name / phone typeahead for POS pickers (advance receipts). Gated by the
+// /pos router's pos.access — cashiers can use it; the finance search can't.
+posRouter.get('/customers/search', async (req, res, next) => {
+  try {
+    const q = z
+      .object({
+        q: z.string().trim().min(1).max(64).optional(),
+        limit: z.coerce.number().int().positive().max(50).default(20),
+      })
+      .parse(req.query);
+    res.json({ data: await svc.searchCustomers(q) });
+  } catch (err) {
+    next(err);
+  }
+});
+
 posRouter.get('/gold-rate', async (_req, res, next) => {
   try {
     const purities = [2400, 2200, 1800, 1400, 0];

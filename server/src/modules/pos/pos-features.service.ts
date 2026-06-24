@@ -349,12 +349,39 @@ export async function updateRepair(id: string, input: {
 
 export async function createAdvance(input: {
   shopId: string;
-  customerId: string;
+  customerId?: string | null;
+  customerName?: string;
+  customerPhone?: string;
   amountPaise: number;
   lockRates: boolean;
   validDays: number;
   notes?: string | null;
 }, createdByUserId: string) {
+  const tenantId = tenantIdOrThrow();
+
+  // Resolve the customer: an explicit CRM pick wins; otherwise upsert by phone
+  // so a walk-in can be saved on the spot without a prior CRM record. Phone is
+  // the identity (unique per tenant) — if it already exists we reuse that row
+  // rather than erroring on the unique constraint.
+  let customerId = input.customerId ?? null;
+  if (!customerId) {
+    if (!input.customerName || !input.customerPhone) {
+      throw new BadRequestError('Customer name and phone are required for a new customer');
+    }
+    const existing = await prisma.customer.findFirst({
+      where: { phone: input.customerPhone },
+      select: { id: true },
+    });
+    customerId = existing
+      ? existing.id
+      : (
+          await prisma.customer.create({
+            data: { tenantId, name: input.customerName.trim(), phone: input.customerPhone, tags: [] },
+            select: { id: true },
+          })
+        ).id;
+  }
+
   let lockedRatesJson: Record<string, number> | null = null;
   if (input.lockRates) {
     lockedRatesJson = {};
@@ -365,13 +392,12 @@ export async function createAdvance(input: {
   }
   const count = await prisma.advance.count({ where: { shopId: input.shopId } });
   const receiptNumber = `ADV-${new Date().getFullYear()}-${String(count + 1).padStart(5, '0')}`;
-  const tenantId = tenantIdOrThrow();
   return prisma.advance.create({
     data: {
       tenantId,
       shopId: input.shopId,
       receiptNumber,
-      customerId: input.customerId,
+      customerId,
       amountPaise: input.amountPaise,
       lockedRatesJson: lockedRatesJson as never,
       validUntil: input.validDays ? new Date(Date.now() + input.validDays * 86_400_000) : null,
@@ -387,6 +413,9 @@ export async function listAdvances(filters: { shopId?: string; customerId?: stri
       ...(filters.shopId ? { shopId: filters.shopId } : {}),
       ...(filters.customerId ? { customerId: filters.customerId } : {}),
       ...(filters.status ? { status: filters.status } : {}),
+    },
+    include: {
+      customer: { select: { name: true, phone: true } },
     },
     orderBy: { createdAt: 'desc' },
     take: 100,

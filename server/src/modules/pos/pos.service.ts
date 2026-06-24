@@ -180,6 +180,35 @@ export async function createBill(input: BillCreate, createdByUserId?: string) {
   const oldGoldValuePaise = totals.oldGoldValuePaise;
   const totalPaise = totals.totalPaise;
 
+  // Redeemed advances: load + validate before the transaction so a bad
+  // request fails cleanly. Each advance is booked as an ADVANCE-mode payment
+  // (its full receipt amount) and flipped to CONSUMED inside the tx below.
+  // Advances are whole-receipt — there is no partial-balance field — so the
+  // sum redeemed may not exceed the bill total.
+  const redeemAdvanceIds = input.redeemAdvanceIds ?? [];
+  let advances: { id: string; amountPaise: number; receiptNumber: string }[] = [];
+  if (redeemAdvanceIds.length > 0) {
+    if (!input.customerId) {
+      throw new BusinessRuleError('ADVANCE_NEEDS_CUSTOMER', 'Select the customer before redeeming an advance');
+    }
+    advances = await prisma.advance.findMany({
+      where: { id: { in: redeemAdvanceIds }, customerId: input.customerId, status: 'ACTIVE' },
+      select: { id: true, amountPaise: true, receiptNumber: true },
+    });
+    if (advances.length !== redeemAdvanceIds.length) {
+      throw new BusinessRuleError('ADVANCE_UNAVAILABLE', 'One or more advances are not active for this customer');
+    }
+    const advanceTotal = advances.reduce((s, a) => s + a.amountPaise, 0);
+    if (advanceTotal > totalPaise) {
+      throw new BusinessRuleError('ADVANCE_EXCEEDS_TOTAL', 'Redeemed advances exceed the bill total');
+    }
+  }
+  const advancePayments = advances.map((a) => ({
+    mode: 'ADVANCE' as const,
+    amountPaise: a.amountPaise,
+    referenceId: a.receiptNumber,
+  }));
+
   // Per-shop bill number sequence — simple monotonic count.
   const billCount = await prisma.bill.count({ where: { shopId: input.shopId } });
   const billNumber = `${new Date().getFullYear()}-${String(billCount + 1).padStart(6, '0')}`;
@@ -216,7 +245,7 @@ export async function createBill(input: BillCreate, createdByUserId?: string) {
             linePaise: c.linePaise,
           })),
         },
-        payments: { create: input.payments },
+        payments: { create: [...input.payments, ...advancePayments] },
         ...(input.oldGoldExchange
           ? {
               oldGoldExchange: {
@@ -284,6 +313,17 @@ export async function createBill(input: BillCreate, createdByUserId?: string) {
       })),
     });
 
+    // Consume redeemed advances — flip ACTIVE → CONSUMED and stamp the bill
+    // they paid into. Done inside the tx so a failed bill never burns an
+    // advance, and a succeeded bill can't double-spend it (the next attempt
+    // won't find it ACTIVE).
+    if (advances.length > 0) {
+      await tx.advance.updateMany({
+        where: { id: { in: advances.map((a) => a.id) }, status: 'ACTIVE' },
+        data: { status: 'CONSUMED', consumedBillId: created.id },
+      });
+    }
+
     // Audit log via rawPrisma (it sits outside the tx, fine for v1).
     return created;
   });
@@ -308,6 +348,58 @@ export async function createBill(input: BillCreate, createdByUserId?: string) {
 
 export async function findCustomerByPhone(phone: string) {
   return prisma.customer.findFirst({ where: { phone } });
+}
+
+export interface ContactResult {
+  id: string;
+  name: string;
+  phone: string;
+  source: 'customer' | 'lead';
+}
+
+// Typeahead contact search for the POS surface (advance receipts, etc.).
+// Reachable with pos.access — the cashier has no finance.* permission, so
+// routing POS pickers through /finance/* silently 403s and every query shows
+// "no match". Returns real Customers first, then CRM Leads that aren't already
+// customers (deduped by phone), so the cashier can also book against a known
+// enquiry — picking a lead creates the Customer on submit. Tenant-scoped.
+export async function searchCustomers(opts: { q?: string; limit: number }): Promise<ContactResult[]> {
+  const term = opts.q?.trim() ?? '';
+  const where = term
+    ? {
+        OR: [
+          { name: { contains: term, mode: 'insensitive' as const } },
+          { phone: { contains: term } },
+        ],
+      }
+    : {};
+
+  const customers = await prisma.customer.findMany({
+    where,
+    orderBy: { createdAt: 'desc' },
+    take: opts.limit,
+    select: { id: true, name: true, phone: true },
+  });
+  const results: ContactResult[] = customers.map((c) => ({ ...c, source: 'customer' }));
+
+  // Backfill remaining slots with leads whose phone isn't already a customer.
+  const remaining = opts.limit - results.length;
+  if (remaining <= 0) return results;
+
+  const seenPhones = new Set(customers.map((c) => c.phone));
+  const leads = await prisma.lead.findMany({
+    where,
+    orderBy: { createdAt: 'desc' },
+    take: opts.limit, // over-fetch; we filter out phones already seen
+    select: { id: true, name: true, phone: true },
+  });
+  for (const l of leads) {
+    if (seenPhones.has(l.phone)) continue;
+    seenPhones.add(l.phone);
+    results.push({ id: l.id, name: l.name, phone: l.phone, source: 'lead' });
+    if (results.length >= opts.limit) break;
+  }
+  return results;
 }
 
 export async function listBills(opts: { shopId?: string; cursor?: string; limit?: number }) {

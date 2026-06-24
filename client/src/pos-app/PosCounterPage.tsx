@@ -55,7 +55,8 @@ import {
   useCreateBillMutation,
   useLazyFindItemByBarcodeQuery,
 } from '@/features/pos/posApi';
-import { useGetOpenSessionQuery, useParkBillMutation } from './posFeaturesApi';
+import { useGetOpenSessionQuery, useParkBillMutation, useListAdvancesQuery } from './posFeaturesApi';
+import type { AdvanceRow } from './posFeaturesApi';
 import { OpenRegisterGate } from './OpenRegisterGate';
 import { enqueueOffline, isReallyOnline } from '@/features/pos/offline';
 import type { Item } from '@goldos/shared/types';
@@ -214,6 +215,7 @@ function PosBillingScreen(): JSX.Element {
   const [loyaltyApply, setLoyaltyApply] = useState('');
   const [exchange, setExchange] = useState<OldGoldExchange | null>(null);
   const [payments, setPayments] = useState<PaymentRow[]>([newPaymentRow('CASH')]);
+  const [appliedAdvanceIds, setAppliedAdvanceIds] = useState<string[]>([]);
   const [tab, setTab] = useState<'payment' | 'customer'>('payment');
   const [billNumber] = useState<string>(() => `INV-${(Math.floor(Math.random() * 90_000) + 10_000)}`);
   const [idempotencyKey, setIdempotencyKey] = useState<string>(() => freshIdempotencyKey());
@@ -337,7 +339,25 @@ function PosBillingScreen(): JSX.Element {
   const sgst = totals.sgstPaise;
   const igst = totals.igstPaise;
   const grandTotal = totals.totalPaise;
-  const paid = payments.reduce((s, p) => s + (Number.isFinite(p.amountPaise) ? p.amountPaise : 0), 0);
+
+  // ── Advances on file ──────────────────────────────────────────────────
+  // A looked-up customer may have prepaid booking receipts (ADV-…). They show
+  // up in the payment panel as redeemable; applying one books an ADVANCE
+  // payment server-side and consumes the receipt. Whole-receipt only — there
+  // is no partial-balance field — so an advance can't exceed the bill total.
+  const { data: advancesData } = useListAdvancesQuery(
+    { customerId: customer?.id ?? '', status: 'ACTIVE' },
+    { skip: !customer?.id },
+  );
+  const activeAdvances = customer?.id ? advancesData?.data ?? [] : [];
+  const advanceTotal = activeAdvances
+    .filter((a) => appliedAdvanceIds.includes(a.id))
+    .reduce((s, a) => s + a.amountPaise, 0);
+
+  // Money tendered now (payment rows) plus prepaid advances applied.
+  const paid =
+    payments.reduce((s, p) => s + (Number.isFinite(p.amountPaise) ? p.amountPaise : 0), 0) +
+    advanceTotal;
   const dueAfterPayments = grandTotal - paid;
 
   // ── Cart actions ──────────────────────────────────────────────────────
@@ -511,6 +531,7 @@ function PosBillingScreen(): JSX.Element {
     setDiscountRupees('');
     setExchange(null);
     setPayments([newPaymentRow('CASH')]);
+    setAppliedAdvanceIds([]);
   }
 
   // ── Customer lookup ───────────────────────────────────────────────────
@@ -524,6 +545,8 @@ function PosBillingScreen(): JSX.Element {
     try {
       const res = await findCustomer({ phone: normalised }).unwrap();
       const data = res.data;
+      // Switching customers invalidates any previously-applied advance.
+      setAppliedAdvanceIds([]);
       if (!data) {
         toast.message('No customer found — they will be saved as a walk-in.');
         setCustomer(null);
@@ -545,14 +568,46 @@ function PosBillingScreen(): JSX.Element {
   function clearCustomer(): void {
     setCustomer(null);
     setPhoneSearch('');
+    // Advances belong to the customer — drop any that were applied.
+    setAppliedAdvanceIds([]);
   }
 
   // ── Payment helpers ───────────────────────────────────────────────────
+  // The single-payment shortcut fills the row with what's still due AFTER any
+  // applied advances — so tapping "Cash" rings up only the balance to collect.
   function setSinglePayment(mode: PaymentMode): void {
-    setPayments([{ ...newPaymentRow(mode, grandTotal), id: 'p-primary' }]);
+    setPayments([{ ...newPaymentRow(mode, Math.max(0, grandTotal - advanceTotal)), id: 'p-primary' }]);
   }
   function patchPayment(id: string, patch: Partial<PaymentRow>): void {
     setPayments((curr) => curr.map((p) => (p.id === id ? { ...p, ...patch } : p)));
+  }
+
+  // Toggle a prepaid advance on/off the bill. Whole-receipt: an advance can't
+  // be applied if it would push the redeemed total past the bill total. When
+  // a single payment row is showing, keep it synced to the remaining balance.
+  function toggleAdvance(a: AdvanceRow): void {
+    const isOn = appliedAdvanceIds.includes(a.id);
+    const nextIds = isOn
+      ? appliedAdvanceIds.filter((id) => id !== a.id)
+      : [...appliedAdvanceIds, a.id];
+    if (!isOn) {
+      const nextTotal = advanceTotal + a.amountPaise;
+      if (nextTotal > grandTotal) {
+        toast.error(
+          `Advance ₹${(a.amountPaise / 100).toLocaleString('en-IN')} exceeds the bill total — add more items or refund the advance instead.`,
+        );
+        return;
+      }
+    }
+    setAppliedAdvanceIds(nextIds);
+    const nextAdvanceTotal = activeAdvances
+      .filter((x) => nextIds.includes(x.id))
+      .reduce((s, x) => s + x.amountPaise, 0);
+    setPayments((curr) =>
+      curr.length === 1
+        ? [{ ...curr[0]!, amountPaise: Math.max(0, grandTotal - nextAdvanceTotal) }]
+        : curr,
+    );
   }
   function addSplit(): void {
     setPayments((curr) => [...curr, newPaymentRow('UPI', Math.max(0, grandTotal - paid))]);
@@ -598,6 +653,9 @@ function PosBillingScreen(): JSX.Element {
       payments: payments
         .filter((p) => p.amountPaise > 0)
         .map((p) => ({ mode: p.mode, amountPaise: p.amountPaise, referenceId: p.reference || null })),
+      // Prepaid advances the cashier applied — server books an ADVANCE payment
+      // per receipt and flips it to CONSUMED. Only valid with a real customer.
+      redeemAdvanceIds: customer?.id ? appliedAdvanceIds : [],
       idempotencyKey,
     };
 
@@ -617,6 +675,7 @@ function PosBillingScreen(): JSX.Element {
       setExchange(null);
       setLoyaltyApply('');
       setPayments([newPaymentRow('CASH')]);
+      setAppliedAdvanceIds([]);
       setIdempotencyKey(freshIdempotencyKey());
       return;
     }
@@ -642,6 +701,7 @@ function PosBillingScreen(): JSX.Element {
       setExchange(null);
       setLoyaltyApply('');
       setPayments([newPaymentRow('CASH')]);
+      setAppliedAdvanceIds([]);
       setIdempotencyKey(freshIdempotencyKey());
     } catch (err: unknown) {
       const e = err as { data?: { error?: { message?: string } } };
@@ -780,6 +840,10 @@ function PosBillingScreen(): JSX.Element {
             onLoyaltyChange={setLoyaltyApply}
             exchange={exchange}
             onExchangeChange={setExchange}
+            activeAdvances={activeAdvances}
+            appliedAdvanceIds={appliedAdvanceIds}
+            advanceTotal={advanceTotal}
+            onToggleAdvance={toggleAdvance}
             payments={payments}
             onSinglePayment={setSinglePayment}
             patchPayment={patchPayment}
@@ -828,6 +892,10 @@ function PosBillingScreen(): JSX.Element {
             onLoyaltyChange={setLoyaltyApply}
             exchange={exchange}
             onExchangeChange={setExchange}
+            activeAdvances={activeAdvances}
+            appliedAdvanceIds={appliedAdvanceIds}
+            advanceTotal={advanceTotal}
+            onToggleAdvance={toggleAdvance}
             payments={payments}
             onSinglePayment={setSinglePayment}
             patchPayment={patchPayment}
@@ -1195,6 +1263,10 @@ interface BillColumnProps {
   onLoyaltyChange: (v: string) => void;
   exchange: OldGoldExchange | null;
   onExchangeChange: (e: OldGoldExchange | null) => void;
+  activeAdvances: AdvanceRow[];
+  appliedAdvanceIds: string[];
+  advanceTotal: number;
+  onToggleAdvance: (a: AdvanceRow) => void;
   payments: PaymentRow[];
   onSinglePayment: (m: PaymentMode) => void;
   patchPayment: (id: string, patch: Partial<PaymentRow>) => void;
@@ -1377,8 +1449,11 @@ function PaymentTab(p: BillColumnProps): JSX.Element {
     grandTotal, paid, payments, onSinglePayment, patchPayment, addSplit, removeSplit,
     onCharge, charging, discountRupees, onDiscountChange, discountIsPct, onDiscountModeToggle,
     loyaltyApply, onLoyaltyChange, exchange, onExchangeChange, customer,
+    activeAdvances, appliedAdvanceIds, advanceTotal, onToggleAdvance,
   } = p;
   const due = grandTotal - paid;
+  // Cash actually being collected now = bill total minus prepaid advances.
+  const netPayable = Math.max(0, grandTotal - advanceTotal);
   // Two-region layout: scrollable middle (discount / exchange / payment
   // grid / splits) and a sticky footer carrying the always-visible Pay
   // button + paid/due indicator. The previous version used `max-h-[40vh]`
@@ -1508,6 +1583,60 @@ function PaymentTab(p: BillColumnProps): JSX.Element {
         )}
       </div>
 
+      {/* Advances on file — prepaid booking receipts the customer can redeem
+          against this bill. Applying one books an ADVANCE payment server-side
+          and consumes the receipt; the cash row auto-drops to the balance. */}
+      {activeAdvances.length > 0 && (
+        <div className="space-y-1.5">
+          <div className="flex items-center justify-between">
+            <Label className="text-xs text-ink-600">Advances on file</Label>
+            {advanceTotal > 0 && (
+              <span className="text-[11px] text-success-700 inline-flex items-center gap-0.5">
+                −<Money paise={advanceTotal} className="font-mono" /> applied
+              </span>
+            )}
+          </div>
+          <div className="space-y-1.5">
+            {activeAdvances.map((a) => {
+              const on = appliedAdvanceIds.includes(a.id);
+              return (
+                <button
+                  key={a.id}
+                  type="button"
+                  onClick={() => onToggleAdvance(a)}
+                  className={cn(
+                    'w-full flex items-center justify-between gap-2 rounded-md border px-3 py-2 text-left transition-colors',
+                    on
+                      ? 'border-success-300 bg-success-50'
+                      : 'border-ink-200 hover:border-brand-300 hover:bg-brand-50/40',
+                  )}
+                >
+                  <div className="min-w-0">
+                    <div className="text-xs font-medium text-ink-900 truncate">{a.receiptNumber}</div>
+                    {a.validUntil && (
+                      <div className="text-[10px] text-ink-400">
+                        valid till {new Date(a.validUntil).toLocaleDateString('en-IN')}
+                      </div>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-2 shrink-0">
+                    <Money paise={a.amountPaise} className="text-xs font-mono font-semibold text-ink-800" />
+                    <span
+                      className={cn(
+                        'text-[10px] px-1.5 py-0.5 rounded-full',
+                        on ? 'bg-success-600 text-ink-0' : 'bg-ink-100 text-ink-600',
+                      )}
+                    >
+                      {on ? 'Applied' : 'Apply'}
+                    </span>
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
       {/* Payment modes grid */}
       <div className="space-y-1.5">
         <Label className="text-xs text-ink-600">Payment mode</Label>
@@ -1598,7 +1727,7 @@ function PaymentTab(p: BillColumnProps): JSX.Element {
           disabled={charging || p.lines.length === 0}
           className="w-full h-12 text-base bg-success-600 hover:bg-success-700 text-ink-0"
         >
-          {charging ? 'Charging…' : <>Pay <Money paise={grandTotal} className="ml-1.5 font-mono font-semibold" /></>}
+          {charging ? 'Charging…' : <>Pay <Money paise={netPayable} className="ml-1.5 font-mono font-semibold" /></>}
         </Button>
         <p className="text-[11px] text-ink-500 text-center">Press F9 to charge</p>
       </div>

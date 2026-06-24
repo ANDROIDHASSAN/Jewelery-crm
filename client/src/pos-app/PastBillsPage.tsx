@@ -3,7 +3,7 @@
 
 import { useState } from 'react';
 import { toast } from 'sonner';
-import { Search, X, ReceiptText } from 'lucide-react';
+import { Search, X, ReceiptText, FileDown } from 'lucide-react';
 import { useAppSelector } from '@/app/hooks';
 import { useGetShopsQuery } from '@/features/shops/shopsApi';
 import { Button } from '@/components/ui/button';
@@ -11,6 +11,7 @@ import { Input } from '@/components/ui/input';
 import { Money } from '@/components/ui/money';
 import { Badge } from '@/components/ui/badge';
 import { EmptyState } from '@/components/ui/EmptyState';
+import { downloadPdf } from '@/lib/downloadPdf';
 import { useGetBillsQuery } from '@/features/pos/posApi';
 import { useRefundBillMutation, useVoidBillMutation } from './posFeaturesApi';
 
@@ -93,6 +94,21 @@ export function PastBillsPage(): JSX.Element {
               <Badge tone={b.paymentStatus === 'PAID' ? 'success' : b.paymentStatus === 'REFUNDED' ? 'warning' : 'neutral'}>
                 {b.paymentStatus}
               </Badge>
+              {/* Same branded tax-invoice PDF the cashier gets at checkout and
+                  the one e-commerce orders download — goes through downloadPdf
+                  so the Bearer token is attached (a plain <a href> would 401). */}
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() =>
+                  void downloadPdf(`/api/v1/pos/bills/${b.id}/receipt.pdf?download=1`, {
+                    mode: 'download',
+                    filename: `invoice-${b.billNumber}.pdf`,
+                  })
+                }
+              >
+                <FileDown className="h-4 w-4 mr-1" />Invoice
+              </Button>
               <Button variant="outline" size="sm" onClick={() => void onRefund(b.id, b.totalPaise)}>Refund</Button>
               <Button variant="outline" size="sm" onClick={() => void onVoid(b.id)}>
                 <X className="h-4 w-4 mr-1" />Void

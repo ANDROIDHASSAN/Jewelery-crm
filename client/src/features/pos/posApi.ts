@@ -17,7 +17,8 @@ export const posApi = baseApi.injectEndpoints({
         body,
         headers: { 'Idempotency-Key': body.idempotencyKey },
       }),
-      invalidatesTags: ['StockValuation', { type: 'Bill', id: 'LIST' }, { type: 'Item', id: 'LIST' }],
+      // 'Advance' so a redeemed advance drops off the customer's active list.
+      invalidatesTags: ['StockValuation', 'Advance', { type: 'Bill', id: 'LIST' }, { type: 'Item', id: 'LIST' }],
     }),
     findCustomer: b.query<ApiOne<Customer> | { data: null }, { phone: string }>({
       query: ({ phone }) => ({ url: '/pos/customers/lookup', params: { phone } }),
@@ -29,6 +30,17 @@ export const posApi = baseApi.injectEndpoints({
     findItemByBarcode: b.query<ApiOne<Item>, { code: string }>({
       query: ({ code }) => ({ url: '/pos/items/by-barcode', params: { code } }),
     }),
+    // POS-accessible contact typeahead (advance receipts). Reachable with
+    // pos.access — cashiers have no finance perm. Returns real Customers plus
+    // CRM Leads not yet converted (source distinguishes them); picking a lead
+    // creates the Customer on submit.
+    searchPosCustomers: b.query<
+      { data: { id: string; name: string; phone: string; source: 'customer' | 'lead' }[] },
+      { q?: string; limit?: number } | void
+    >({
+      query: (params) => ({ url: '/pos/customers/search', params: params ?? undefined }),
+      providesTags: ['Customer'],
+    }),
   }),
 });
 
@@ -38,4 +50,5 @@ export const {
   useLazyFindCustomerQuery,
   useGetGoldRateQuery,
   useLazyFindItemByBarcodeQuery,
+  useSearchPosCustomersQuery,
 } = posApi;

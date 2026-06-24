@@ -63,7 +63,9 @@ export interface AdvanceRow {
   shopId: string;
   receiptNumber: string;
   customerId: string;
+  customer: { name: string; phone: string } | null;
   amountPaise: number;
+  notes: string | null;
   validUntil: string | null;
   status: 'ACTIVE' | 'CONSUMED' | 'REFUNDED';
   createdAt: string;
@@ -172,10 +174,22 @@ export const posFeaturesApi = baseApi.injectEndpoints({
     }),
     createAdvance: b.mutation<
       { data: AdvanceRow },
-      { shopId: string; customerId: string; amountPaise: number; lockRates?: boolean; validDays?: number; notes?: string | null }
+      {
+        shopId: string;
+        // Pick an existing customer (customerId) OR create one inline from
+        // name + phone — the server upserts by phone.
+        customerId?: string | null;
+        customerName?: string;
+        customerPhone?: string;
+        amountPaise: number;
+        lockRates?: boolean;
+        validDays?: number;
+        notes?: string | null;
+      }
     >({
       query: (body) => ({ url: '/pos-x/advances', method: 'POST', body }),
-      invalidatesTags: ['Advance'],
+      // 'Customer' so a freshly-created walk-in shows up in customer search.
+      invalidatesTags: ['Advance', 'Customer'],
     }),
     refundAdvance: b.mutation<void, string>({
       query: (id) => ({ url: `/pos-x/advances/${id}/refund`, method: 'POST' }),
