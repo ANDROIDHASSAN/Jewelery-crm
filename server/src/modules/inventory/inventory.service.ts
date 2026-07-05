@@ -226,6 +226,22 @@ export async function createItem(input: ItemInput, performedByUserId?: string) {
   // fields, not Item columns — strip them before handing the row to Prisma.
   // `sizes` lives on the linked storefront Product (Product.sizes JSON).
   const { publishToWebsite, collectionIds, diamonds, sizes, ...itemData } = input;
+  // Guard the (tenantId, shopId, sku) unique key with a friendly error instead
+  // of a raw P2002 500 (mirrors updateItem). suggestSku is now collision-free,
+  // but a hand-typed SKU — or two same-SKU rows created concurrently — can still
+  // clash; surface it as a clear "pick a different SKU" message.
+  if (itemData.sku && itemData.shopId) {
+    const clash = await prisma.item.findFirst({
+      where: { tenantId, shopId: itemData.shopId, sku: itemData.sku.trim() },
+      select: { id: true },
+    });
+    if (clash) {
+      throw new BusinessRuleError(
+        'ITEM_DUPLICATE_SKU',
+        `Another item in this shop already uses the SKU "${itemData.sku.trim()}". Pick a different one.`,
+      );
+    }
+  }
   const item = await prisma.item.create({
     data: {
       ...itemData,
@@ -485,13 +501,28 @@ export async function deleteItem(
   // added by mistake.
   const billLineCount = await prisma.billLine.count({ where: { itemId: id } });
   if (billLineCount > 0) {
-    const after = await prisma.item.update({ where: { id }, data: { status: 'MELTED' } });
+    // Already soft-deleted? Re-clicking Delete must be an idempotent no-op — not
+    // another WASTAGE movement against stock that's already gone. Without this
+    // guard every extra click piled up duplicate "soft-deleted" wastage rows.
+    if (before.status === 'MELTED') {
+      return { hardDeleted: false };
+    }
+    // Soft delete: mark MELTED *and* drain the lot to 0. Leaving quantityOnHand
+    // untouched is what made a wasted item keep reporting "N pieces on hand"
+    // (and kept the delete confirm showing stale stock). Record the real count
+    // removed on the movement so the audit trail matches the drain.
+    const wastedQty = before.isSerialized ? 1 : before.quantityOnHand;
+    const after = await prisma.item.update({
+      where: { id },
+      data: { status: 'MELTED', quantityOnHand: 0 },
+    });
     await prisma.itemMovement.create({
       data: {
         tenantId,
         itemId: id,
         fromShopId: before.shopId,
         type: 'WASTAGE',
+        qty: wastedQty,
         reason: 'Manually removed from inventory (has sales history — soft-deleted)',
         performedByUserId: performedByUserId ?? null,
       },
@@ -525,14 +556,18 @@ export async function recordWastage(id: string, reason: string, performedByUserI
   const item = await prisma.item.findUnique({ where: { id } });
   if (!item) throw new NotFoundError();
   if (item.status !== 'IN_STOCK') throw new BusinessRuleError('ITEM_NOT_IN_STOCK', 'Item is not in stock');
+  // Drain the lot to 0 alongside the MELTED flag so a wasted item stops
+  // reporting stock on hand, and record the removed count on the movement.
+  const wastedQty = item.isSerialized ? 1 : item.quantityOnHand;
   const [updated, movement] = await prisma.$transaction([
-    prisma.item.update({ where: { id }, data: { status: 'MELTED' } }),
+    prisma.item.update({ where: { id }, data: { status: 'MELTED', quantityOnHand: 0 } }),
     prisma.itemMovement.create({
       data: {
         tenantId,
         itemId: id,
         fromShopId: item.shopId,
         type: 'WASTAGE',
+        qty: wastedQty,
         reason,
         performedByUserId: performedByUserId ?? null,
       },
@@ -1114,13 +1149,24 @@ export async function suggestSku(categoryId: string): Promise<{ sku: string; cod
   // Build the prefix: [main]-[sub] for a sub-category; just [code] for a main.
   const parts = cat?.parentId ? [mainCode, subCode] : [subCode];
   const prefix = parts.filter(Boolean).join('-') || 'SKU';
-  // Count existing items whose SKU already starts with this prefix to derive
-  // the next sequence number. Cheap + good enough; collisions are caught by the
-  // unique (tenantId, shopId, sku) constraint and the user can edit before saving.
-  const count = await prisma.item.count({
+  // Derive the next sequence from the HIGHEST existing numeric suffix for this
+  // prefix — NOT a row count. Counting breaks after a deletion: e.g. with
+  // {001,002,003} then 002 deleted, count=2 re-proposes 003, which still exists
+  // and collides on the unique (tenantId, shopId, sku) key. Max+1 is always
+  // greater than every surviving suffix (tenant-wide via the Prisma extension),
+  // so it can't collide with a live row in any shop. The user can still edit it.
+  const existing = await prisma.item.findMany({
     where: { sku: { startsWith: `${prefix}-` } },
+    select: { sku: true },
   });
-  const seq = String(count + 1).padStart(3, '0');
+  const escaped = prefix.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const tail = new RegExp(`^${escaped}-(\\d+)$`);
+  let maxSeq = 0;
+  for (const { sku } of existing) {
+    const m = tail.exec(sku);
+    if (m) maxSeq = Math.max(maxSeq, parseInt(m[1]!, 10));
+  }
+  const seq = String(maxSeq + 1).padStart(3, '0');
   return { sku: `${prefix}-${seq}`, code: prefix };
 }
 
@@ -1248,7 +1294,10 @@ export async function computeLowStock(threshold: number, includeSerialized = fal
   //      add SOLD serialized rows here: a sold unique piece isn't a restock
   //      signal and there could be thousands in history.
   const orClauses: Prisma.ItemWhereInput[] = [
-    { isSerialized: false, quantityOnHand: { lte: threshold } },
+    // A drained lot is a restock signal — but a MELTED (soft-deleted / written
+    // off) lot is now drained to 0 too, so exclude it here or every wasted item
+    // would masquerade as "needs restock".
+    { isSerialized: false, quantityOnHand: { lte: threshold }, status: { not: 'MELTED' } },
     { isSerialized: false, status: 'SOLD' },
   ];
   if (includeSerialized) {
