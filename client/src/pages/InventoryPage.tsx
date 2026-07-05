@@ -4173,6 +4173,9 @@ export function EditItemDialog({
     if (item.status === 'SOLD') {
       return void toast.error('Sold items cannot be deleted — they live on a bill.');
     }
+    if (item.status === 'MELTED') {
+      return void toast.error('This item has already been removed from inventory.');
+    }
     const qty = item.isSerialized ? 1 : item.quantityOnHand;
     const stockLine = `Stock on hand: ${qty} ${qty === 1 ? 'piece' : 'pieces'}.`;
     if (
@@ -4710,8 +4713,14 @@ export function EditItemDialog({
               <button
                 type="button"
                 onClick={() => void handleDelete()}
-                disabled={deleting || item.status === 'SOLD'}
-                title={item.status === 'SOLD' ? 'Sold items cannot be deleted' : 'Delete item'}
+                disabled={deleting || item.status === 'SOLD' || item.status === 'MELTED'}
+                title={
+                  item.status === 'SOLD'
+                    ? 'Sold items cannot be deleted'
+                    : item.status === 'MELTED'
+                      ? 'Already removed from inventory'
+                      : 'Delete item'
+                }
                 className="inline-flex items-center gap-1.5 h-9 px-3 rounded-md text-sm font-medium text-rose-600 border border-rose-200 hover:bg-rose-50 disabled:opacity-40 disabled:cursor-not-allowed"
               >
                 <Trash2 className="h-4 w-4" /> {deleting ? 'Deleting…' : 'Delete'}
@@ -5403,12 +5412,19 @@ function POLineEditor({
   index,
   categories,
   onPatch,
+  onApplySuggestedSku,
   onRemove,
 }: {
   line: POLine;
   index: number;
   categories: CategoryRow[];
   onPatch: (i: number, patch: Partial<POLine>) => void;
+  // Applies a server-suggested SKU to this line, but first bumps its numeric
+  // suffix so it doesn't collide with SKUs already used by sibling lines in the
+  // same PO. suggestSku only sees persisted rows, so without this every same-
+  // category line gets the identical suggestion (e.g. all "RING-001") and they
+  // merge into one inventory row on receive.
+  onApplySuggestedSku: (i: number, suggested: string) => void;
   onRemove: (i: number) => void;
 }): JSX.Element {
   const [triggerSku, { data: skuData }] = useLazyGetSkuSuggestionQuery();
@@ -5427,7 +5443,7 @@ function POLineEditor({
     if (catId) {
       void triggerSku(catId).then((res) => {
         const suggested = res.data?.data?.sku;
-        if (suggested) onPatch(index, { itemSku: suggested });
+        if (suggested) onApplySuggestedSku(index, suggested);
       });
     }
   }
@@ -5954,6 +5970,36 @@ function POForm({ editPo, onClose }: { editPo: PurchaseOrderRow | null; onClose:
   const patchLine = (i: number, patch: Partial<POLine>): void =>
     setLines((ls) => ls.map((l, j) => (j === i ? { ...l, ...patch } : l)));
 
+  // Apply a server-suggested SKU to a line, de-duplicated against the SKUs the
+  // other draft lines already hold. suggestSku counts only persisted rows, so
+  // several same-category lines get the same suggestion; bump the numeric suffix
+  // here until it's unique within the PO so each line becomes a distinct item on
+  // receive (fixes "added 5 products, only 1 SKU shows"). Reads the latest lines
+  // inside the updater to avoid a stale closure when suggestions resolve async.
+  const applySuggestedSku = (i: number, suggested: string): void =>
+    setLines((ls) => {
+      const used = new Set(
+        ls.filter((_, j) => j !== i).map((l) => l.itemSku.trim()).filter(Boolean),
+      );
+      let sku = suggested;
+      const m = /^(.*-)(\d+)$/.exec(suggested);
+      if (m) {
+        const width = m[2]!.length;
+        let n = parseInt(m[2]!, 10);
+        while (used.has(sku)) {
+          n += 1;
+          sku = m[1]! + String(n).padStart(width, '0');
+        }
+      } else {
+        let n = 2;
+        while (used.has(sku)) {
+          sku = `${suggested}-${n}`;
+          n += 1;
+        }
+      }
+      return ls.map((l, j) => (j === i ? { ...l, itemSku: sku } : l));
+    });
+
   // Merge picker-selected lines into the current list, removing the placeholder
   // blank line if it hasn't been touched yet.
   function handlePickerAdd(newLines: POLine[]): void {
@@ -6067,6 +6113,7 @@ function POForm({ editPo, onClose }: { editPo: PurchaseOrderRow | null; onClose:
               index={i}
               categories={categories}
               onPatch={patchLine}
+              onApplySuggestedSku={applySuggestedSku}
               onRemove={(idx) => setLines(lines.filter((_, j) => j !== idx))}
             />
           ))}
@@ -7310,13 +7357,42 @@ const SW_STATUS_COLORS: Record<string, string> = {
 type ItemWithCollections = Item & { collectionIds?: string[] };
 
 function ShopWiseInventoryTab(): JSX.Element {
-  const { data: itemsRes, isLoading: itemsLoading } = useGetItemsQuery({ cursor: undefined, limit: 500 });
+  // Load EVERY item for accurate shop-wide aggregation. listItems caps each page
+  // at 100 (MAX_PAGE_LIMIT), so the old single `limit: 500` request silently
+  // truncated any shop with >100 rows — the totals here then disagreed with
+  // Analytics (which aggregates server-side over the full set). Page through
+  // every cursor and accumulate until there are no more. Mirrors ItemsTab's
+  // cursor-chain, but advances automatically instead of via a "Load more" button.
+  const [cursorChain, setCursorChain] = useState<Array<string | undefined>>([undefined]);
+  const [accItems, setAccItems] = useState<ItemWithCollections[]>([]);
+  const activeCursor = cursorChain[cursorChain.length - 1];
+  const { data: itemsRes, isLoading: itemsLoading } = useGetItemsQuery({ cursor: activeCursor, limit: 100 });
+  useEffect(() => {
+    if (!itemsRes?.data) return;
+    setAccItems((prev) => {
+      // First page → mirror it directly so cache invalidations (edits/deletes)
+      // refresh in place instead of stacking stale rows.
+      if (cursorChain.length === 1) return itemsRes.data as ItemWithCollections[];
+      const incoming = new Map(itemsRes.data.map((r) => [r.id, r]));
+      const updated = prev.map((r) => (incoming.get(r.id) as ItemWithCollections | undefined) ?? r);
+      const seen = new Set(prev.map((r) => r.id));
+      const appended = itemsRes.data.filter((r) => !seen.has(r.id)) as ItemWithCollections[];
+      return [...updated, ...appended];
+    });
+  }, [itemsRes, cursorChain.length]);
+  useEffect(() => {
+    const next = itemsRes?.page.nextCursor;
+    if (itemsRes?.page.hasMore && next && !cursorChain.includes(next)) {
+      setCursorChain((prev) => [...prev, next]);
+    }
+  }, [itemsRes, cursorChain]);
+
   const { data: shopsRes } = useGetShopsQuery();
   const { data: catRes } = useGetCategoriesQuery();
   const { data: collectionsRes } = useGetCollectionsQuery();
 
   const shops = shopsRes?.data ?? [];
-  const allItems = (itemsRes?.data ?? []) as ItemWithCollections[];
+  const allItems = accItems;
   const cats = (catRes?.data ?? []) as CategoryRow[];
   const collections = collectionsRes?.data ?? [];
 
@@ -7347,11 +7423,32 @@ function ShopWiseInventoryTab(): JSX.Element {
     [allItems, selectedShopId],
   );
 
-  // --- Summary stats ---
-  const totalWeightMg = useMemo(() => shopItems.reduce((s, i) => s + i.weightMg, 0), [shopItems]);
-  const totalValuePaise = useMemo(() => shopItems.reduce((s, i) => s + i.costPricePaise, 0), [shopItems]);
-  const inStockCount = useMemo(() => shopItems.filter((i) => i.status === 'IN_STOCK').length, [shopItems]);
-  const inTransitCount = useMemo(() => shopItems.filter((i) => i.status === 'IN_TRANSIT').length, [shopItems]);
+  // --- Summary stats (piece-basis, in-stock only) ---
+  // Everything here counts PIECES, not rows, over IN-STOCK stock only — the same
+  // basis Analytics → Inventory value and the Valuation tab use. A lot row of N
+  // contributes N: weight, cost and count all scale by units, and cost folds in
+  // Σ diamond cost. Previously weight/value summed once per row and dropped stone
+  // value, so they disagreed with Analytics (e.g. 341 g vs 3 691 g).
+  const unitsOf = (i: ItemWithCollections): number => (i.isSerialized ? 1 : i.quantityOnHand);
+  const diamondCostOf = (i: ItemWithCollections): number =>
+    ((i as ItemWithCollections & { diamonds?: Array<{ costPaise?: number }> }).diamonds ?? []).reduce(
+      (s, d) => s + (d.costPaise ?? 0),
+      0,
+    );
+  const inStockItems = useMemo(() => shopItems.filter((i) => i.status === 'IN_STOCK'), [shopItems]);
+  const totalWeightMg = useMemo(
+    () => inStockItems.reduce((s, i) => s + i.weightMg * unitsOf(i), 0),
+    [inStockItems],
+  );
+  const totalValuePaise = useMemo(
+    () => inStockItems.reduce((s, i) => s + (i.costPricePaise + diamondCostOf(i)) * unitsOf(i), 0),
+    [inStockItems],
+  );
+  const inStockCount = useMemo(() => inStockItems.reduce((s, i) => s + unitsOf(i), 0), [inStockItems]);
+  const inTransitCount = useMemo(
+    () => shopItems.filter((i) => i.status === 'IN_TRANSIT').reduce((s, i) => s + unitsOf(i), 0),
+    [shopItems],
+  );
 
   // --- Chart: items per main category ---
   const categoryChartData = useMemo(() => {
