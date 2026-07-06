@@ -10,7 +10,7 @@ import { toast } from 'sonner';
 import {
   Inbox, Kanban, Megaphone, Send, BellRing, BarChart3, Plus, X, Phone,
   MessageCircle, Cake, ShieldCheck, Sparkles, Users, Tag, Hash, Repeat,
-  ArrowUpRight, CheckCircle2, AlertTriangle, Calendar, ChevronRight, Search, Trash2,
+  ArrowUpRight, CheckCircle2, AlertTriangle, Calendar, ChevronRight, Search, Trash2, Download,
 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -21,6 +21,7 @@ import {
   useGetLeadsQuery, useUpdateLeadMutation, useDeleteLeadMutation, useCreateLeadMutation, useSendBroadcastMutation,
 } from '@/features/crm/crmApi';
 import { TableToolbar, useTableSearch } from '@/components/data/TableToolbar';
+import { downloadCsv } from '@/features/finance/lib/export';
 import type { Lead } from '@goldos/shared/types';
 import { cn } from '@/lib/cn';
 
@@ -53,6 +54,23 @@ const SOURCE_LABEL: Record<string, string> = {
   referral: 'Referral',
   'store-reservation': 'Storefront reservation',
 };
+
+// Excel silently turns a bare phone string like +919529242139 into scientific
+// notation (9.19529E+11). Wrapping the value as an ="…" text formula forces
+// Excel to keep the literal digits, and we group them as +91 XXXXX XXXXX so the
+// column reads as a proper mobile number. The values are our own lead phone
+// numbers (never free-text user input), so the formula is safe here.
+function formatPhoneForExcel(phone: string): string {
+  const digits = phone.replace(/\D/g, '');
+  let pretty = phone;
+  if (digits.length === 12 && digits.startsWith('91')) {
+    const local = digits.slice(2);
+    pretty = `+91 ${local.slice(0, 5)} ${local.slice(5)}`;
+  } else if (digits.length === 10) {
+    pretty = `+91 ${digits.slice(0, 5)} ${digits.slice(5)}`;
+  }
+  return `="${pretty}"`;
+}
 
 export function CrmPage(): JSX.Element {
   const { data, isLoading, isError, error } = useGetLeadsQuery(undefined, { pollingInterval: 30_000 });
@@ -198,6 +216,29 @@ function InboxView({ leads }: { leads: Lead[] }): JSX.Element {
 
   const channels = Array.from(new Set(leads.map((l) => l.source)));
 
+  // Export the leads currently in view (respects the channel + search filter)
+  // to a spreadsheet. CSV with a UTF-8 BOM opens straight into Excel with the
+  // ₹/name unicode intact and each field in its own column — same helper the
+  // Analytics & Finance tables use.
+  function exportToExcel(): void {
+    if (filtered.length === 0) return;
+    const header = ['Name', 'Phone', 'Channel', 'Status', 'Interest', 'UTM source', 'UTM campaign', 'Created'];
+    const rows: (string | number)[][] = [
+      header,
+      ...filtered.map((l) => [
+        l.name,
+        formatPhoneForExcel(l.phone),
+        SOURCE_LABEL[l.source] ?? l.source,
+        l.status,
+        l.interest ?? '',
+        l.utmSource ?? '',
+        l.utmCampaign ?? '',
+        new Date(l.createdAt).toLocaleString('en-IN'),
+      ]),
+    ];
+    downloadCsv(`leads-${new Date().toISOString().slice(0, 10)}.csv`, rows);
+  }
+
   return (
     <div className="grid grid-cols-1 lg:grid-cols-[240px_1fr] gap-4 lg:gap-6">
       <aside className="space-y-3">
@@ -235,6 +276,15 @@ function InboxView({ leads }: { leads: Lead[] }): JSX.Element {
               className="w-full h-10 pl-9 pr-3 bg-ink-0 rounded-md border border-ink-100 text-sm focus:border-brand-300 outline-none"
             />
           </div>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={exportToExcel}
+            disabled={filtered.length === 0}
+            title="Export the leads in view to an Excel-ready spreadsheet"
+          >
+            <Download className="h-4 w-4" /> Export to Excel
+          </Button>
           <Badge tone="neutral">{filtered.length} leads</Badge>
         </div>
 
