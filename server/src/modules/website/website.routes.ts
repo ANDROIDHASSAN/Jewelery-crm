@@ -25,6 +25,7 @@ import {
   getBalance,
   computeEarnable,
   fetchLoyaltyConfig,
+  pointsToPaise,
 } from '../promotions/loyalty.service.js';
 
 export const websiteRouter: Router = Router();
@@ -1750,6 +1751,48 @@ websiteRouter.get('/orders/by-phone', async (req, res, next) => {
       },
     });
     res.json({ data: orders });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Loyalty-points balance for the signed-in storefront customer, keyed by phone
+// (canonical, unique per tenant) with customerId as a fallback. Feeds the
+// "Loyalty wallet" card on the account page. Returns the point balance plus its
+// rupee-equivalent worth (computed from the tenant's loyalty config) so the UI
+// doesn't have to know the point-value rule. Always fresh — private, no-store.
+websiteRouter.get('/customers/loyalty', async (req, res, next) => {
+  res.setHeader('Cache-Control', 'private, no-store');
+  try {
+    const q = z
+      .object({
+        phone: z.string().min(10).optional(),
+        customerId: z.string().min(1).optional(),
+      })
+      .refine((v) => v.phone || v.customerId, {
+        message: 'phone or customerId is required',
+      })
+      .parse(req.query);
+    const tenantId = await tenantFromQueryOrFirst(req);
+    const normPhone = q.phone
+      ? q.phone.startsWith('+')
+        ? q.phone
+        : `+91${q.phone.replace(/\D/g, '').slice(-10)}`
+      : null;
+    // Prefer the canonical phone match (Customer is unique on (tenantId, phone));
+    // fall back to customerId when no phone was supplied.
+    const customer = await rawPrisma.customer.findFirst({
+      where: normPhone ? { tenantId, phone: normPhone } : { tenantId, id: q.customerId! },
+      select: { loyaltyPoints: true },
+    });
+    const points = customer?.loyaltyPoints ?? 0;
+    const cfg = await fetchLoyaltyConfig(tenantId);
+    res.json({
+      data: {
+        loyaltyPoints: points,
+        worthPaise: pointsToPaise(points, cfg),
+      },
+    });
   } catch (err) {
     next(err);
   }

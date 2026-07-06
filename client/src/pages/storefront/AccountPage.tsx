@@ -16,12 +16,14 @@ import {
   Pencil,
   Sparkles,
   Calendar,
+  Wallet,
 } from 'lucide-react';
 import { useAppDispatch, useAppSelector } from '@/app/hooks';
 import { hydrateFromServer, signOut } from '@/features/storefront/shopSlice';
 import {
   useIdentifyCustomerMutation,
   useListOrdersByPhoneQuery,
+  useGetLoyaltyByPhoneQuery,
 } from '@/features/storefront/storefrontApi';
 import { toast } from 'sonner';
 import { Money } from '@/components/ui/money';
@@ -356,6 +358,8 @@ export function AccountPage(): JSX.Element {
         </button>
       </header>
 
+      <LoyaltyWallet phone={account.phone} customerId={account.customerId} />
+
       <MyOrders
         phone={account.phone}
         customerId={account.customerId}
@@ -373,6 +377,53 @@ export function AccountPage(): JSX.Element {
       </section>
     </div>
     </div>
+  );
+}
+
+// Loyalty-points wallet. Reads the fresh balance from the server (keyed by the
+// signed-in phone) so it reflects points earned/redeemed since the last
+// sign-in, not a stale localStorage snapshot. Renders once the balance loads;
+// a zero balance still shows so first-time customers learn the programme
+// exists.
+function LoyaltyWallet({ phone, customerId }: { phone: string; customerId: string | undefined }): JSX.Element | null {
+  const { data } = useGetLoyaltyByPhoneQuery(
+    { phone, customerId },
+    { skip: !phone, refetchOnMountOrArgChange: true, pollingInterval: 60_000 },
+  );
+  if (!data) return null;
+  const points = data.loyaltyPoints;
+  return (
+    <section className="mt-8 sm:mt-10 relative overflow-hidden rounded-lg border border-brand-200/60 bg-gradient-to-br from-brand-50 via-ink-0 to-ink-0 p-5 sm:p-6">
+      <div aria-hidden className="absolute inset-0 bg-hairlines opacity-25 pointer-events-none" />
+      <div className="relative flex items-center justify-between gap-4">
+        <div className="flex items-center gap-3 sm:gap-4 min-w-0">
+          <div className="h-11 w-11 sm:h-12 sm:w-12 rounded-full bg-brand-100 text-brand-700 inline-flex items-center justify-center shrink-0">
+            <Wallet className="h-5 w-5 sm:h-6 sm:w-6" />
+          </div>
+          <div className="min-w-0">
+            <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-brand-700">Loyalty wallet</p>
+            <p className="font-display text-2xl sm:text-[28px] text-ink-900 mt-0.5 tabular-nums">
+              {points.toLocaleString('en-IN')}{' '}
+              <span className="text-base sm:text-lg text-ink-600 font-sans">{points === 1 ? 'point' : 'points'}</span>
+            </p>
+            <p className="text-xs text-ink-600 mt-0.5">
+              {points > 0 ? (
+                <>Worth <Money paise={data.worthPaise} /> · redeem at checkout</>
+              ) : (
+                <>Start earning points with every purchase</>
+              )}
+            </p>
+          </div>
+        </div>
+        <Link
+          to="/store/cart"
+          className="hidden sm:inline-flex items-center gap-1.5 h-10 px-5 rounded-full border border-[#EFE0D2] bg-ink-0 text-sm text-ink-700 hover:bg-[#FAF3EE] transition-colors shrink-0"
+        >
+          <Sparkles className="h-4 w-4 text-brand-600" />
+          Redeem
+        </Link>
+      </div>
+    </section>
   );
 }
 

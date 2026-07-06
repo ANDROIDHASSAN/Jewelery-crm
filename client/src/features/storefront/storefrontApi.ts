@@ -335,6 +335,21 @@ export const storefrontApi = baseApi.injectEndpoints({
             ]
           : [{ type: 'Order' as const, id: 'BY_PHONE' }],
     }),
+    // Loyalty-points balance for the signed-in customer, keyed by phone (with
+    // customerId as a fallback). Backs the "Loyalty wallet" card on the account
+    // page. `worthPaise` is the rupee value the server computed from the
+    // tenant's loyalty config, so the UI just renders it.
+    getLoyaltyByPhone: build.query<
+      { loyaltyPoints: number; worthPaise: number },
+      { phone: string; customerId?: string }
+    >({
+      query: ({ phone, customerId }) => ({
+        url: '/website/customers/loyalty',
+        params: customerId ? { phone, customerId } : { phone },
+      }),
+      transformResponse: (raw: { data: { loyaltyPoints: number; worthPaise: number } }) => raw.data,
+      providesTags: [{ type: 'Customer', id: 'LOYALTY' }],
+    }),
     // Customer-authored review on a delivered order. Phone is the auth —
     // server verifies it matches the order's customer before accepting.
     createOrderReview: build.mutation<
@@ -499,6 +514,7 @@ export const {
   useLazyLookupOrderQuery,
   useLookupOrderQuery,
   useListOrdersByPhoneQuery,
+  useGetLoyaltyByPhoneQuery,
   useCreateOrderReviewMutation,
   useGetProductReviewsQuery,
 } = storefrontApi;
