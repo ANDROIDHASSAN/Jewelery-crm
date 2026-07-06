@@ -371,7 +371,11 @@ export function StorefrontHome(): JSX.Element {
       <HeroCarousel slides={heroSlides} />
 
       {/* Editorial brand band — the headline, CTAs and live rates moved here,
-          directly under the banner, on cream. */}
+          directly under the banner, on cream.
+          Hidden per client request (hero text section: "THE 2025 BRIDAL EDIT"
+          heading through the "Updated …" rate strip). To restore, remove the
+          `{false && (` guard below and its closing `)}`. */}
+      {false && (
       <section className="bg-[#FAF3EE] border-b border-[#EFE0D2]/70">
         <div className="max-w-3xl mx-auto px-4 sm:px-6 py-12 sm:py-16 text-center">
           <p className="text-eyebrow uppercase text-brand-700 inline-flex items-center gap-1.5 animate-fade-in-up-1">
@@ -410,6 +414,7 @@ export function StorefrontHome(): JSX.Element {
           </div>
         </div>
       </section>
+      )}
 
       {/* Shop by — quiet pill row on blush */}
       <section className="bg-[#FDF8F4] border-b border-[#EFE0D2]/60">
