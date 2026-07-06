@@ -273,6 +273,24 @@ posRouter.get('/customers/lookup', async (req, res, next) => {
   }
 });
 
+// Create a customer from the POS counter. Gated by pos.bill_create (same write
+// perm as ringing up a sale) so a pos.monitor reader can't create records.
+// The service also mirrors the customer into the CRM as a walk-in lead.
+const PosCustomerCreateSchema = z.object({
+  name: z.string().trim().min(2).max(120),
+  phone: IndianPhoneSchema,
+  email: z.string().trim().email().max(200).optional().nullable(),
+});
+posRouter.post('/customers', requirePermission('pos.bill_create'), async (req, res, next) => {
+  try {
+    const body = PosCustomerCreateSchema.parse(req.body);
+    const result = await svc.createPosCustomer(body, req.user?.userId);
+    res.status(result.created ? 201 : 200).json({ data: result });
+  } catch (err) {
+    next(err);
+  }
+});
+
 // Name / phone typeahead for POS pickers (advance receipts). Gated by the
 // /pos router's pos.access — cashiers can use it; the finance search can't.
 posRouter.get('/customers/search', async (req, res, next) => {

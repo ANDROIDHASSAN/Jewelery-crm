@@ -52,6 +52,7 @@ import {
 import {
   useGetGoldRateQuery,
   useLazyFindCustomerQuery,
+  useCreatePosCustomerMutation,
   useCreateBillMutation,
   useLazyFindItemByBarcodeQuery,
 } from '@/features/pos/posApi';
@@ -192,6 +193,7 @@ function PosBillingScreen(): JSX.Element {
   const { data: ratesRes } = useGetGoldRateQuery(undefined, { pollingInterval: 60_000 });
   const { data: sessionData } = useGetOpenSessionQuery(shopId, { skip: !shopId });
   const [findCustomer, { isFetching: lookingUp }] = useLazyFindCustomerQuery();
+  const [createPosCustomer, { isLoading: addingCustomer }] = useCreatePosCustomerMutation();
   const [findItemByBarcode] = useLazyFindItemByBarcodeQuery();
   const [createBill, { isLoading: charging }] = useCreateBillMutation();
   const [parkBill, { isLoading: parking }] = useParkBillMutation();
@@ -572,6 +574,42 @@ function PosBillingScreen(): JSX.Element {
     setAppliedAdvanceIds([]);
   }
 
+  // Create a brand-new customer from the counter (used when a lookup finds no
+  // match). The server also files them into the CRM as a walk-in lead. On
+  // success we select the new customer for this bill. Returns true so the form
+  // knows to close; validation / API failures return false and keep it open.
+  async function addCustomer(input: { name: string; phone: string; email?: string }): Promise<boolean> {
+    const name = input.name.trim();
+    const cleaned = input.phone.trim();
+    const normalised = cleaned.startsWith('+91') ? cleaned : `+91${cleaned.replace(/\D/g, '')}`;
+    if (name.length < 2) {
+      toast.error('Enter the customer name');
+      return false;
+    }
+    if (!/^\+91[6-9]\d{9}$/.test(normalised)) {
+      toast.error('Phone must be +91 followed by 10 digits starting 6-9');
+      return false;
+    }
+    try {
+      const res = await createPosCustomer({
+        name,
+        phone: normalised,
+        email: input.email?.trim() ? input.email.trim() : null,
+      }).unwrap();
+      const c = res.data.customer;
+      // Switching customers invalidates any previously-applied advance.
+      setAppliedAdvanceIds([]);
+      setCustomer({ id: c.id, name: c.name, phone: c.phone, loyaltyPoints: c.loyaltyPoints ?? 0 });
+      setPhoneSearch(c.phone);
+      toast.success(res.data.created ? `Added ${c.name}` : `${c.name} is already on file — selected`);
+      return true;
+    } catch (err: unknown) {
+      const e = err as { data?: { error?: { message?: string } } };
+      toast.error(e.data?.error?.message ?? 'Could not add customer');
+      return false;
+    }
+  }
+
   // ── Payment helpers ───────────────────────────────────────────────────
   // The single-payment shortcut fills the row with what's still due AFTER any
   // applied advances — so tapping "Cash" rings up only the balance to collect.
@@ -814,6 +852,8 @@ function PosBillingScreen(): JSX.Element {
             onPhoneSearchChange={setPhoneSearch}
             onLookupCustomer={doCustomerLookup}
             onClearCustomer={clearCustomer}
+            onAddCustomer={addCustomer}
+            addingCustomer={addingCustomer}
             lookingUp={lookingUp}
             removeLine={removeLine}
             clearCart={clearCart}
@@ -866,6 +906,8 @@ function PosBillingScreen(): JSX.Element {
             onPhoneSearchChange={setPhoneSearch}
             onLookupCustomer={doCustomerLookup}
             onClearCustomer={clearCustomer}
+            onAddCustomer={addCustomer}
+            addingCustomer={addingCustomer}
             lookingUp={lookingUp}
             removeLine={removeLine}
             clearCart={clearCart}
@@ -1237,6 +1279,8 @@ interface BillColumnProps {
   onPhoneSearchChange: (v: string) => void;
   onLookupCustomer: () => void;
   onClearCustomer: () => void;
+  onAddCustomer: (input: { name: string; phone: string; email?: string }) => Promise<boolean>;
+  addingCustomer: boolean;
   lookingUp: boolean;
   removeLine: (id: string) => void;
   clearCart: () => void;
@@ -1740,7 +1784,28 @@ function PaymentTab(p: BillColumnProps): JSX.Element {
 // ─────────────────────────────────────────────────────────────────────────────
 
 function CustomerTab(p: BillColumnProps): JSX.Element {
-  const { customer, phoneSearch, onPhoneSearchChange, onLookupCustomer, onClearCustomer, lookingUp } = p;
+  const {
+    customer, phoneSearch, onPhoneSearchChange, onLookupCustomer, onClearCustomer,
+    lookingUp, onAddCustomer, addingCustomer,
+  } = p;
+  // Local "add new customer" form state. Opens from the empty state; the phone
+  // is pre-filled from whatever the cashier typed into the lookup box.
+  const [addOpen, setAddOpen] = useState(false);
+  const [addForm, setAddForm] = useState({ name: '', phone: '', email: '' });
+
+  function openAdd(): void {
+    setAddForm({ name: '', phone: phoneSearch.trim(), email: '' });
+    setAddOpen(true);
+  }
+
+  async function submitAdd(): Promise<void> {
+    const ok = await onAddCustomer(addForm);
+    if (ok) {
+      setAddOpen(false);
+      setAddForm({ name: '', phone: '', email: '' });
+    }
+  }
+
   return (
     <div className="px-4 sm:px-5 py-3 space-y-3 flex-1 min-h-0 overflow-y-auto">
       <div className="space-y-1.5">
@@ -1775,10 +1840,65 @@ function CustomerTab(p: BillColumnProps): JSX.Element {
             <Badge tone="brand">{customer.loyaltyPoints ?? 0} loyalty pts</Badge>
           </div>
         </div>
+      ) : addOpen ? (
+        <div className="rounded-md border border-ink-100 bg-ink-25 p-3 space-y-2.5">
+          <div className="flex items-center justify-between">
+            <div className="text-sm font-medium text-ink-900">New customer</div>
+            <button
+              type="button"
+              onClick={() => setAddOpen(false)}
+              className="text-xs text-ink-500 hover:text-danger-700"
+            >
+              Cancel
+            </button>
+          </div>
+          <div className="space-y-1.5">
+            <Label className="text-xs text-ink-600">Name</Label>
+            <Input
+              value={addForm.name}
+              onChange={(e) => setAddForm((f) => ({ ...f, name: e.target.value }))}
+              placeholder="Full name"
+              className="h-9"
+            />
+          </div>
+          <div className="space-y-1.5">
+            <Label className="text-xs text-ink-600">Phone</Label>
+            <Input
+              value={addForm.phone}
+              onChange={(e) => setAddForm((f) => ({ ...f, phone: e.target.value }))}
+              placeholder="98XXXXXXXX"
+              inputMode="numeric"
+              className="h-9"
+            />
+          </div>
+          <div className="space-y-1.5">
+            <Label className="text-xs text-ink-600">Email (optional)</Label>
+            <Input
+              value={addForm.email}
+              onChange={(e) => setAddForm((f) => ({ ...f, email: e.target.value }))}
+              placeholder="name@example.com"
+              type="email"
+              className="h-9"
+            />
+          </div>
+          <Button
+            type="button"
+            size="sm"
+            className="w-full"
+            onClick={() => void submitAdd()}
+            disabled={addingCustomer}
+          >
+            {addingCustomer ? 'Saving…' : 'Save customer'}
+          </Button>
+          <p className="text-[11px] text-ink-500">Also filed in the CRM as a new walk-in lead.</p>
+        </div>
       ) : (
-        <div className="rounded-md border border-dashed border-ink-200 p-4 text-center">
-          <UserIcon className="h-5 w-5 mx-auto mb-1.5 text-ink-300" />
+        <div className="rounded-md border border-dashed border-ink-200 p-4 text-center space-y-2.5">
+          <UserIcon className="h-5 w-5 mx-auto text-ink-300" />
           <div className="text-xs text-ink-500">No customer · this will save as Walk-in</div>
+          <Button type="button" size="sm" variant="outline" onClick={openAdd}>
+            <Plus className="h-4 w-4" /> Add customer
+          </Button>
         </div>
       )}
     </div>

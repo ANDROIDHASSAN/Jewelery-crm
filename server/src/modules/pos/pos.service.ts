@@ -350,6 +350,63 @@ export async function findCustomerByPhone(phone: string) {
   return prisma.customer.findFirst({ where: { phone } });
 }
 
+// Create a customer from the POS counter — the cashier's "Add customer" flow
+// when a phone lookup finds no match. Idempotent on (tenantId, phone): if the
+// number is already on file we return the existing record (flagged
+// created:false) rather than 500'ing on the unique constraint. Every genuinely
+// new customer is also mirrored into the CRM as a NEW walk-in lead so the sales
+// team sees the counter footfall alongside online enquiries — the lead write is
+// best-effort and never blocks the customer create.
+export async function createPosCustomer(
+  input: { name: string; phone: string; email?: string | null },
+  createdByUserId?: string,
+): Promise<{ customer: Awaited<ReturnType<typeof prisma.customer.findFirst>>; created: boolean }> {
+  const tenantId = getTenantId();
+  if (!tenantId) throw new Error('tenantId missing');
+
+  const existing = await prisma.customer.findFirst({
+    where: { tenantId, phone: input.phone },
+  });
+  if (existing) return { customer: existing, created: false };
+
+  const customer = await prisma.customer.create({
+    data: {
+      tenantId,
+      name: input.name,
+      phone: input.phone,
+      email: input.email ?? null,
+      tags: ['POS'],
+    },
+  });
+
+  // Mirror into the CRM as a walk-in lead. Non-fatal: a CRM hiccup must not
+  // undo a customer the cashier just created at the counter.
+  try {
+    const lead = await prisma.lead.create({
+      data: {
+        tenantId,
+        source: 'walkin',
+        customerId: customer.id,
+        name: customer.name,
+        phone: customer.phone,
+        status: 'NEW',
+      },
+    });
+    await prisma.leadActivity.create({
+      data: {
+        leadId: lead.id,
+        type: 'pos_add_customer',
+        notes: 'Added at POS counter',
+        performedByUserId: createdByUserId ?? null,
+      },
+    });
+  } catch {
+    /* swallow — customer is created regardless */
+  }
+
+  return { customer, created: true };
+}
+
 export interface ContactResult {
   id: string;
   name: string;

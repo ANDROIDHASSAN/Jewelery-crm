@@ -23,6 +23,17 @@ export const posApi = baseApi.injectEndpoints({
     findCustomer: b.query<ApiOne<Customer> | { data: null }, { phone: string }>({
       query: ({ phone }) => ({ url: '/pos/customers/lookup', params: { phone } }),
     }),
+    // Create a customer from the counter when a lookup finds no match. The
+    // server also mirrors the new customer into the CRM as a walk-in lead, so
+    // invalidate 'Customer' to refresh the POS contact typeahead. Returns the
+    // customer plus `created` (false when the phone was already on file).
+    createPosCustomer: b.mutation<
+      { data: { customer: Customer; created: boolean } },
+      { name: string; phone: string; email?: string | null }
+    >({
+      query: (body) => ({ url: '/pos/customers', method: 'POST', body }),
+      invalidatesTags: ['Customer'],
+    }),
     getGoldRate: b.query<ApiOne<{ purity: number; ratePerGramPaise: number; stale: boolean; asOf: string }[]>, void>({
       query: () => '/pos/gold-rate',
       providesTags: ['GoldRate'],
@@ -48,6 +59,7 @@ export const {
   useGetBillsQuery,
   useCreateBillMutation,
   useLazyFindCustomerQuery,
+  useCreatePosCustomerMutation,
   useGetGoldRateQuery,
   useLazyFindItemByBarcodeQuery,
   useSearchPosCustomersQuery,
