@@ -65,6 +65,7 @@ model Tenant {
   customerAddresses CustomerAddress[]
   bills             Bill[]
   expenses          Expense[]
+  expenseCategories ExpenseCategory[]
   goldLoans         GoldLoan[]
   payrolls          Payroll[]
   leads             Lead[]
@@ -90,6 +91,7 @@ model Tenant {
   collections         Collection[]
   itemCollections     ItemCollection[]
   saleItems           SaleItem[]
+  saleCampaigns       SaleCampaign[]
   itemDiamonds        ItemDiamond[]
   productSections     ProductSection[]
   coupons             CouponCode[]
@@ -439,6 +441,11 @@ model Item {
   // type. Null = price live (gold/silver) or by basePrice (non-precious).
   // costPricePaise stays the internal cost used for COGS / analytics.
   sellingPricePaise Int?
+  // HSN/SAC code (4–8 digits) + GST rate (bps, default 300 = 3%) for tax
+  // filing. Set at intake (Add item / PO) and snapshotted onto each BillLine so
+  // GST reports produce an HSN-wise summary. Mirrored onto the storefront Product.
+  hsnCode         String?
+  gstRateBps      Int            @default(300)
   makingChargeBps Int?
   // Item-level making-charge override. makingChargeMode null = inherit the
   // category's mode + rate. PER_GRAM uses makingChargePerGramPaise.
@@ -533,25 +540,57 @@ enum SaleDiscountType {
   PERCENT
   FLAT
   BOGO
+  // Fixed final price — every item in the campaign sells at exactly this
+  // (GST-inclusive) price, stored in discountFlatPaise (e.g. a "flat ₹999 sale").
+  FIXED_PRICE
+}
+
+// A Season Sale campaign — one running offer (PERCENT / FLAT / BOGO) over a set
+// of member items. Multiple campaigns run simultaneously (the admin sees one
+// tab per campaign), e.g. "Flat 30% off" on one set and "Buy 1 Get 1" on
+// another. An item belongs to at most one campaign (SaleItem.campaignId), so
+// its effective offer is unambiguous. The offer applies identically on the
+// storefront AND at the POS counter (shared/sale.ts).
+model SaleCampaign {
+  id                String           @id @default(cuid())
+  tenantId          String
+  name              String
+  discountType      SaleDiscountType @default(PERCENT)
+  // PERCENT: bps off the pre-GST price (10% = 1000). FLAT: paise off the
+  // GST-inclusive price. BOGO: no per-unit change (frees the cheaper of a pair).
+  discountBps       Int              @default(0)
+  discountFlatPaise Int              @default(0)
+  isActive          Boolean          @default(true)
+  sortOrder         Int              @default(0)
+  createdAt         DateTime         @default(now())
+
+  tenant Tenant     @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  items  SaleItem[]
+
+  @@index([tenantId])
 }
 
 model SaleItem {
   itemId      String           @id
   tenantId    String
+  // The campaign this item belongs to (its offer comes from the campaign). Kept
+  // nullable for the migration backfill; new members always carry one. Cascade:
+  // deleting a campaign removes its memberships.
+  campaignId  String?
   discountType SaleDiscountType @default(PERCENT)
-  // Percentage discount off the live storefront price, in basis points
-  // (5% = 500, 12.5% = 1250). Used when discountType = PERCENT.
+  // Legacy per-item discount columns — superseded by the campaign's offer, kept
+  // for back-compat and never read now.
   discountBps Int      @default(0)
-  // Flat amount off the live storefront price, in paise. Used when
-  // discountType = FLAT (e.g. ₹1,000 off = 100000).
   discountFlatPaise Int @default(0)
   sortOrder   Int      @default(0)
   createdAt   DateTime @default(now())
 
-  item   Item   @relation(fields: [itemId], references: [id], onDelete: Cascade)
-  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  item     Item          @relation(fields: [itemId], references: [id], onDelete: Cascade)
+  tenant   Tenant        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  campaign SaleCampaign? @relation(fields: [campaignId], references: [id], onDelete: Cascade)
 
   @@index([tenantId])
+  @@index([campaignId])
 }
 
 // One diamond/stone line on an item (M1 FR#4, M2 §1). An item may have several
@@ -822,6 +861,10 @@ model PurchaseOrderItem {
   // Fixed selling price (paise) captured on the PO line; copied onto the Item
   // when the PO is received so pricing is set at stock-intake time.
   sellingPricePaise Int?
+  // HSN code + GST rate (bps) captured on the PO line; copied onto the Item on
+  // receive. Nullable — legacy lines default to the item's 3% on receive.
+  hsnCode           String?
+  gstRateBps        Int?
   // When true, the linked storefront Product is published on receive (if one exists).
   publishToStorefront Boolean @default(false)
   // Full item-detail fields — mirrors ItemInput so new pieces can be fully
@@ -996,6 +1039,17 @@ model BillLine {
   makingChargeBps  Int    @default(0)
   stoneChargePaise Int    @default(0)
   linePaise        Int
+  // GST snapshot per line — HSN + rate copied from the Item at sale time, plus
+  // the per-line taxable base and the CGST/SGST/IGST computed off it. Persisted
+  // (not just bill-level) so the GST report can group by HSN with exact tax.
+  // quantity is 1 for serialized pieces; lot POS UX will set it >1 later.
+  hsnCode          String?
+  gstRateBps       Int    @default(300)
+  quantity         Int    @default(1)
+  taxablePaise     Int    @default(0)
+  cgstPaise        Int    @default(0)
+  sgstPaise        Int    @default(0)
+  igstPaise        Int    @default(0)
 
   bill Bill @relation(fields: [billId], references: [id], onDelete: Cascade)
   item Item @relation(fields: [itemId], references: [id])
@@ -1306,6 +1360,28 @@ model Expense {
   @@index([tenantId, vendorId])
 }
 
+// User-managed expense ledgers (heads). The 15 built-in heads (Rent, Salaries,
+// …) are seeded per tenant as isSystem=true; users can add their own and set
+// each one's default classification so the Balance Sheet / P&L split stays
+// correct (e.g. a custom "Plant & Machinery" head → CAPITAL). Expense.category
+// stays a free String snapshot of the chosen head's name, so renaming or
+// deleting a head never rewrites history.
+model ExpenseCategory {
+  id             String                @id @default(cuid())
+  tenantId       String
+  name           String
+  classification ExpenseClassification @default(REVENUE)
+  isSystem       Boolean               @default(false)
+  isArchived     Boolean               @default(false)
+  sortOrder      Int                   @default(0)
+  createdAt      DateTime              @default(now())
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, name])
+  @@index([tenantId, isArchived])
+}
+
 model GoldLoan {
   id              String         @id @default(cuid())
   tenantId        String
@@ -1459,6 +1535,10 @@ model Product {
   // customer pays exactly the inclusive selling price. Null = price normally.
   fixedPricePaise  Int?
   stoneChargePaise Int       @default(0)
+  // HSN code + GST rate (bps) mirrored from the linked inventory Item so
+  // e-commerce order lines can be summarised by HSN in the GST report.
+  hsnCode          String?
+  gstRateBps       Int       @default(300)
   // Optional size variants for rate-priced pieces (rings, bangles). Each entry
   // is `{ label: string, weightMg: number }`. When non-empty the storefront
   // PDP renders a size selector and prices the piece off the SELECTED size's
