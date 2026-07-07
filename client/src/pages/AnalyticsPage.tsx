@@ -36,6 +36,7 @@ import {
   useGetTopSubcategoriesQuery,
   useGetTopCollectionsQuery,
   useGetShopPerformanceQuery,
+  useGetVendorPurchasesQuery,
   useGetInventoryValuationQuery,
   useGetCustomerAcquisitionQuery,
   useGetPlByPeriodQuery,
@@ -66,6 +67,7 @@ type TabKey =
   | 'realtime'
   | 'pl'
   | 'shop'
+  | 'vendorpurchase'
   | 'staff'
   | 'topproducts'
   | 'inventory'
@@ -83,6 +85,7 @@ const TAB_DEFS: Array<{ key: TabKey; label: string; eyebrow: string; title: stri
   { key: 'realtime', label: 'Real-time', eyebrow: 'Reports & analytics', title: 'Real-time sales dashboard' },
   { key: 'pl', label: 'P&L by period', eyebrow: 'Profitability', title: 'Daily / weekly / monthly P&L' },
   { key: 'shop', label: 'Shop performance', eyebrow: 'Branches', title: 'Shop-wise performance' },
+  { key: 'vendorpurchase', label: 'Vendor purchases', eyebrow: 'Procurement', title: 'Vendor-wise purchase report' },
   { key: 'staff', label: 'Staff', eyebrow: 'Team', title: 'Staff sales leaderboard' },
   { key: 'topproducts', label: 'Top products', eyebrow: 'Catalogue', title: 'Top-selling products' },
   { key: 'inventory', label: 'Inventory value', eyebrow: 'Stock', title: 'Inventory valuation at today’s rate' },
@@ -148,6 +151,7 @@ export function AnalyticsPage(): JSX.Element {
         {activeTab === 'realtime' && <RealTimeSection />}
         {activeTab === 'pl' && <PlByPeriodSection />}
         {activeTab === 'shop' && <ShopPerformanceSection />}
+        {activeTab === 'vendorpurchase' && <VendorPurchaseSection />}
         {activeTab === 'staff' && <StaffSection />}
         {activeTab === 'topproducts' && <TopProductsSection />}
         {activeTab === 'inventory' && <InventoryValuationSection />}
@@ -599,6 +603,107 @@ function ShopPerformanceSection(): JSX.Element {
 }
 
 // =====================================================================
+// 3b. Vendor-wise purchase report
+// =====================================================================
+function VendorPurchaseSection(): JSX.Element {
+  const [from, setFrom] = useState(startOfMonth());
+  const [to, setTo] = useState(today());
+  const { data, isLoading } = useGetVendorPurchasesQuery({
+    from: new Date(from).toISOString(),
+    to: new Date(`${to}T23:59:59.999Z`).toISOString(),
+  });
+  const rows = data?.data.rows ?? [];
+  const totalPurchase = data?.data.totalPurchasePaise ?? 0;
+
+  function handleCsv(): void {
+    downloadCsv(`vendor-purchases-${from}-to-${to}.csv`, [
+      ['Vendor-wise purchases', `${from} → ${to}`],
+      [],
+      ['Vendor', 'GSTIN', 'Purchases (₹)', 'Taxable (₹)', 'GST (₹)', 'Paid (₹)', 'Share %', 'POs'],
+      ...rows.map((r) => [
+        r.vendorName,
+        r.gstNumber ?? '',
+        paiseToRupeeString(r.purchasePaise),
+        paiseToRupeeString(r.taxablePaise),
+        paiseToRupeeString(r.gstPaise),
+        paiseToRupeeString(r.paidPaise),
+        r.sharePct.toFixed(1),
+        r.poCount,
+      ]),
+    ]);
+  }
+
+  return (
+    <div className="space-y-4 sm:space-y-6">
+      <FilterRow>
+        <DateInput label="From" value={from} onChange={setFrom} />
+        <DateInput label="To" value={to} onChange={setTo} />
+        <div className="sm:col-span-2 flex items-end justify-end">
+          <Button variant="outline" size="sm" onClick={handleCsv} disabled={rows.length === 0}>
+            <Download className="h-4 w-4" /> CSV
+          </Button>
+        </div>
+      </FilterRow>
+
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+        <MetricCard label="Total purchases" value={<Money paise={totalPurchase} />} />
+        <MetricCard label="Vendors" value={String(rows.length)} />
+      </div>
+
+      <ChartCard title="Purchases by vendor" eyebrow="Procurement">
+        {isLoading ? (
+          <p className="text-sm text-ink-500">Loading…</p>
+        ) : rows.length === 0 ? (
+          <p className="text-sm text-ink-500">No purchase orders in this range.</p>
+        ) : (
+          <RankedBarChart
+            data={rows.map((r) => ({
+              label: r.vendorName,
+              value: r.purchasePaise,
+              sub: `${r.poCount} PO${r.poCount === 1 ? '' : 's'}`,
+            }))}
+            height={Math.max(160, rows.length * 36)}
+            unit="currency"
+            name="Purchases"
+          />
+        )}
+      </ChartCard>
+
+      <section className="rounded-md border border-ink-100 bg-ink-0 overflow-x-auto">
+        <table className="w-full text-sm min-w-[760px]">
+          <thead className="text-eyebrow uppercase text-ink-500 bg-ink-25">
+            <tr>
+              <th className="text-left px-4 py-2.5">Vendor</th>
+              <th className="text-left px-4 py-2.5">GSTIN</th>
+              <th className="text-right px-4 py-2.5">Purchases</th>
+              <th className="text-right px-4 py-2.5">Taxable</th>
+              <th className="text-right px-4 py-2.5">GST</th>
+              <th className="text-right px-4 py-2.5">Paid</th>
+              <th className="text-right px-4 py-2.5">Share</th>
+              <th className="text-right px-4 py-2.5">POs</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-ink-100">
+            {rows.map((r) => (
+              <tr key={r.vendorId}>
+                <td className="px-4 py-2 font-medium text-ink-900">{r.vendorName}</td>
+                <td className="px-4 py-2 text-ink-600 tabular-nums">{r.gstNumber ?? '—'}</td>
+                <td className="px-4 py-2 text-right font-semibold text-ink-900"><Money paise={r.purchasePaise} /></td>
+                <td className="px-4 py-2 text-right text-ink-700"><Money paise={r.taxablePaise} /></td>
+                <td className="px-4 py-2 text-right text-ink-700"><Money paise={r.gstPaise} /></td>
+                <td className="px-4 py-2 text-right text-success-700"><Money paise={r.paidPaise} /></td>
+                <td className="px-4 py-2 text-right tabular-nums text-ink-600">{r.sharePct.toFixed(1)}%</td>
+                <td className="px-4 py-2 text-right tabular-nums text-ink-600">{r.poCount}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </section>
+    </div>
+  );
+}
+
+// =====================================================================
 // 4. Staff leaderboard
 // =====================================================================
 
@@ -707,10 +812,36 @@ const TOP_VIEWS: Record<
   },
 };
 
+// Sales channel the top-products report reads from. 'online' = storefront
+// orders, 'pos' = in-store counter bills. Each channel carries its own copy so
+// the table/empty-state read correctly (online "Orders" vs POS "Bills").
+type TopChannel = 'online' | 'pos';
+const TOP_CHANNELS: Record<
+  TopChannel,
+  { toggle: string; eyebrow: string; countCol: string; emptyText: string }
+> = {
+  online: {
+    toggle: 'Website',
+    eyebrow: 'Website sales',
+    countCol: 'Orders',
+    emptyText: 'No website orders in this period.',
+  },
+  pos: {
+    toggle: 'POS counter',
+    eyebrow: 'POS sales',
+    countCol: 'Bills',
+    emptyText: 'No POS sales in this period.',
+  },
+};
+
 function TopProductsSection(): JSX.Element {
   const [from, setFrom] = useState(daysAgo(30));
   const [to, setTo] = useState(today());
   const [search, setSearch] = useState('');
+  // Website (storefront orders) vs POS (counter bills) — the two sales channels
+  // the client explicitly wants split out.
+  const [channel, setChannel] = useState<TopChannel>('online');
+  const chan = TOP_CHANNELS[channel];
   // Category view is the primary focus per the client (M3 FR#3); the others are
   // drill-downs / alternate cuts.
   const [view, setView] = useState<TopView>('category');
@@ -719,6 +850,7 @@ function TopProductsSection(): JSX.Element {
     from: new Date(from).toISOString(),
     to: new Date(`${to}T23:59:59.999Z`).toISOString(),
     limit: 20,
+    channel,
   };
   const catQ = useGetTopCategoriesQuery(range, { skip: view !== 'category' });
   const subQ = useGetTopSubcategoriesQuery(range, { skip: view !== 'subcategory' });
@@ -764,12 +896,12 @@ function TopProductsSection(): JSX.Element {
   const rows = useTableSearch(allRows, (r) => [r.name, r.sub ?? ''], search);
 
   function handleCsv(): void {
-    downloadCsv(`top-${cfg.singular}-${from}-to-${to}.csv`, [
-      [`Top ${cfg.plural}`, `${from} → ${to}`],
+    downloadCsv(`top-${cfg.singular}-${channel}-${from}-to-${to}.csv`, [
+      [`Top ${cfg.plural} — ${chan.toggle}`, `${from} → ${to}`],
       [],
       cfg.secondaryLabel
-        ? ['Rank', cfg.primaryCol, cfg.secondaryLabel, 'Qty sold', 'Orders', 'Revenue (₹)']
-        : ['Rank', cfg.primaryCol, 'Qty sold', 'Orders', 'Revenue (₹)'],
+        ? ['Rank', cfg.primaryCol, cfg.secondaryLabel, 'Qty sold', chan.countCol, 'Revenue (₹)']
+        : ['Rank', cfg.primaryCol, 'Qty sold', chan.countCol, 'Revenue (₹)'],
       ...rows.map((r, i) =>
         cfg.secondaryLabel
           ? [i + 1, r.name, r.sub ?? '', r.qty, r.orderCount, paiseToRupeeString(r.revenuePaise)]
@@ -784,6 +916,18 @@ function TopProductsSection(): JSX.Element {
         <DateInput label="From" value={from} onChange={setFrom} />
         <DateInput label="To" value={to} onChange={setTo} />
         <div className="sm:col-span-2 flex flex-wrap items-end justify-end gap-2">
+          <div className="flex flex-wrap rounded-md border border-ink-200 p-0.5 text-xs">
+            {(Object.keys(TOP_CHANNELS) as TopChannel[]).map((c) => (
+              <button
+                key={c}
+                type="button"
+                onClick={() => setChannel(c)}
+                className={`h-8 px-3 rounded font-medium transition-colors ${channel === c ? 'bg-brand-500 text-ink-0' : 'text-ink-600 hover:bg-ink-50'}`}
+              >
+                {TOP_CHANNELS[c].toggle}
+              </button>
+            ))}
+          </div>
           <div className="flex flex-wrap rounded-md border border-ink-200 p-0.5 text-xs">
             {(Object.keys(TOP_VIEWS) as TopView[]).map((v) => (
               <button
@@ -802,11 +946,11 @@ function TopProductsSection(): JSX.Element {
         </div>
       </FilterRow>
 
-      <ChartCard title={cfg.chartTitle} eyebrow="Catalogue">
+      <ChartCard title={cfg.chartTitle} eyebrow={chan.eyebrow}>
         {isLoading ? (
           <p className="text-sm text-ink-500">Loading…</p>
         ) : rows.length === 0 ? (
-          <p className="text-sm text-ink-500">No online orders in this period.</p>
+          <p className="text-sm text-ink-500">{chan.emptyText}</p>
         ) : (
           <RankedBarChart
             data={rows.map((r) => ({ label: r.name, value: r.revenuePaise, sub: `${r.qty} sold` }))}
@@ -819,7 +963,7 @@ function TopProductsSection(): JSX.Element {
       {view === 'collection' && rows.length > 0 && (
         <p className="text-xs text-ink-500">
           A piece can belong to several collections, so collection revenues overlap and may add up to
-          more than total sales. Pieces not linked to a stock item appear under “No collection”.
+          more than total sales. Pieces in no collection appear under “No collection”.
         </p>
       )}
 
@@ -838,7 +982,7 @@ function TopProductsSection(): JSX.Element {
               <th className="text-left px-4 py-2.5">{cfg.primaryCol}</th>
               {cfg.secondaryLabel && <th className="text-left px-4 py-2.5">{cfg.secondaryLabel}</th>}
               <th className="text-right px-4 py-2.5">Qty</th>
-              <th className="text-right px-4 py-2.5">Orders</th>
+              <th className="text-right px-4 py-2.5">{chan.countCol}</th>
               <th className="text-right px-4 py-2.5">Revenue</th>
             </tr>
           </thead>

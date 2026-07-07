@@ -21,7 +21,7 @@ import {
   Users,
 } from 'lucide-react';
 import { MetricCard } from '@/components/ui/MetricCard';
-import { Money } from '@/components/ui/money';
+import { Money, Weight } from '@/components/ui/money';
 import { Badge } from '@/components/ui/badge';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { SectionCard } from '@/components/ui/SectionCard';
@@ -46,7 +46,12 @@ import {
   useGetAuditLogQuery,
   useGetCategoriesQuery,
 } from '@/features/inventory/inventoryApi';
-import { useGetTopProductsQuery } from '@/features/analytics/analyticsApi';
+import {
+  useGetTopProductsQuery,
+  useGetVendorPurchasesQuery,
+  useGetExpenseTrendQuery,
+  useGetStockTransfersQuery,
+} from '@/features/analytics/analyticsApi';
 import { useGetShopsQuery } from '@/features/shops/shopsApi';
 import { LEAD_STATUSES, type LeadStatus } from '@goldos/shared/constants';
 
@@ -158,6 +163,25 @@ export function DashboardPage(): JSX.Element {
   const { data: expensesByCatRes, isLoading: expCatLoading, isError: expCatError, error: expCatErrorObj } = useGetExpensesByCategoryQuery(range, {
     skip: !canReadFinance,
   });
+  // Expense trend (6 months, total + Marketing) + vendor-wise purchases (MTD).
+  // Gated behind finance.read like the rest of the finance block.
+  const expenseTrendArg = useMemo(
+    () => ({ months: 6, ...(selectedShopId ? { shopId: selectedShopId } : {}) }),
+    [selectedShopId],
+  );
+  const { data: expenseTrendRes, isLoading: expTrendLoading } = useGetExpenseTrendQuery(expenseTrendArg, {
+    pollingInterval: 60_000,
+    skip: !canReadFinance,
+  });
+  const { data: vendorPurchasesRes, isLoading: vendorPurLoading } = useGetVendorPurchasesQuery(range, {
+    pollingInterval: 60_000,
+    skip: !canReadFinance,
+  });
+  // Stock transfers (MTD). Inventory data — visible to any dashboard viewer
+  // (reports.view already gates /analytics), so not finance-gated.
+  const { data: stockTransfersRes, isLoading: transfersLoading } = useGetStockTransfersQuery(range, {
+    pollingInterval: 60_000,
+  });
   const { data: leadsRes } = useGetLeadsQuery(undefined, { pollingInterval: 60_000 });
   const { data: ordersRes } = useGetOrdersQuery(undefined, { pollingInterval: 60_000 });
   const { data: billsRes } = useGetBillsQuery({}, { pollingInterval: 60_000 });
@@ -256,6 +280,46 @@ export function DashboardPage(): JSX.Element {
           ]
         : [],
     [pl],
+  );
+
+  // Expense trend (last 6 months) — total operating expense vs Marketing.
+  const expenseTrend = expenseTrendRes?.data.rows ?? [];
+  const totalExpenseTrend = useMemo(
+    () => expenseTrend.map((r) => ({ label: r.label, value: r.totalPaise })),
+    [expenseTrend],
+  );
+  const marketingTrend = useMemo(
+    () => expenseTrend.map((r) => ({ label: r.label, value: r.marketingPaise })),
+    [expenseTrend],
+  );
+  const hasExpenseTrend = expenseTrend.some((r) => r.totalPaise > 0 || r.marketingPaise > 0);
+  const hasMarketingTrend = expenseTrend.some((r) => r.marketingPaise > 0);
+
+  // Vendor-wise purchases (MTD) — ranked by amount purchased.
+  const vendorPurchaseBar = useMemo(
+    () =>
+      (vendorPurchasesRes?.data.rows ?? []).map((v) => ({
+        label: v.vendorName,
+        value: v.purchasePaise,
+        sub: `${v.poCount} PO${v.poCount === 1 ? '' : 's'}`,
+      })),
+    [vendorPurchasesRes],
+  );
+
+  // Stock transfers (MTD) — from → to routes ranked by weight moved (grams),
+  // with qty + transfer count in the sub-label. Exact figures shown in the
+  // adjacent tables so admins can reconcile against the Transfers page.
+  const transferReport = stockTransfersRes?.data;
+  const transferRoutes = transferReport?.routes ?? [];
+  const transferTopItems = transferReport?.topItems ?? [];
+  const transferRouteBar = useMemo(
+    () =>
+      transferRoutes.map((r) => ({
+        label: `${r.fromShopName} → ${r.toShopName}`,
+        value: r.weightMg / 1000,
+        sub: `${r.quantity} pc${r.quantity === 1 ? '' : 's'} · ${r.transferCount} transfer${r.transferCount === 1 ? '' : 's'}`,
+      })),
+    [transferRoutes],
   );
 
   return (
@@ -650,6 +714,135 @@ export function DashboardPage(): JSX.Element {
         </ChartCard>
       </section>
       )}
+
+      {/* ---- 7b. Expense trends + vendor-wise purchases ----
+            Total-expense & Marketing 6-month trends plus the top vendors by
+            purchase value (MTD). Finance-gated like section 7. */}
+      {canReadFinance && (
+      <section className="grid grid-cols-1 lg:grid-cols-3 gap-3 sm:gap-4">
+        <ChartCard title="Total expenses" eyebrow="Last 6 months">
+          {expTrendLoading ? (
+            <p className="text-sm text-ink-500">Loading expenses…</p>
+          ) : !hasExpenseTrend ? (
+            <p className="text-sm text-ink-500">No expenses logged in the last 6 months.</p>
+          ) : (
+            <RevenueAreaChart data={totalExpenseTrend} height={200} name="Expenses" />
+          )}
+        </ChartCard>
+
+        <ChartCard title="Marketing expenses" eyebrow="Last 6 months">
+          {expTrendLoading ? (
+            <p className="text-sm text-ink-500">Loading expenses…</p>
+          ) : !hasMarketingTrend ? (
+            <p className="text-sm text-ink-500">No marketing spend in the last 6 months.</p>
+          ) : (
+            <RevenueAreaChart data={marketingTrend} height={200} name="Marketing" />
+          )}
+        </ChartCard>
+
+        <ChartCard title="Purchases by vendor" eyebrow="This month">
+          {vendorPurLoading ? (
+            <p className="text-sm text-ink-500">Loading purchases…</p>
+          ) : vendorPurchaseBar.length === 0 ? (
+            <p className="text-sm text-ink-500">No purchase orders this month.</p>
+          ) : (
+            <RankedBarChart
+              data={vendorPurchaseBar}
+              height={Math.max(160, vendorPurchaseBar.length * 34)}
+              unit="currency"
+              name="Purchases"
+            />
+          )}
+        </ChartCard>
+      </section>
+      )}
+
+      {/* ---- 7c. Stock transfers — from → to, item, qty, weight (MTD) ----
+            Server-aggregated from TransferLine → Transfer → Item so weight
+            (Σ item.weightMg × qty) reconciles with the Transfers page. The
+            ranked chart ranks routes by weight moved; the tables give exact
+            per-route and per-item figures. REJECTED transfers are excluded. */}
+      <section className="grid grid-cols-1 lg:grid-cols-3 gap-3 sm:gap-4">
+        <ChartCard className="lg:col-span-2" title="Stock transfers by route" eyebrow="This month · weight moved">
+          {transfersLoading ? (
+            <p className="text-sm text-ink-500">Loading transfers…</p>
+          ) : transferRouteBar.length === 0 ? (
+            <p className="text-sm text-ink-500">No stock transfers this month.</p>
+          ) : (
+            <>
+              <RankedBarChart
+                data={transferRouteBar}
+                height={Math.max(160, transferRouteBar.length * 34)}
+                unit="count"
+                name="Weight (g)"
+              />
+              {transferReport && (
+                <div className="mt-3 grid grid-cols-3 gap-3 text-xs">
+                  <Stat label="Transfers" value={String(transferReport.totals.transferCount)} />
+                  <Stat label="Pieces" value={String(transferReport.totals.quantity)} />
+                  <Stat label="Weight moved" value={<Weight mg={transferReport.totals.weightMg} />} />
+                </div>
+              )}
+              <div className="mt-4 overflow-x-auto">
+                <table className="w-full text-xs min-w-[420px]">
+                  <thead className="text-eyebrow uppercase text-ink-500">
+                    <tr>
+                      <th className="text-left py-1.5 font-medium">From → To</th>
+                      <th className="text-right py-1.5 font-medium">Transfers</th>
+                      <th className="text-right py-1.5 font-medium">Qty</th>
+                      <th className="text-right py-1.5 font-medium">Weight</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-ink-50">
+                    {transferRoutes.map((r) => (
+                      <tr key={`${r.fromShopId}-${r.toShopId}`}>
+                        <td className="py-1.5 text-ink-800">
+                          {r.fromShopName} <span className="text-ink-400">→</span> {r.toShopName}
+                        </td>
+                        <td className="py-1.5 text-right tabular-nums text-ink-600">{r.transferCount}</td>
+                        <td className="py-1.5 text-right tabular-nums text-ink-600">{r.quantity}</td>
+                        <td className="py-1.5 text-right tabular-nums text-ink-800"><Weight mg={r.weightMg} /></td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </>
+          )}
+        </ChartCard>
+
+        <SectionCard
+          eyebrow="This month"
+          title="Top items moved"
+          icon={<Package className="h-4 w-4 text-brand-500" />}
+          action={
+            <Link to="/admin/inventory/transfers" className="text-ink-500 hover:text-ink-900 inline-flex items-center gap-1 font-medium">
+              Transfers <ArrowRight className="h-3 w-3" />
+            </Link>
+          }
+        >
+          {transfersLoading ? (
+            <p className="text-sm text-ink-500">Loading…</p>
+          ) : transferTopItems.length === 0 ? (
+            <p className="text-sm text-ink-500">No items transferred this month.</p>
+          ) : (
+            <ul className="space-y-2 text-sm">
+              {transferTopItems.map((it) => (
+                <li key={it.itemId} className="flex items-center justify-between gap-3 border-b border-ink-50 pb-2 last:border-0">
+                  <div className="min-w-0 flex-1">
+                    <p className="text-ink-800 truncate font-medium">{it.name}</p>
+                    <p className="text-xs text-ink-500 font-mono">{it.sku}</p>
+                  </div>
+                  <div className="text-right shrink-0">
+                    <Weight mg={it.weightMg} className="text-ink-900 text-sm font-medium" />
+                    <p className="text-xs text-ink-500">{it.quantity} pc{it.quantity === 1 ? '' : 's'}</p>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          )}
+        </SectionCard>
+      </section>
 
       {/* ---- 8. Inventory health (low stock + vendor outstanding) ---- */}
       <section className="grid grid-cols-1 md:grid-cols-2 gap-3 sm:gap-4">

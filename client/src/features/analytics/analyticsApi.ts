@@ -23,6 +23,11 @@ export interface StaffRow {
   revenuePaise: number;
 }
 
+// Sales channel for the top-products family of reports.
+//   'online' — storefront / e-commerce orders
+//   'pos'    — in-store counter bills
+export type TopChannel = 'online' | 'pos';
+
 export interface TopProductRow {
   productId: string;
   name: string;
@@ -63,6 +68,50 @@ export interface ShopPerformanceRow {
   billCount: number;
   profitPct: number;
   sharePct: number;
+}
+
+export interface VendorPurchaseRow {
+  vendorId: string;
+  vendorName: string;
+  gstNumber: string | null;
+  purchasePaise: number;
+  gstPaise: number;
+  taxablePaise: number;
+  paidPaise: number;
+  poCount: number;
+  sharePct: number;
+}
+
+export interface ExpenseTrendRow {
+  bucket: string;
+  label: string;
+  totalPaise: number;
+  marketingPaise: number;
+  otherPaise: number;
+}
+
+export interface StockTransferRoute {
+  fromShopId: string;
+  fromShopName: string;
+  toShopId: string;
+  toShopName: string;
+  transferCount: number;
+  quantity: number;
+  weightMg: number;
+}
+export interface StockTransferItem {
+  itemId: string;
+  sku: string;
+  name: string;
+  quantity: number;
+  weightMg: number;
+}
+export interface StockTransferReport {
+  from: string;
+  to: string;
+  routes: StockTransferRoute[];
+  topItems: StockTransferItem[];
+  totals: { transferCount: number; quantity: number; weightMg: number };
 }
 
 export interface InventoryValuationAgg {
@@ -358,8 +407,8 @@ export const analyticsApi = baseApi.injectEndpoints({
       providesTags: ['SalesReport'],
     }),
     getTopProducts: b.query<
-      { data: TopProductRow[]; groupBy?: 'product' | 'category' | 'subcategory' | 'collection' },
-      { from?: string; to?: string; limit?: number } | void
+      { data: TopProductRow[]; groupBy?: 'product' | 'category' | 'subcategory' | 'collection'; channel?: TopChannel },
+      { from?: string; to?: string; limit?: number; channel?: TopChannel } | void
     >({
       query: (params) => ({ url: '/analytics/top-products', params: params ?? undefined }),
       providesTags: ['SalesReport'],
@@ -367,8 +416,8 @@ export const analyticsApi = baseApi.injectEndpoints({
     // Category-wise best sellers (M3 FR#3) — rolls product sales up to the main
     // category. Uses the same endpoint with groupBy=category.
     getTopCategories: b.query<
-      { data: TopCategoryRow[]; groupBy: 'category' },
-      { from?: string; to?: string; limit?: number } | void
+      { data: TopCategoryRow[]; groupBy: 'category'; channel?: TopChannel },
+      { from?: string; to?: string; limit?: number; channel?: TopChannel } | void
     >({
       query: (params) => ({
         url: '/analytics/top-products',
@@ -379,8 +428,8 @@ export const analyticsApi = baseApi.injectEndpoints({
     // Sub-category best sellers — rolls product sales up to the LEAF category
     // (the sub under the main). Same endpoint with groupBy=subcategory.
     getTopSubcategories: b.query<
-      { data: TopCategoryRow[]; groupBy: 'subcategory' },
-      { from?: string; to?: string; limit?: number } | void
+      { data: TopCategoryRow[]; groupBy: 'subcategory'; channel?: TopChannel },
+      { from?: string; to?: string; limit?: number; channel?: TopChannel } | void
     >({
       query: (params) => ({
         url: '/analytics/top-products',
@@ -391,8 +440,8 @@ export const analyticsApi = baseApi.injectEndpoints({
     // Collection best sellers — rolls sales up by the curated Collection(s) a
     // piece belongs to. A piece can be in several, so revenues may overlap.
     getTopCollections: b.query<
-      { data: TopCollectionRow[]; groupBy: 'collection' },
-      { from?: string; to?: string; limit?: number } | void
+      { data: TopCollectionRow[]; groupBy: 'collection'; channel?: TopChannel },
+      { from?: string; to?: string; limit?: number; channel?: TopChannel } | void
     >({
       query: (params) => ({
         url: '/analytics/top-products',
@@ -406,6 +455,27 @@ export const analyticsApi = baseApi.injectEndpoints({
     >({
       query: (params) => ({ url: '/analytics/shop-performance', params }),
       providesTags: ['SalesReport'],
+    }),
+    getVendorPurchases: b.query<
+      { data: { from: string; to: string; rows: VendorPurchaseRow[]; totalPurchasePaise: number } },
+      { from: string; to: string }
+    >({
+      query: (params) => ({ url: '/analytics/vendor-purchases', params }),
+      providesTags: ['SalesReport'],
+    }),
+    getExpenseTrend: b.query<
+      { data: { months: number; rows: ExpenseTrendRow[] } },
+      { months?: number; shopId?: string } | void
+    >({
+      query: (params) => ({ url: '/analytics/expense-trend', params: params ?? undefined }),
+      providesTags: ['SalesReport'],
+    }),
+    getStockTransfers: b.query<
+      { data: StockTransferReport },
+      { from: string; to: string; status?: 'PENDING' | 'APPROVED' | 'COMPLETED' | 'REJECTED' }
+    >({
+      query: (params) => ({ url: '/analytics/stock-transfers', params }),
+      providesTags: ['StockValuation'],
     }),
     getInventoryValuation: b.query<
       ApiOne<InventoryValuation>,
@@ -496,6 +566,9 @@ export const {
   useGetTopSubcategoriesQuery,
   useGetTopCollectionsQuery,
   useGetShopPerformanceQuery,
+  useGetVendorPurchasesQuery,
+  useGetExpenseTrendQuery,
+  useGetStockTransfersQuery,
   useGetInventoryValuationQuery,
   useGetCustomerAcquisitionQuery,
   useGetPlByPeriodQuery,

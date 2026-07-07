@@ -280,8 +280,28 @@ analyticsRouter.get('/dashboard', async (req, res, next) => {
 });
 
 // =====================================================================
-// /top-products — best-selling storefront products
+// /top-products — best-selling products, per sales channel
+//
+// channel='online' (default) — storefront/e-commerce sales, from OrderItem
+//   joined to Order. The selling "entity" is a storefront Product.
+// channel='pos' — in-store counter sales, from BillLine joined to Bill. The
+//   selling entity is an inventory Item. Each BillLine is one sold piece
+//   (no qty column) so qty = COUNT(*); orderCount = distinct bills.
+//
+// Both channels normalise to a common { entityId, qty, revenuePaise,
+// orderCount } shape plus per-entity metadata (name, category, collections),
+// so the four groupBy roll-ups below are channel-agnostic.
 // =====================================================================
+
+type TopEntityRow = { entityId: string; qty: number; revenuePaise: bigint; orderCount: number };
+type TopEntityMeta = {
+  name: string;
+  slug: string;
+  category:
+    | { id: string; name: string; parentId: string | null; parent: { id: string; name: string } | null }
+    | null;
+  collections: { id: string; name: string }[];
+};
 
 analyticsRouter.get('/top-products', async (req, res, next) => {
   try {
@@ -290,78 +310,139 @@ analyticsRouter.get('/top-products', async (req, res, next) => {
         from: z.coerce.date().optional(),
         to: z.coerce.date().optional(),
         limit: z.coerce.number().int().positive().max(50).default(10),
+        // Sales channel: 'online' = storefront orders, 'pos' = counter bills.
+        channel: z.enum(['online', 'pos']).default('online'),
         // Roll-up dimension:
         //   'product'     (default) — item-wise best sellers
         //   'category'    — roll up to the product's MAIN category (M3 FR#3)
         //   'subcategory' — roll up to the product's LEAF category (the sub
         //                   under the main; a product sitting directly in a
         //                   main category buckets under that main itself)
-        //   'collection'  — roll up by the curated Collection(s) the product's
-        //                   linked inventory Item belongs to. A piece can be in
-        //                   several collections, so its sales count toward each
-        //                   (collection revenues overlap and may exceed total).
+        //   'collection'  — roll up by the curated Collection(s) the piece
+        //                   belongs to. A piece can be in several collections,
+        //                   so its sales count toward each (collection revenues
+        //                   overlap and may exceed total).
         groupBy: z.enum(['product', 'category', 'subcategory', 'collection']).default('product'),
       })
       .parse(req.query);
 
-    // OrderItem is NOT in TENANT_SCOPED_MODELS, so the Prisma extension does not
-    // auto-inject tenantId here — and $queryRaw bypasses it entirely. We MUST
-    // scope through the parent Order's tenantId explicitly or this leaks across
-    // tenants.
+    // Neither OrderItem nor BillLine is auto-tenant-scoped by the Prisma
+    // extension, and $queryRaw bypasses it entirely — we MUST scope through the
+    // parent Order/Bill tenantId explicitly or this leaks across tenants.
     const tenantId = getTenantId();
     if (!tenantId) return noTenant(res);
 
-    // Revenue counts only orders that became real sales — exclude abandoned
-    // (PENDING) and CANCELLED / RETURNED orders. Revenue is SUM(unit × qty):
-    // OrderItem.pricePaise is the PER-UNIT price (subtotal is pricePaise × qty
-    // at checkout), so a plain SUM(pricePaise) undercounts any multi-qty line.
-    const conds: Prisma.Sql[] = [
-      Prisma.sql`o."tenantId" = ${tenantId}`,
-      Prisma.sql`o.status::text NOT IN ('PENDING', 'CANCELLED', 'RETURNED')`,
-    ];
-    if (q.from) conds.push(Prisma.sql`o."createdAt" >= ${q.from}`);
-    if (q.to) conds.push(Prisma.sql`o."createdAt" <= ${q.to}`);
-    const whereSql = Prisma.join(conds, ' AND ');
+    let perEntity: TopEntityRow[];
+    const metaById = new Map<string, TopEntityMeta>();
 
-    const perProduct = await prisma.$queryRaw<
-      Array<{ productId: string; qty: number; revenuePaise: bigint; orderCount: number }>
-    >(Prisma.sql`
-      SELECT oi."productId"                       AS "productId",
-             SUM(oi.qty)::int                     AS qty,
-             SUM(oi."pricePaise" * oi.qty)::bigint AS "revenuePaise",
-             COUNT(*)::int                        AS "orderCount"
-      FROM "OrderItem" oi
-      JOIN "Order" o ON o.id = oi."orderId"
-      WHERE ${whereSql}
-      GROUP BY oi."productId"
-      ORDER BY qty DESC
-    `);
+    if (q.channel === 'pos') {
+      // In-store bills. Exclude voided bills; each BillLine is one piece.
+      const conds: Prisma.Sql[] = [
+        Prisma.sql`b."tenantId" = ${tenantId}`,
+        Prisma.sql`b."voidedAt" IS NULL`,
+      ];
+      if (q.from) conds.push(Prisma.sql`b."createdAt" >= ${q.from}`);
+      if (q.to) conds.push(Prisma.sql`b."createdAt" <= ${q.to}`);
+      const whereSql = Prisma.join(conds, ' AND ');
 
-    const productIds = perProduct.map((r) => r.productId);
-    const products = productIds.length
-      ? await prisma.product.findMany({
-          where: { id: { in: productIds } },
-          select: {
-            id: true,
-            name: true,
-            slug: true,
-            category: {
-              select: { id: true, name: true, parentId: true, parent: { select: { id: true, name: true } } },
+      perEntity = await prisma.$queryRaw<TopEntityRow[]>(Prisma.sql`
+        SELECT bl."itemId"                    AS "entityId",
+               COUNT(*)::int                  AS qty,
+               SUM(bl."linePaise")::bigint    AS "revenuePaise",
+               COUNT(DISTINCT bl."billId")::int AS "orderCount"
+        FROM "BillLine" bl
+        JOIN "Bill" b ON b.id = bl."billId"
+        WHERE ${whereSql}
+        GROUP BY bl."itemId"
+        ORDER BY qty DESC
+      `);
+
+      const itemIds = perEntity.map((r) => r.entityId);
+      const items = itemIds.length
+        ? await prisma.item.findMany({
+            where: { id: { in: itemIds } },
+            select: {
+              id: true,
+              name: true,
+              sku: true,
+              category: {
+                select: { id: true, name: true, parentId: true, parent: { select: { id: true, name: true } } },
+              },
+              collections: { select: { collection: { select: { id: true, name: true } } } },
             },
-          },
-        })
-      : [];
-    const productById = new Map(products.map((p) => [p.id, p]));
+          })
+        : [];
+      for (const it of items) {
+        metaById.set(it.id, {
+          name: it.name ?? it.sku ?? 'Unknown',
+          slug: '',
+          category: it.category ?? null,
+          collections: it.collections.map((c) => c.collection),
+        });
+      }
+    } else {
+      // Storefront orders. Revenue counts only orders that became real sales —
+      // exclude abandoned (PENDING) and CANCELLED / RETURNED orders. Revenue is
+      // SUM(unit × qty): OrderItem.pricePaise is the PER-UNIT price, so a plain
+      // SUM(pricePaise) undercounts any multi-qty line.
+      const conds: Prisma.Sql[] = [
+        Prisma.sql`o."tenantId" = ${tenantId}`,
+        Prisma.sql`o.status::text NOT IN ('PENDING', 'CANCELLED', 'RETURNED')`,
+      ];
+      if (q.from) conds.push(Prisma.sql`o."createdAt" >= ${q.from}`);
+      if (q.to) conds.push(Prisma.sql`o."createdAt" <= ${q.to}`);
+      const whereSql = Prisma.join(conds, ' AND ');
+
+      perEntity = await prisma.$queryRaw<TopEntityRow[]>(Prisma.sql`
+        SELECT oi."productId"                       AS "entityId",
+               SUM(oi.qty)::int                     AS qty,
+               SUM(oi."pricePaise" * oi.qty)::bigint AS "revenuePaise",
+               COUNT(*)::int                        AS "orderCount"
+        FROM "OrderItem" oi
+        JOIN "Order" o ON o.id = oi."orderId"
+        WHERE ${whereSql}
+        GROUP BY oi."productId"
+        ORDER BY qty DESC
+      `);
+
+      const productIds = perEntity.map((r) => r.entityId);
+      const products = productIds.length
+        ? await prisma.product.findMany({
+            where: { id: { in: productIds } },
+            select: {
+              id: true,
+              name: true,
+              slug: true,
+              category: {
+                select: { id: true, name: true, parentId: true, parent: { select: { id: true, name: true } } },
+              },
+              // Collections live on the inventory Item (ItemCollection), bridged
+              // via Product.linkedItem.
+              linkedItem: {
+                select: { collections: { select: { collection: { select: { id: true, name: true } } } } },
+              },
+            },
+          })
+        : [];
+      for (const p of products) {
+        metaById.set(p.id, {
+          name: p.name ?? 'Unknown',
+          slug: p.slug ?? '',
+          category: p.category ?? null,
+          collections: p.linkedItem?.collections.map((c) => c.collection) ?? [],
+        });
+      }
+    }
 
     if (q.groupBy === 'product') {
-      const data = perProduct
+      const data = perEntity
         .map((r) => {
-          const p = productById.get(r.productId);
-          const main = p?.category?.parent ?? p?.category ?? null;
+          const m = metaById.get(r.entityId);
+          const main = m?.category?.parent ?? m?.category ?? null;
           return {
-            productId: r.productId,
-            name: p?.name ?? 'Unknown',
-            slug: p?.slug ?? '',
+            productId: r.entityId,
+            name: m?.name ?? 'Unknown',
+            slug: m?.slug ?? '',
             // Surface the main category alongside each product too, so the
             // product view can show which category a best-seller belongs to.
             mainCategoryId: main?.id ?? null,
@@ -372,35 +453,21 @@ analyticsRouter.get('/top-products', async (req, res, next) => {
           };
         })
         .slice(0, q.limit);
-      res.json({ groupBy: 'product', data });
+      res.json({ groupBy: 'product', channel: q.channel, data });
       return;
     }
 
     if (q.groupBy === 'collection') {
-      // Collections live on the inventory Item (ItemCollection), bridged via
-      // Product.linkedItem — fetch them only for this view, keyed by productId.
-      const colRows = await prisma.product.findMany({
-        where: { id: { in: productIds } },
-        select: {
-          id: true,
-          linkedItem: {
-            select: { collections: { select: { collection: { select: { id: true, name: true } } } } },
-          },
-        },
-      });
-      const colsByProduct = new Map(
-        colRows.map((r) => [r.id, r.linkedItem?.collections.map((c) => c.collection) ?? []]),
-      );
-      // One product → many collections: add its sales to every collection it
-      // belongs to. Pieces with no linked item / no collection fall in a single
-      // "No collection" bucket.
+      // One piece → many collections: add its sales to every collection it
+      // belongs to. Pieces with no collection fall in a single "No collection"
+      // bucket.
       const byCol = new Map<
         string,
         { collectionId: string; name: string; qty: number; orderCount: number; revenuePaise: number }
       >();
       const NONE = '__none__';
-      for (const r of perProduct) {
-        const cols = colsByProduct.get(r.productId) ?? [];
+      for (const r of perEntity) {
+        const cols = metaById.get(r.entityId)?.collections ?? [];
         const targets = cols.length ? cols : [{ id: NONE, name: 'No collection' }];
         for (const col of targets) {
           const agg = byCol.get(col.id) ?? {
@@ -419,11 +486,11 @@ analyticsRouter.get('/top-products', async (req, res, next) => {
       const data = Array.from(byCol.values())
         .sort((a, b) => b.qty - a.qty)
         .slice(0, q.limit);
-      res.json({ data, groupBy: 'collection' });
+      res.json({ data, groupBy: 'collection', channel: q.channel });
       return;
     }
 
-    // 'category' (main) | 'subcategory' (leaf) — roll product sales up to the
+    // 'category' (main) | 'subcategory' (leaf) — roll piece sales up to the
     // chosen category level.
     const byCat = new Map<
       string,
@@ -436,9 +503,9 @@ analyticsRouter.get('/top-products', async (req, res, next) => {
         revenuePaise: number;
       }
     >();
-    for (const r of perProduct) {
-      const p = productById.get(r.productId);
-      const cat = p?.category ?? null;
+    for (const r of perEntity) {
+      const m = metaById.get(r.entityId);
+      const cat = m?.category ?? null;
       // main view → parent (or the category itself if it has no parent);
       // sub view → the leaf category as-is.
       const target = q.groupBy === 'category' ? cat?.parent ?? cat : cat;
@@ -465,7 +532,7 @@ analyticsRouter.get('/top-products', async (req, res, next) => {
           ? c
           : { categoryId: c.categoryId, name: c.name, qty: c.qty, orderCount: c.orderCount, revenuePaise: c.revenuePaise },
       );
-    res.json({ data, groupBy: q.groupBy });
+    res.json({ data, groupBy: q.groupBy, channel: q.channel });
   } catch (err) {
     next(err);
   }
@@ -762,6 +829,257 @@ analyticsRouter.get('/shop-performance', async (req, res, next) => {
 
     res.json({
       data: { from: q.from.toISOString(), to: q.to.toISOString(), rows, totalRevenuePaise: totalRevenue },
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Vendor-wise purchase report — how much was purchased from each vendor in a
+// date range. PO totalPaise is GST-INCLUSIVE, so gross purchase = Σ totalPaise
+// and taxable (ex-GST) = gross − (cgst+sgst+igst). CANCELLED POs excluded.
+// Payments made to the vendor in the same range shown alongside for context.
+analyticsRouter.get('/vendor-purchases', async (req, res, next) => {
+  try {
+    const q = z.object({ from: z.coerce.date(), to: z.coerce.date() }).parse(req.query);
+    const tenantId = getTenantId();
+    if (!tenantId) return noTenant(res);
+
+    const [poGroups, paymentGroups] = await Promise.all([
+      prisma.purchaseOrder.groupBy({
+        by: ['vendorId'],
+        where: { createdAt: { gte: q.from, lte: q.to }, status: { not: 'CANCELLED' } },
+        _sum: { totalPaise: true, cgstPaise: true, sgstPaise: true, igstPaise: true },
+        _count: { _all: true },
+      }),
+      prisma.vendorPayment.groupBy({
+        by: ['vendorId'],
+        where: { paidAt: { gte: q.from, lte: q.to } },
+        _sum: { amountPaise: true },
+      }),
+    ]);
+
+    const paidByVendor = new Map(paymentGroups.map((p) => [p.vendorId, p._sum.amountPaise ?? 0]));
+    const vendorIds = Array.from(
+      new Set([...poGroups.map((p) => p.vendorId), ...paymentGroups.map((p) => p.vendorId)]),
+    );
+    const vendors = vendorIds.length
+      ? await prisma.vendor.findMany({
+          where: { id: { in: vendorIds } },
+          select: { id: true, name: true, gstNumber: true },
+        })
+      : [];
+    const vendorById = new Map(vendors.map((v) => [v.id, v]));
+
+    const totalPurchase = poGroups.reduce((a, p) => a + (p._sum.totalPaise ?? 0), 0);
+
+    const rows = poGroups
+      .map((p) => {
+        const purchase = p._sum.totalPaise ?? 0;
+        const gst =
+          (p._sum.cgstPaise ?? 0) + (p._sum.sgstPaise ?? 0) + (p._sum.igstPaise ?? 0);
+        const v = vendorById.get(p.vendorId);
+        return {
+          vendorId: p.vendorId,
+          vendorName: v?.name ?? p.vendorId.slice(-6),
+          gstNumber: v?.gstNumber ?? null,
+          purchasePaise: purchase,
+          gstPaise: gst,
+          taxablePaise: purchase - gst,
+          paidPaise: paidByVendor.get(p.vendorId) ?? 0,
+          poCount: p._count._all,
+          sharePct: totalPurchase > 0 ? (purchase / totalPurchase) * 100 : 0,
+        };
+      })
+      .sort((a, b) => b.purchasePaise - a.purchasePaise);
+
+    res.json({
+      data: { from: q.from.toISOString(), to: q.to.toISOString(), rows, totalPurchasePaise: totalPurchase },
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Expense trend — monthly total operating expense (REVENUE) alongside the
+// Marketing head, over the last N months. Powers the dashboard expense graphs.
+// Buckets are generated in JS so months with no spend still show as zero.
+analyticsRouter.get('/expense-trend', async (req, res, next) => {
+  try {
+    const q = z
+      .object({ months: z.coerce.number().int().min(1).max(24).default(6), shopId: z.string().optional() })
+      .parse(req.query);
+    const tenantId = getTenantId();
+    if (!tenantId) return noTenant(res);
+
+    // Month buckets: first of month, oldest → current, inclusive.
+    const now = new Date();
+    const buckets: Array<{ key: string; label: string }> = [];
+    for (let i = q.months - 1; i >= 0; i--) {
+      const d = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - i, 1));
+      buckets.push({
+        key: d.toISOString(),
+        label: d.toLocaleDateString('en-US', { month: 'short', year: '2-digit', timeZone: 'UTC' }),
+      });
+    }
+    const start = new Date(buckets[0]!.key);
+
+    const rows = await prisma.$queryRaw<Array<{ bucket: Date; total: bigint | null; marketing: bigint | null }>>`
+      SELECT date_trunc('month', "paidAt") AS bucket,
+             SUM("amountPaise") FILTER (WHERE "classification" = 'REVENUE')::bigint AS total,
+             SUM("amountPaise") FILTER (WHERE "category" = 'Marketing')::bigint AS marketing
+      FROM "Expense"
+      WHERE "tenantId" = ${tenantId}
+        AND "paidAt" >= ${start}
+        ${shopFilterSql(q.shopId)}
+      GROUP BY 1
+    `;
+    const byBucket = new Map(
+      rows.map((r) => [
+        new Date(r.bucket).toISOString(),
+        { total: Number(r.total ?? 0), marketing: Number(r.marketing ?? 0) },
+      ]),
+    );
+
+    const data = buckets.map((b) => {
+      const agg = byBucket.get(b.key);
+      const marketing = agg?.marketing ?? 0;
+      const total = agg?.total ?? 0;
+      return {
+        bucket: b.key,
+        label: b.label,
+        totalPaise: total,
+        marketingPaise: marketing,
+        otherPaise: Math.max(0, total - marketing),
+      };
+    });
+
+    res.json({ data: { months: q.months, rows: data } });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Stock-transfer report — movement of stock between shops/warehouses over a
+// date range. Aggregates TransferLine → Transfer (from/to) → Item (weight),
+// so figures reconcile with the Transfers page (weight = Σ item.weightMg × qty).
+// REJECTED transfers are excluded (they never moved stock); an optional status
+// narrows to a single stage. Raw SQL joins across three tables, so tenantId is
+// applied explicitly (the Prisma extension does not scope $queryRaw).
+analyticsRouter.get('/stock-transfers', async (req, res, next) => {
+  try {
+    const q = z
+      .object({
+        from: z.coerce.date(),
+        to: z.coerce.date(),
+        status: z.enum(['PENDING', 'APPROVED', 'COMPLETED', 'REJECTED']).optional(),
+      })
+      .parse(req.query);
+    const tenantId = getTenantId();
+    if (!tenantId) return noTenant(res);
+
+    const statusFilter = q.status
+      ? Prisma.sql`AND t."status" = ${q.status}::"TransferStatus"`
+      : Prisma.sql`AND t."status" <> 'REJECTED'`;
+
+    // 1) Per-route totals (from shop → to shop).
+    const routeRows = await prisma.$queryRaw<
+      Array<{
+        fromShopId: string;
+        toShopId: string;
+        transfers: bigint;
+        qty: bigint | null;
+        weight: bigint | null;
+      }>
+    >`
+      SELECT t."fromShopId",
+             t."toShopId",
+             COUNT(DISTINCT t."id")::bigint       AS transfers,
+             SUM(tl."quantity")::bigint            AS qty,
+             SUM(tl."quantity" * i."weightMg")::bigint AS weight
+      FROM "Transfer" t
+      JOIN "TransferLine" tl ON tl."transferId" = t."id"
+      JOIN "Item" i          ON i."id" = tl."itemId"
+      WHERE t."tenantId" = ${tenantId}
+        AND t."createdAt" BETWEEN ${q.from} AND ${q.to}
+        ${statusFilter}
+      GROUP BY t."fromShopId", t."toShopId"
+    `;
+
+    // 2) Top items moved (by weight).
+    const itemRows = await prisma.$queryRaw<
+      Array<{ itemId: string; qty: bigint | null; weight: bigint | null }>
+    >`
+      SELECT tl."itemId",
+             SUM(tl."quantity")::bigint            AS qty,
+             SUM(tl."quantity" * i."weightMg")::bigint AS weight
+      FROM "Transfer" t
+      JOIN "TransferLine" tl ON tl."transferId" = t."id"
+      JOIN "Item" i          ON i."id" = tl."itemId"
+      WHERE t."tenantId" = ${tenantId}
+        AND t."createdAt" BETWEEN ${q.from} AND ${q.to}
+        ${statusFilter}
+      GROUP BY tl."itemId"
+      ORDER BY weight DESC NULLS LAST
+      LIMIT 10
+    `;
+
+    // Resolve shop + item names (model queries auto-scope to tenant).
+    const shopIds = Array.from(
+      new Set(routeRows.flatMap((r) => [r.fromShopId, r.toShopId])),
+    );
+    const itemIds = itemRows.map((r) => r.itemId);
+    const [shops, items] = await Promise.all([
+      shopIds.length
+        ? prisma.shop.findMany({ where: { id: { in: shopIds } }, select: { id: true, name: true } })
+        : Promise.resolve([]),
+      itemIds.length
+        ? prisma.item.findMany({
+            where: { id: { in: itemIds } },
+            select: { id: true, sku: true, name: true },
+          })
+        : Promise.resolve([]),
+    ]);
+    const shopName = new Map(shops.map((s) => [s.id, s.name]));
+    const itemById = new Map(items.map((i) => [i.id, i]));
+
+    const routes = routeRows
+      .map((r) => ({
+        fromShopId: r.fromShopId,
+        fromShopName: shopName.get(r.fromShopId) ?? r.fromShopId.slice(-6),
+        toShopId: r.toShopId,
+        toShopName: shopName.get(r.toShopId) ?? r.toShopId.slice(-6),
+        transferCount: Number(r.transfers),
+        quantity: Number(r.qty ?? 0),
+        weightMg: Number(r.weight ?? 0),
+      }))
+      .sort((a, b) => b.weightMg - a.weightMg);
+
+    const topItems = itemRows.map((r) => {
+      const it = itemById.get(r.itemId);
+      return {
+        itemId: r.itemId,
+        sku: it?.sku ?? '',
+        name: it?.name ?? r.itemId.slice(-6),
+        quantity: Number(r.qty ?? 0),
+        weightMg: Number(r.weight ?? 0),
+      };
+    });
+
+    const totals = routes.reduce(
+      (acc, r) => {
+        acc.transferCount += r.transferCount;
+        acc.quantity += r.quantity;
+        acc.weightMg += r.weightMg;
+        return acc;
+      },
+      { transferCount: 0, quantity: 0, weightMg: 0 },
+    );
+    // transferCount is summed across routes; a transfer maps to exactly one
+    // (from,to) pair, so no double-counting.
+
+    res.json({
+      data: { from: q.from.toISOString(), to: q.to.toISOString(), routes, topItems, totals },
     });
   } catch (err) {
     next(err);
