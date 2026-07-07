@@ -22,6 +22,8 @@ import { cn } from '@/lib/cn';
 import {
   useBulkImportItemsMutation,
   useLazyGetBulkImportTemplateQuery,
+  useBulkImportPurchaseOrdersMutation,
+  useLazyGetPoBulkImportTemplateQuery,
 } from './inventoryApi';
 
 interface BulkImportResultData {
@@ -30,22 +32,54 @@ interface BulkImportResultData {
   validRows: number;
   inserted: number;
   duplicates: string[];
+  poCount?: number;
   errors: Array<{ row: number; column?: string; message: string }>;
 }
+
+type Variant = 'items' | 'purchase-orders';
 
 interface Props {
   open: boolean;
   onClose: () => void;
+  /** Which importer to drive. Defaults to items. */
+  variant?: Variant;
 }
 
-export function BulkImportModal({ open, onClose }: Props): JSX.Element | null {
+// Per-variant copy so the same modal serves items and purchase orders.
+const VARIANT_COPY: Record<Variant, { eyebrow: string; title: string; blurb: string; noun: string; templateFile: string }> = {
+  items: {
+    eyebrow: 'Inventory',
+    title: 'Bulk import items',
+    blurb: "Upload an Excel or CSV sheet of items. We'll validate every row first — nothing is written until you confirm.",
+    noun: 'item',
+    templateFile: 'zelora-inventory-import-template.csv',
+  },
+  'purchase-orders': {
+    eyebrow: 'Purchasing',
+    title: 'Bulk import purchase orders',
+    blurb: "Upload an Excel or CSV of PO lines. Rows are grouped into orders by Vendor + PO Ref. We validate first — nothing is written until you confirm.",
+    noun: 'line',
+    templateFile: 'zelora-po-import-template.csv',
+  },
+};
+
+export function BulkImportModal({ open, onClose, variant = 'items' }: Props): JSX.Element | null {
   const [file, setFile] = useState<File | null>(null);
   const [dragOver, setDragOver] = useState(false);
   const [result, setResult] = useState<BulkImportResultData | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const copy = VARIANT_COPY[variant];
 
-  const [bulkImport, { isLoading: importing }] = useBulkImportItemsMutation();
-  const [fetchTemplate, { isFetching: templateLoading }] = useLazyGetBulkImportTemplateQuery();
+  // Both hooks are created unconditionally (rules of hooks); we pick by variant.
+  const [importItems, itemsState] = useBulkImportItemsMutation();
+  const [importPos, posState] = useBulkImportPurchaseOrdersMutation();
+  const [fetchItemTpl, itemTplState] = useLazyGetBulkImportTemplateQuery();
+  const [fetchPoTpl, poTplState] = useLazyGetPoBulkImportTemplateQuery();
+  const isPo = variant === 'purchase-orders';
+  const bulkImport = isPo ? importPos : importItems;
+  const importing = isPo ? posState.isLoading : itemsState.isLoading;
+  const fetchTemplate = isPo ? fetchPoTpl : fetchItemTpl;
+  const templateLoading = isPo ? poTplState.isFetching : itemTplState.isFetching;
 
   // Reset state when the modal closes/reopens — otherwise the prior
   // import's results stick around and the user sees a confusing mix.
@@ -79,7 +113,8 @@ export function BulkImportModal({ open, onClose }: Props): JSX.Element | null {
       const res = await bulkImport({ file, dryRun }).unwrap();
       setResult(res.data);
       if (!dryRun && res.data.inserted > 0) {
-        toast.success(`Imported ${res.data.inserted} item${res.data.inserted === 1 ? '' : 's'}`);
+        const poSuffix = res.data.poCount != null ? ` across ${res.data.poCount} PO${res.data.poCount === 1 ? '' : 's'}` : '';
+        toast.success(`Imported ${res.data.inserted} ${copy.noun}${res.data.inserted === 1 ? '' : 's'}${poSuffix}`);
         // Close after the user has a moment to see the success summary.
         setTimeout(() => onClose(), 1500);
       } else if (!dryRun && res.data.errors.length > 0) {
@@ -104,7 +139,7 @@ export function BulkImportModal({ open, onClose }: Props): JSX.Element | null {
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = 'zelora-inventory-import-template.csv';
+      a.download = copy.templateFile;
       a.click();
       URL.revokeObjectURL(url);
     } catch {
@@ -121,11 +156,9 @@ export function BulkImportModal({ open, onClose }: Props): JSX.Element | null {
       <div className="relative w-full max-w-2xl bg-ink-0 rounded-lg shadow-xl flex flex-col max-h-[90vh] overflow-hidden">
         <header className="flex items-start justify-between px-6 py-5 border-b border-ink-100">
           <div>
-            <p className="text-eyebrow uppercase text-ink-500">Inventory</p>
-            <h2 className="font-display text-display-sm text-ink-900 mt-1">Bulk import items</h2>
-            <p className="text-sm text-ink-500 mt-2 max-w-md">
-              Upload an Excel or CSV sheet of items. We'll validate every row first — nothing is written until you confirm.
-            </p>
+            <p className="text-eyebrow uppercase text-ink-500">{copy.eyebrow}</p>
+            <h2 className="font-display text-display-sm text-ink-900 mt-1">{copy.title}</h2>
+            <p className="text-sm text-ink-500 mt-2 max-w-md">{copy.blurb}</p>
           </div>
           <button
             onClick={onClose}
@@ -215,7 +248,7 @@ export function BulkImportModal({ open, onClose }: Props): JSX.Element | null {
           />
 
           {result && (
-            <ResultSummary result={result} />
+            <ResultSummary result={result} noun={copy.noun} />
           )}
         </div>
 
@@ -224,7 +257,7 @@ export function BulkImportModal({ open, onClose }: Props): JSX.Element | null {
             {result?.dryRun === true
               ? 'Dry run — nothing has been written yet.'
               : result && !result.dryRun
-                ? `${result.inserted} item${result.inserted === 1 ? '' : 's'} imported.`
+                ? `${result.inserted} ${copy.noun}${result.inserted === 1 ? '' : 's'} imported.`
                 : 'Step 1 of 2 — validate first, then commit.'}
           </p>
           <div className="flex items-center gap-2">
@@ -235,7 +268,7 @@ export function BulkImportModal({ open, onClose }: Props): JSX.Element | null {
               <Button onClick={onClose}>Done</Button>
             ) : canCommit ? (
               <Button onClick={() => runImport(false)} disabled={importing}>
-                {importing ? 'Importing…' : `Import ${result.validRows} item${result.validRows === 1 ? '' : 's'}`}
+                {importing ? 'Importing…' : `Import ${result.validRows} ${copy.noun}${result.validRows === 1 ? '' : 's'}`}
               </Button>
             ) : (
               <Button onClick={() => runImport(true)} disabled={!file || importing}>
@@ -249,7 +282,7 @@ export function BulkImportModal({ open, onClose }: Props): JSX.Element | null {
   );
 }
 
-function ResultSummary({ result }: { result: BulkImportResultData }): JSX.Element {
+function ResultSummary({ result, noun }: { result: BulkImportResultData; noun: string }): JSX.Element {
   const hasErrors = result.errors.length > 0;
   return (
     <div className="space-y-3">
@@ -259,10 +292,18 @@ function ResultSummary({ result }: { result: BulkImportResultData }): JSX.Elemen
         <SummaryTile label="Errors" value={result.errors.length} negative={hasErrors} />
       </div>
 
+      {result.dryRun && result.poCount != null && result.poCount > 0 && !hasErrors && (
+        <p className="text-xs text-ink-500">
+          These rows will create <span className="font-medium text-ink-700">{result.poCount}</span> purchase
+          order{result.poCount === 1 ? '' : 's'} (grouped by Vendor + PO Ref).
+        </p>
+      )}
+
       {!result.dryRun && result.inserted > 0 && (
         <div className="flex items-center gap-2 px-3 py-2.5 rounded-md bg-success-50 border border-success-200 text-sm text-success-700">
           <CheckCircle2 className="h-4 w-4 shrink-0" aria-hidden />
-          Imported {result.inserted} item{result.inserted === 1 ? '' : 's'} successfully.
+          Imported {result.inserted} {noun}{result.inserted === 1 ? '' : 's'}
+          {result.poCount != null ? ` across ${result.poCount} PO${result.poCount === 1 ? '' : 's'}` : ''} successfully.
         </div>
       )}
 

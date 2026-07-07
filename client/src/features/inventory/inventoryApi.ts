@@ -6,8 +6,6 @@ import type {
   ApiOne,
   Category,
   Collection,
-  SaleItemRow,
-  SaleDiscountType,
   Vendor,
   VendorInput,
   PurchaseOrderCreate,
@@ -21,14 +19,46 @@ export interface AddStockResult {
   newItemIds?: string[];
 }
 
-// Sale-wide Season Sale config: the Buy-1-Get-1 toggle plus the single
-// universal discount applied to every item in the sale. discountType is
-// PERCENT (discountBps) or FLAT (discountFlatPaise) — BOGO is the toggle.
-export interface SaleConfig {
-  bogoEnabled: boolean;
-  discountType: SaleDiscountType;
+// Season Sale campaigns — multiple simultaneous offers, one tab each. A
+// campaign holds ONE offer (PERCENT / FLAT / BOGO) over its member items.
+export type SaleOfferType = 'PERCENT' | 'FLAT' | 'BOGO' | 'FIXED_PRICE';
+
+// An item's effective offer, resolved from its active campaign (null = not on
+// sale). Returned inline on each item so the POS can strike the sale price.
+export interface ItemSaleOffer {
+  type: SaleOfferType;
   discountBps: number;
   discountFlatPaise: number;
+  campaignId: string;
+}
+
+export interface SaleCampaignRow {
+  id: string;
+  name: string;
+  discountType: SaleOfferType;
+  discountBps: number;
+  discountFlatPaise: number;
+  isActive: boolean;
+  sortOrder: number;
+  itemCount: number;
+}
+
+export interface SaleCampaignInput {
+  name: string;
+  discountType: SaleOfferType;
+  discountBps: number;
+  discountFlatPaise: number;
+  isActive: boolean;
+}
+
+export interface SaleCampaignItem {
+  id: string;
+  sku: string;
+  name: string | null;
+  images: string[];
+  weightMg: number;
+  purityCaratX100: number;
+  status: string;
 }
 
 export interface ItemMovementRow {
@@ -73,6 +103,8 @@ export interface PurchaseOrderRow {
     quantity: number;
     makingChargeBps: number | null;
     sellingPricePaise: number | null;
+    hsnCode: string | null;
+    gstRateBps: number | null;
     // Full item-detail fields persisted on the line — needed to pre-fill the
     // Edit PO form so every field (incl. diamonds) round-trips.
     publishToStorefront: boolean;
@@ -162,7 +194,7 @@ export interface LowStockRow {
 
 export const inventoryApi = baseApi.injectEndpoints({
   endpoints: (b) => ({
-    getItems: b.query<ApiList<Item>, { shopId?: string; categoryId?: string; cursor?: string; search?: string; limit?: number }>({
+    getItems: b.query<ApiList<Item & { sale?: ItemSaleOffer | null }>, { shopId?: string; categoryId?: string; cursor?: string; search?: string; limit?: number }>({
       query: (params) => ({ url: '/inventory/items', params }),
       providesTags: (r) =>
         r
@@ -326,38 +358,59 @@ export const inventoryApi = baseApi.injectEndpoints({
       query: ({ collectionId, itemId }) => ({ url: `/inventory/collections/${collectionId}/items/${itemId}`, method: 'DELETE' }),
       invalidatesTags: (_, __, { collectionId }) => [{ type: 'Item', id: collectionId }],
     }),
-    // Sale-wide config — currently the Buy-1-Get-1 toggle (applies to all items).
-    // Sale-wide config — Buy-1-Get-1 toggle + the UNIVERSAL discount (one % / ₹
-    // value applied to every item in the Season Sale).
-    getSaleConfig: b.query<ApiOne<SaleConfig>, void>({
-      query: () => '/inventory/sale-config',
-      providesTags: [{ type: 'SaleItem', id: 'CONFIG' }],
+    // Season Sale campaigns — multiple simultaneous offers (one tab each). The
+    // 'LIST' tag also covers item prices so a campaign edit refreshes the grid.
+    getSaleCampaigns: b.query<ApiList<SaleCampaignRow>, void>({
+      query: () => '/inventory/sale-campaigns',
+      providesTags: [{ type: 'SaleItem', id: 'CAMPAIGNS' }],
     }),
-    updateSaleConfig: b.mutation<ApiOne<SaleConfig>, SaleConfig>({
-      query: (body) => ({ url: '/inventory/sale-config', method: 'PUT', body }),
-      // The universal discount changes every sale item's price, so refresh the
-      // list too (and the config).
+    createSaleCampaign: b.mutation<ApiOne<SaleCampaignRow>, SaleCampaignInput>({
+      query: (body) => ({ url: '/inventory/sale-campaigns', method: 'POST', body }),
+      invalidatesTags: [{ type: 'SaleItem', id: 'CAMPAIGNS' }],
+    }),
+    updateSaleCampaign: b.mutation<ApiOne<SaleCampaignRow>, { id: string; body: Partial<SaleCampaignInput> }>({
+      query: ({ id, body }) => ({ url: `/inventory/sale-campaigns/${id}`, method: 'PATCH', body }),
       invalidatesTags: [
-        { type: 'SaleItem', id: 'CONFIG' },
+        { type: 'SaleItem', id: 'CAMPAIGNS' },
         { type: 'SaleItem', id: 'LIST' },
       ],
     }),
-    // Season Sale items — single tenant-wide sale pool. Membership only; the
-    // discount is the universal one in SaleConfig.
-    getSaleItems: b.query<ApiList<SaleItemRow>, void>({
-      query: () => '/inventory/sale-items',
-      providesTags: [{ type: 'SaleItem', id: 'LIST' }],
+    deleteSaleCampaign: b.mutation<void, string>({
+      query: (id) => ({ url: `/inventory/sale-campaigns/${id}`, method: 'DELETE' }),
+      invalidatesTags: [
+        { type: 'SaleItem', id: 'CAMPAIGNS' },
+        { type: 'SaleItem', id: 'LIST' },
+      ],
     }),
-    addItemsToSale: b.mutation<
-      ApiOne<{ message: string; added: number; skipped: number }>,
-      { itemIds: string[] }
+    getSaleCampaignItems: b.query<ApiList<SaleCampaignItem>, string>({
+      query: (campaignId) => `/inventory/sale-campaigns/${campaignId}/items`,
+      providesTags: (_r, _e, campaignId) => [{ type: 'SaleItem', id: `CAMP-${campaignId}` }],
+    }),
+    addItemsToCampaign: b.mutation<
+      ApiOne<{ added: number; moved: number; skipped: number }>,
+      { campaignId: string; itemIds: string[] }
     >({
-      query: (body) => ({ url: '/inventory/sale-items', method: 'POST', body }),
-      invalidatesTags: [{ type: 'SaleItem', id: 'LIST' }],
+      query: ({ campaignId, itemIds }) => ({
+        url: `/inventory/sale-campaigns/${campaignId}/items`,
+        method: 'POST',
+        body: { itemIds },
+      }),
+      invalidatesTags: (_r, _e, { campaignId }) => [
+        { type: 'SaleItem', id: `CAMP-${campaignId}` },
+        { type: 'SaleItem', id: 'CAMPAIGNS' },
+        { type: 'SaleItem', id: 'LIST' },
+      ],
     }),
-    removeItemFromSale: b.mutation<void, string>({
-      query: (itemId) => ({ url: `/inventory/sale-items/${itemId}`, method: 'DELETE' }),
-      invalidatesTags: [{ type: 'SaleItem', id: 'LIST' }],
+    removeItemFromCampaign: b.mutation<void, { campaignId: string; itemId: string }>({
+      query: ({ campaignId, itemId }) => ({
+        url: `/inventory/sale-campaigns/${campaignId}/items/${itemId}`,
+        method: 'DELETE',
+      }),
+      invalidatesTags: (_r, _e, { campaignId }) => [
+        { type: 'SaleItem', id: `CAMP-${campaignId}` },
+        { type: 'SaleItem', id: 'CAMPAIGNS' },
+        { type: 'SaleItem', id: 'LIST' },
+      ],
     }),
     // Suggest the next SKU ([CODE]-[seq]) for a category — prefills the form.
     getSkuSuggestion: b.query<ApiOne<{ sku: string; code: string | null }>, string>({
@@ -449,6 +502,7 @@ export const inventoryApi = baseApi.injectEndpoints({
         validRows: number;
         inserted: number;
         duplicates: string[];
+        poCount?: number;
         errors: Array<{ row: number; column?: string; message: string }>;
       }>,
       { file: File; dryRun: boolean }
@@ -471,6 +525,33 @@ export const inventoryApi = baseApi.injectEndpoints({
       void
     >({
       query: () => '/inventory/items/bulk-import/template',
+    }),
+    // Bulk import purchase orders — rows grouped into POs by (Vendor, PO Ref).
+    bulkImportPurchaseOrders: b.mutation<
+      ApiOne<{
+        dryRun: boolean;
+        totalRows: number;
+        validRows: number;
+        inserted: number;
+        duplicates: string[];
+        poCount?: number;
+        errors: Array<{ row: number; column?: string; message: string }>;
+      }>,
+      { file: File; dryRun: boolean }
+    >({
+      query: ({ file, dryRun }) => {
+        const form = new FormData();
+        form.append('file', file);
+        form.append('dryRun', dryRun ? 'true' : 'false');
+        return { url: '/inventory/purchase-orders/bulk-import', method: 'POST', body: form };
+      },
+      invalidatesTags: ['PurchaseOrder'],
+    }),
+    getPoBulkImportTemplate: b.query<
+      ApiOne<{ columns: string[]; example: Array<Record<string, string | number>> }>,
+      void
+    >({
+      query: () => '/inventory/purchase-orders/bulk-import/template',
     }),
   }),
 });
@@ -495,11 +576,13 @@ export const {
   useListCollectionItemsQuery,
   useAddItemsToCollectionMutation,
   useRemoveItemFromCollectionMutation,
-  useGetSaleConfigQuery,
-  useUpdateSaleConfigMutation,
-  useGetSaleItemsQuery,
-  useAddItemsToSaleMutation,
-  useRemoveItemFromSaleMutation,
+  useGetSaleCampaignsQuery,
+  useCreateSaleCampaignMutation,
+  useUpdateSaleCampaignMutation,
+  useDeleteSaleCampaignMutation,
+  useGetSaleCampaignItemsQuery,
+  useAddItemsToCampaignMutation,
+  useRemoveItemFromCampaignMutation,
   useLazyGetSkuSuggestionQuery,
   useUpdateCategoryMakingChargeMutation,
   useGetValuationQuery,
@@ -518,4 +601,6 @@ export const {
   useGetAuditLogQuery,
   useBulkImportItemsMutation,
   useLazyGetBulkImportTemplateQuery,
+  useBulkImportPurchaseOrdersMutation,
+  useLazyGetPoBulkImportTemplateQuery,
 } = inventoryApi;

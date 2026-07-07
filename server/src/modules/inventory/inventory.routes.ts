@@ -10,11 +10,17 @@ import {
   AddStockSchema,
 } from '@goldos/shared/schemas';
 import { z } from 'zod';
+import type { SaleDiscountType } from '@prisma/client';
 import * as svc from './inventory.service.js';
-import { bulkImportItems, bulkImportTemplate } from './bulk-import.service.js';
+import {
+  bulkImportItems,
+  bulkImportTemplate,
+  bulkImportPurchaseOrders,
+  bulkImportPoTemplate,
+} from './bulk-import.service.js';
 import { requirePermission, requireAnyPermission } from '../../middleware/require-permission.js';
 import { prisma } from '../../lib/prisma.js';
-import { getTenantId } from '../../lib/async-context.js';
+import { getTenantId, runWithTenant } from '../../lib/async-context.js';
 
 export const inventoryRouter: Router = Router();
 
@@ -74,12 +80,21 @@ inventoryRouter.post(
         return;
       }
       const dryRun = String(req.body['dryRun'] ?? '').toLowerCase() === 'true';
-      const result = await bulkImportItems({
-        fileBuffer: req.file.buffer,
-        filename: req.file.originalname,
-        dryRun,
-        performedByUserId: req.user?.userId,
-      });
+      // Re-establish the tenant context here: multer parses the upload on
+      // socket I/O events whose async context predates tenantScope, so the
+      // AsyncLocalStorage store is lost by the time this handler runs. Rebuild
+      // it from req.user (which survives on the request object) so the service's
+      // getTenantId() resolves.
+      const result = await runWithTenant(
+        { tenantId: req.user!.tenantId, userId: req.user!.userId, shopId: req.user!.shopId },
+        () =>
+          bulkImportItems({
+            fileBuffer: req.file!.buffer,
+            filename: req.file!.originalname,
+            dryRun,
+            performedByUserId: req.user?.userId,
+          }),
+      );
       res.json({ data: result });
     } catch (err) {
       next(err);
@@ -414,152 +429,211 @@ inventoryRouter.delete(
   },
 );
 
-// ── Season Sale items (single tenant-wide sale pool) ──
-// Mirrors the collection-items endpoints but on the SaleItem table. The sale
-// discount is universal (one % / ₹ value set via /sale-config) and applies to
-// every item in the pool; SaleItem rows are membership only.
-// The storefront renders these in the "Season Sales" section + on the PDP.
+// ── Season Sale campaigns ──
+// Multiple simultaneous campaigns, each with one offer (PERCENT / FLAT / BOGO)
+// over its member items. An item belongs to one campaign. Offers apply on the
+// storefront AND at the POS counter (shared/sale.ts). Endpoints below cover
+// campaign CRUD + per-campaign item membership.
 
-// Sale-wide config — the Buy-1-Get-1 toggle plus the universal discount. Stored on the
-// tenant since the Season Sale is a single tenant-wide pool.
-inventoryRouter.get('/sale-config', async (_req, res, next) => {
+// Season Sale CAMPAIGNS — multiple simultaneous offers, one tab each. A
+// campaign holds one offer (PERCENT / FLAT / BOGO) over its member items; the
+// offer applies identically on the storefront and at the POS counter.
+
+const SaleCampaignInputSchema = z.object({
+  name: z.string().trim().min(1).max(60),
+  discountType: z.enum(['PERCENT', 'FLAT', 'BOGO', 'FIXED_PRICE']).default('PERCENT'),
+  discountBps: z.number().int().min(0).max(9000).default(0),
+  discountFlatPaise: z.number().int().min(0).max(100_000_00).default(0),
+  isActive: z.boolean().default(true),
+});
+
+type SaleOfferTypeStr = 'PERCENT' | 'FLAT' | 'BOGO' | 'FIXED_PRICE';
+
+// Which numeric field an offer type actually uses: PERCENT → bps; FLAT and
+// FIXED_PRICE → flat paise (₹ off vs the fixed price); BOGO → neither. Zeroing
+// the unused field keeps a stale value from lingering behind an offer change.
+function normalizeOfferFields(
+  type: SaleOfferTypeStr,
+  bps: number,
+  flat: number,
+): { discountBps: number; discountFlatPaise: number } {
+  return {
+    discountBps: type === 'PERCENT' ? bps : 0,
+    discountFlatPaise: type === 'FLAT' || type === 'FIXED_PRICE' ? flat : 0,
+  };
+}
+
+// List all campaigns (newest sortOrder last) with a member count.
+inventoryRouter.get('/sale-campaigns', async (_req, res, next) => {
   try {
     const tenantId = getTenantId();
     if (!tenantId) throw new Error('tenantId missing');
-    const tenant = await prisma.tenant.findUnique({
-      where: { id: tenantId },
-      select: {
-        seasonSaleBogo: true,
-        seasonSaleDiscountType: true,
-        seasonSaleDiscountBps: true,
-        seasonSaleDiscountFlatPaise: true,
-      },
+    const rows = await prisma.saleCampaign.findMany({
+      orderBy: [{ sortOrder: 'asc' }, { createdAt: 'asc' }],
+      include: { _count: { select: { items: true } } },
     });
     res.json({
-      data: {
-        bogoEnabled: tenant?.seasonSaleBogo ?? false,
-        // Universal discount — set once, applied to every item in the sale.
-        discountType: tenant?.seasonSaleDiscountType ?? 'PERCENT',
-        discountBps: tenant?.seasonSaleDiscountBps ?? 0,
-        discountFlatPaise: tenant?.seasonSaleDiscountFlatPaise ?? 0,
-      },
+      data: rows.map((c) => ({
+        id: c.id,
+        name: c.name,
+        discountType: c.discountType,
+        discountBps: c.discountBps,
+        discountFlatPaise: c.discountFlatPaise,
+        isActive: c.isActive,
+        sortOrder: c.sortOrder,
+        itemCount: c._count.items,
+      })),
     });
   } catch (err) {
     next(err);
   }
 });
 
-inventoryRouter.put('/sale-config', requirePermission('inventory.write'), async (req, res, next) => {
+inventoryRouter.post('/sale-campaigns', requirePermission('inventory.write'), async (req, res, next) => {
   try {
     const tenantId = getTenantId();
     if (!tenantId) throw new Error('tenantId missing');
-    const body = z
-      .object({
-        bogoEnabled: z.boolean(),
-        // Universal discount (BOGO is the separate toggle above). Capped to
-        // match the per-item bounds the storefront pricing assumed.
-        discountType: z.enum(['PERCENT', 'FLAT']).default('PERCENT'),
-        discountBps: z.number().int().min(0).max(9000).default(0),
-        discountFlatPaise: z.number().int().min(0).max(100_000_00).default(0),
-      })
-      .parse(req.body);
-    await prisma.tenant.update({
-      where: { id: tenantId },
+    const body = SaleCampaignInputSchema.parse(req.body);
+    const max = await prisma.saleCampaign.aggregate({ _max: { sortOrder: true } });
+    const norm = normalizeOfferFields(body.discountType, body.discountBps, body.discountFlatPaise);
+    const created = await prisma.saleCampaign.create({
       data: {
-        seasonSaleBogo: body.bogoEnabled,
-        seasonSaleDiscountType: body.discountType,
-        seasonSaleDiscountBps: body.discountBps,
-        seasonSaleDiscountFlatPaise: body.discountFlatPaise,
+        tenantId,
+        name: body.name,
+        // Cast: the generated enum picks up FIXED_PRICE after `prisma generate`.
+        discountType: body.discountType as SaleDiscountType,
+        discountBps: norm.discountBps,
+        discountFlatPaise: norm.discountFlatPaise,
+        isActive: body.isActive,
+        sortOrder: (max._max.sortOrder ?? 0) + 1,
       },
     });
-    res.json({ data: body });
+    res.status(201).json({ data: created });
   } catch (err) {
     next(err);
   }
 });
 
-// List items currently on sale, newest first, with their discount.
-inventoryRouter.get('/sale-items', async (_req, res, next) => {
+inventoryRouter.patch('/sale-campaigns/:id', requirePermission('inventory.write'), async (req, res, next) => {
+  try {
+    const body = SaleCampaignInputSchema.partial().parse(req.body);
+    // The admin always sends discountType alongside the amounts, so when the
+    // type is present we re-normalize both numeric fields against it (zeroing
+    // the one the offer doesn't use). Name / isActive-only patches leave the
+    // offer figures untouched.
+    const offerFields =
+      body.discountType !== undefined
+        ? {
+            discountType: body.discountType as SaleDiscountType,
+            ...normalizeOfferFields(body.discountType, body.discountBps ?? 0, body.discountFlatPaise ?? 0),
+          }
+        : {
+            ...(body.discountBps !== undefined ? { discountBps: body.discountBps } : {}),
+            ...(body.discountFlatPaise !== undefined ? { discountFlatPaise: body.discountFlatPaise } : {}),
+          };
+    const updated = await prisma.saleCampaign.update({
+      where: { id: req.params['id']! },
+      data: {
+        ...(body.name !== undefined ? { name: body.name } : {}),
+        ...offerFields,
+        ...(body.isActive !== undefined ? { isActive: body.isActive } : {}),
+      },
+    });
+    res.json({ data: updated });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Delete a campaign — its SaleItem memberships cascade away (items leave the sale).
+inventoryRouter.delete('/sale-campaigns/:id', requirePermission('inventory.write'), async (req, res, next) => {
+  try {
+    await prisma.saleCampaign.delete({ where: { id: req.params['id']! } });
+    res.status(204).end();
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Items in a campaign, curator order.
+inventoryRouter.get('/sale-campaigns/:id/items', async (req, res, next) => {
   try {
     const rows = await prisma.saleItem.findMany({
+      where: { campaignId: req.params['id']! },
       include: {
         item: {
           select: {
-            id: true,
-            sku: true,
-            name: true,
-            images: true,
-            weightMg: true,
-            purityCaratX100: true,
-            status: true,
+            id: true, sku: true, name: true, images: true,
+            weightMg: true, purityCaratX100: true, status: true,
           },
         },
       },
       orderBy: [{ sortOrder: 'asc' }, { createdAt: 'desc' }],
     });
-    const data = rows.map((r) => ({
-      id: r.item.id,
-      sku: r.item.sku,
-      name: r.item.name,
-      images: r.item.images,
-      weightMg: r.item.weightMg,
-      purityCaratX100: r.item.purityCaratX100,
-      status: r.item.status,
-      discountType: r.discountType,
-      discountBps: r.discountBps,
-      discountFlatPaise: r.discountFlatPaise,
-    }));
-    res.json({ data, page: { hasMore: false } });
+    res.json({
+      data: rows.map((r) => ({
+        id: r.item.id,
+        sku: r.item.sku,
+        name: r.item.name,
+        images: r.item.images,
+        weightMg: r.item.weightMg,
+        purityCaratX100: r.item.purityCaratX100,
+        status: r.item.status,
+      })),
+      page: { hasMore: false },
+    });
   } catch (err) {
     next(err);
   }
 });
 
-// Add items to the sale. Membership only — the discount is the sale-wide
-// universal one set via /sale-config, applied to every item on the storefront.
-// Skips items already in the sale.
+// Add items to a campaign. An item belongs to ONE campaign, so this upserts
+// campaignId — adding an item already in another campaign MOVES it here.
 inventoryRouter.post(
-  '/sale-items',
+  '/sale-campaigns/:id/items',
   requirePermission('inventory.write'),
   async (req, res, next) => {
     try {
-      const { itemIds } = z
-        .object({ itemIds: z.array(z.string().min(1)).min(1) })
-        .parse(req.body);
+      const { itemIds } = z.object({ itemIds: z.array(z.string().min(1)).min(1) }).parse(req.body);
       const tenantId = getTenantId();
       if (!tenantId) throw new Error('tenantId missing');
-
+      const campaignId = req.params['id']!;
+      const campaign = await prisma.saleCampaign.findUnique({ where: { id: campaignId }, select: { id: true } });
+      if (!campaign) {
+        res.status(404).json({ error: { message: 'Campaign not found' } });
+        return;
+      }
       let added = 0;
+      let moved = 0;
       for (const itemId of itemIds) {
-        const existing = await prisma.saleItem.findUnique({ where: { itemId } });
+        const existing = await prisma.saleItem.findUnique({ where: { itemId }, select: { campaignId: true } });
         if (!existing) {
-          await prisma.saleItem.create({ data: { tenantId, itemId } });
+          await prisma.saleItem.create({ data: { tenantId, itemId, campaignId } });
           added += 1;
+        } else if (existing.campaignId !== campaignId) {
+          await prisma.saleItem.update({ where: { itemId }, data: { campaignId } });
+          moved += 1;
         }
       }
-      res.status(201).json({
-        data: { message: `Added ${added} items to the sale`, added, skipped: itemIds.length - added },
-      });
+      res.status(201).json({ data: { added, moved, skipped: itemIds.length - added - moved } });
     } catch (err) {
       next(err);
     }
   },
 );
 
-// Remove an item from the sale.
+// Remove an item from a campaign (leaves the sale entirely).
 inventoryRouter.delete(
-  '/sale-items/:itemId',
+  '/sale-campaigns/:id/items/:itemId',
   requirePermission('inventory.write'),
   async (req, res, next) => {
     try {
-      await prisma.saleItem.delete({ where: { itemId: req.params['itemId']! } });
+      await prisma.saleItem.deleteMany({
+        where: { itemId: req.params['itemId']!, campaignId: req.params['id']! },
+      });
       res.status(204).end();
     } catch (err) {
-      if (err instanceof Error && err.message.includes('not found')) {
-        res.status(404).json({ error: { message: 'Item not in sale' } });
-      } else {
-        next(err);
-      }
+      next(err);
     }
   },
 );
@@ -648,6 +722,51 @@ inventoryRouter.post('/purchase-orders', requirePermission('inventory.purchase_o
     next(err);
   }
 });
+
+// Bulk import POs — Excel/CSV upload, rows grouped into orders by (Vendor, PO
+// Ref). `dryRun=true` validates only; omit / false to commit.
+inventoryRouter.post(
+  '/purchase-orders/bulk-import',
+  requirePermission('inventory.purchase_order'),
+  bulkUpload.single('file'),
+  async (req, res, next) => {
+    try {
+      if (!req.file) {
+        res.status(400).json({
+          error: { code: 'FILE_REQUIRED', message: 'Attach the spreadsheet as form field "file"' },
+        });
+        return;
+      }
+      const dryRun = String(req.body['dryRun'] ?? '').toLowerCase() === 'true';
+      // Re-establish the tenant context here: multer parses the upload on
+      // socket I/O events whose async context predates tenantScope, so the
+      // AsyncLocalStorage store is lost by the time this handler runs. Rebuild
+      // it from req.user (which survives on the request object) so the service's
+      // getTenantId() resolves.
+      const result = await runWithTenant(
+        { tenantId: req.user!.tenantId, userId: req.user!.userId, shopId: req.user!.shopId },
+        () =>
+          bulkImportPurchaseOrders({
+            fileBuffer: req.file!.buffer,
+            filename: req.file!.originalname,
+            dryRun,
+            performedByUserId: req.user?.userId,
+          }),
+      );
+      res.json({ data: result });
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+inventoryRouter.get(
+  '/purchase-orders/bulk-import/template',
+  requirePermission('inventory.purchase_order'),
+  (_req, res) => {
+    res.json({ data: bulkImportPoTemplate() });
+  },
+);
 
 // Edit a PO (vendor + lines + GST). Blocked once received/cancelled.
 inventoryRouter.patch('/purchase-orders/:id', requirePermission('inventory.purchase_order'), async (req, res, next) => {

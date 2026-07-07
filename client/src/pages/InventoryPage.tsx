@@ -16,6 +16,7 @@ import {
   ScrollText,
   Sliders,
   Upload,
+  Download,
   Tag as TagIcon,
   PackagePlus,
   Pencil,
@@ -30,7 +31,7 @@ import {
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { uploadImageToCloudinary, isCloudinaryConfigured, cloudinaryThumb } from '@/lib/cloudinary';
-import type { Item, Collection, SaleItemRow } from '@goldos/shared/types';
+import type { Item, Collection } from '@goldos/shared/types';
 import {
   DIAMOND_SHAPES,
   DIAMOND_CUTS,
@@ -51,11 +52,13 @@ import {
   useListCollectionItemsQuery,
   useAddItemsToCollectionMutation,
   useRemoveItemFromCollectionMutation,
-  useGetSaleConfigQuery,
-  useUpdateSaleConfigMutation,
-  useGetSaleItemsQuery,
-  useAddItemsToSaleMutation,
-  useRemoveItemFromSaleMutation,
+  useGetSaleCampaignsQuery,
+  useCreateSaleCampaignMutation,
+  useUpdateSaleCampaignMutation,
+  useDeleteSaleCampaignMutation,
+  useGetSaleCampaignItemsQuery,
+  useAddItemsToCampaignMutation,
+  useRemoveItemFromCampaignMutation,
   useLazyGetSkuSuggestionQuery,
   useDeleteItemMutation,
   useCreateItemMutation,
@@ -77,7 +80,8 @@ import {
   useGetAuditLogQuery,
   useUpdateCategoryMakingChargeMutation,
   type PurchaseOrderRow,
-  type SaleConfig,
+  type SaleCampaignRow,
+  type SaleOfferType,
 } from '@/features/inventory/inventoryApi';
 import { useCreateTransferMutation } from '@/features/transfers/transfersApi';
 import { useGetShopsQuery } from '@/features/shops/shopsApi';
@@ -1840,25 +1844,134 @@ function AddItemsModal({ collectionId, onClose }: { collectionId: string; onClos
 // Season Sales management — the single tenant-wide pool of items shown in the
 // storefront "Season Sales" section. Select items (same picker as Collections)
 // and set a per-item % discount, which the storefront applies to the live price.
+// Season Sales — multiple simultaneous campaigns, one tab each. Each campaign
+// runs its own offer (% / ₹ / BOGO) over its member items; the offer applies on
+// the storefront AND at the POS counter.
 function SaleItemsManageTab(): JSX.Element {
-  const { data, isLoading } = useGetSaleItemsQuery();
-  const { data: configData } = useGetSaleConfigQuery();
-  const [updateConfig, { isLoading: savingConfig }] = useUpdateSaleConfigMutation();
-  const [addOpen, setAddOpen] = useState(false);
-  const items = data?.data ?? [];
-  const cfg = configData?.data;
-  const bogoEnabled = cfg?.bogoEnabled ?? false;
+  const { data, isLoading } = useGetSaleCampaignsQuery();
+  const [createCampaign, { isLoading: creating }] = useCreateSaleCampaignMutation();
+  const campaigns = data?.data ?? [];
+  const [activeId, setActiveId] = useState<string | null>(null);
 
-  // Local mirror of the UNIVERSAL discount, synced from the server config. One
-  // % / ₹ value applied to every item in the sale (no per-item discounts).
-  const [discType, setDiscType] = useState<'PERCENT' | 'FLAT'>('PERCENT');
-  const [discAmount, setDiscAmount] = useState('0');
+  // Keep a valid selection as campaigns load / change.
   useEffect(() => {
-    if (!cfg) return;
-    const t = cfg.discountType === 'FLAT' ? 'FLAT' : 'PERCENT';
-    setDiscType(t);
-    setDiscAmount(t === 'FLAT' ? String(cfg.discountFlatPaise / 100) : String(cfg.discountBps / 100));
-  }, [cfg?.discountType, cfg?.discountBps, cfg?.discountFlatPaise]);
+    if (campaigns.length === 0) {
+      if (activeId !== null) setActiveId(null);
+      return;
+    }
+    if (!activeId || !campaigns.some((c) => c.id === activeId)) {
+      setActiveId(campaigns[0]!.id);
+    }
+  }, [campaigns, activeId]);
+
+  const active = campaigns.find((c) => c.id === activeId) ?? null;
+
+  const addCampaign = async (): Promise<void> => {
+    try {
+      const res = await createCampaign({
+        name: `Sale ${campaigns.length + 1}`,
+        discountType: 'PERCENT',
+        discountBps: 1000,
+        discountFlatPaise: 0,
+        isActive: true,
+      }).unwrap();
+      setActiveId(res.data.id);
+    } catch {
+      toast.error('Could not create campaign');
+    }
+  };
+
+  return (
+    <div className="space-y-4">
+      <p className="text-sm text-ink-500 max-w-2xl">
+        Run several sales at once — each tab is its own campaign with its own offer (% off, ₹ off, or Buy 1 Get 1) over
+        the items you add to it. Offers apply on the <strong>storefront</strong> and at the <strong>POS counter</strong>.
+      </p>
+
+      {/* Campaign tab strip */}
+      <div className="flex flex-wrap items-center gap-2 border-b border-ink-100 pb-2">
+        {campaigns.map((c) => (
+          <button
+            key={c.id}
+            type="button"
+            onClick={() => setActiveId(c.id)}
+            className={
+              'inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-sm transition-colors ' +
+              (c.id === activeId
+                ? 'bg-brand-600 text-white'
+                : 'bg-ink-50 text-ink-700 hover:bg-ink-100')
+            }
+          >
+            <span className="truncate max-w-[160px]">{c.name}</span>
+            <span
+              className={
+                'rounded-full px-1.5 text-[10px] ' +
+                (c.id === activeId ? 'bg-white/25' : 'bg-ink-200/70 text-ink-600')
+              }
+            >
+              {offerLabel(c)}
+            </span>
+            {!c.isActive && (
+              <span className="text-[10px] uppercase tracking-wide opacity-70">paused</span>
+            )}
+          </button>
+        ))}
+        <Button variant="outline" size="sm" onClick={() => void addCampaign()} disabled={creating}>
+          <Plus className="h-4 w-4" /> New sale
+        </Button>
+      </div>
+
+      {isLoading && <p className="text-sm text-ink-500">Loading…</p>}
+      {!isLoading && campaigns.length === 0 && (
+        <EmptyState
+          eyebrow="No campaigns yet"
+          title="Start a season sale"
+          body="Create a campaign, set its offer, then add items — the offer runs on your storefront and POS."
+        />
+      )}
+      {active && <SaleCampaignEditor key={active.id} campaign={active} />}
+    </div>
+  );
+}
+
+// Short human label for a campaign's offer, used on the tab pill.
+function offerLabel(c: SaleCampaignRow): string {
+  if (c.discountType === 'BOGO') return 'B1G1';
+  if (c.discountType === 'FIXED_PRICE') return `@ ₹${Math.round(c.discountFlatPaise / 100)}`;
+  if (c.discountType === 'FLAT') return `₹${Math.round(c.discountFlatPaise / 100)} off`;
+  return `${(c.discountBps / 100).toLocaleString('en-IN', { maximumFractionDigits: 2 })}% off`;
+}
+
+// Which types use the flat-paise field (₹ off vs a fixed price).
+function usesFlatField(t: SaleOfferType): boolean {
+  return t === 'FLAT' || t === 'FIXED_PRICE';
+}
+
+// The panel for one campaign: offer settings + its member items.
+function SaleCampaignEditor({ campaign }: { campaign: SaleCampaignRow }): JSX.Element {
+  const { data: itemsRes, isLoading } = useGetSaleCampaignItemsQuery(campaign.id);
+  const [updateCampaign, { isLoading: saving }] = useUpdateSaleCampaignMutation();
+  const [deleteCampaign] = useDeleteSaleCampaignMutation();
+  const [removeItem] = useRemoveItemFromCampaignMutation();
+  const [addOpen, setAddOpen] = useState(false);
+  const items = itemsRes?.data ?? [];
+
+  const [name, setName] = useState(campaign.name);
+  const [type, setType] = useState<SaleOfferType>(campaign.discountType);
+  const [amount, setAmount] = useState(
+    usesFlatField(campaign.discountType)
+      ? String(campaign.discountFlatPaise / 100)
+      : String(campaign.discountBps / 100),
+  );
+  useEffect(() => {
+    setName(campaign.name);
+    setType(campaign.discountType);
+    setAmount(
+      usesFlatField(campaign.discountType)
+        ? String(campaign.discountFlatPaise / 100)
+        : String(campaign.discountBps / 100),
+    );
+  }, [campaign.id, campaign.name, campaign.discountType, campaign.discountBps, campaign.discountFlatPaise]);
 
   const toBps = (a: string): number => {
     const n = parseFloat(a);
@@ -1869,164 +1982,166 @@ function SaleItemsManageTab(): JSX.Element {
     return Number.isFinite(n) ? Math.max(0, Math.round(n * 100)) : 0;
   };
 
-  // The config is a single PUT (replaces all fields), so merge a patch over the
-  // current local state — toggling BOGO keeps the discount, and vice-versa.
-  const saveConfig = (patch: Partial<SaleConfig>): void => {
-    const body: SaleConfig = {
-      bogoEnabled,
-      discountType: discType,
-      discountBps: discType === 'PERCENT' ? toBps(discAmount) : 0,
-      discountFlatPaise: discType === 'FLAT' ? toPaise(discAmount) : 0,
-      ...patch,
-    };
-    updateConfig(body)
+  const save = (patch: Partial<{ name: string; discountType: SaleOfferType; discountBps: number; discountFlatPaise: number; isActive: boolean }>): void => {
+    updateCampaign({ id: campaign.id, body: patch })
       .unwrap()
-      .catch(() => toast.error('Could not update sale settings'));
+      .catch(() => toast.error('Could not update campaign'));
   };
 
-  const commitDiscount = (nextType: 'PERCENT' | 'FLAT', nextAmount: string): void =>
-    saveConfig({
+  const commitOffer = (nextType: SaleOfferType, nextAmount: string): void =>
+    save({
       discountType: nextType,
       discountBps: nextType === 'PERCENT' ? toBps(nextAmount) : 0,
-      discountFlatPaise: nextType === 'FLAT' ? toPaise(nextAmount) : 0,
+      discountFlatPaise: usesFlatField(nextType) ? toPaise(nextAmount) : 0,
     });
 
-  return (
-    <div className="space-y-4">
-      <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-3">
-        <p className="text-sm text-ink-500 max-w-2xl">
-          Items added here appear in the storefront&apos;s <strong>Season Sales</strong> section (below Top Styles). The
-          discount below applies to <strong>every</strong> item in the sale — the storefront shows the original price
-          struck through, the discounted price and a &quot;Flat&nbsp;X% off&quot; badge. Items stay a single inventory
-          record; removing one only drops it from the sale.
-        </p>
-        <Button onClick={() => setAddOpen(true)} className="self-start shrink-0">
-          <Plus className="h-4 w-4" /> Add items
-        </Button>
-      </div>
-
-      {/* Universal discount — set once, applied to every item in the Season Sale. */}
-      <div className="rounded-md border border-ink-100 bg-ink-0 p-3">
-        <p className="text-sm font-medium text-ink-900">Sale discount — applies to every item</p>
-        <p className="text-xs text-ink-500 mb-2.5">
-          Set it once here; it&apos;s applied to all Season Sale pieces on the storefront and at checkout.
-        </p>
-        <div className="flex items-center gap-1.5">
-          <select
-            value={discType}
-            onChange={(e) => {
-              const next = e.target.value as 'PERCENT' | 'FLAT';
-              setDiscType(next);
-              commitDiscount(next, discAmount);
-            }}
-            className="h-9 rounded-md border border-ink-200 px-2 text-sm focus:border-brand-400 focus:outline-none"
-            aria-label="Sale discount type"
-          >
-            <option value="PERCENT">% off</option>
-            <option value="FLAT">₹ off</option>
-          </select>
-          {discType === 'FLAT' && <span className="text-sm text-ink-500">₹</span>}
-          <input
-            type="number"
-            min={0}
-            step={discType === 'FLAT' ? 1 : 0.5}
-            value={discAmount}
-            onChange={(e) => setDiscAmount(e.target.value)}
-            onBlur={() => commitDiscount(discType, discAmount)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') e.currentTarget.blur();
-            }}
-            className="h-9 w-28 rounded-md border border-ink-200 px-2 text-right text-sm tabular-nums focus:border-brand-400 focus:outline-none"
-            aria-label="Sale discount amount"
-          />
-          <span className="text-sm text-ink-500">{discType === 'PERCENT' ? '% off' : 'off'}</span>
-          {savingConfig && <span className="ml-1 text-[11px] text-ink-400">saving…</span>}
-        </div>
-      </div>
-
-      {/* Sale-wide Buy 1 Get 1 — applies to every item in the Season Sale. */}
-      <label className="flex items-start gap-3 rounded-md border border-ink-100 bg-ink-0 p-3 cursor-pointer">
-        <input
-          type="checkbox"
-          checked={bogoEnabled}
-          disabled={savingConfig}
-          onChange={(e) => saveConfig({ bogoEnabled: e.target.checked })}
-          className="mt-0.5 h-4 w-4 rounded border-ink-300 text-brand-600 focus:ring-brand-500"
-        />
-        <div>
-          <p className="text-sm font-medium text-ink-900">Buy 1 Get 1 Free — whole sale</p>
-          <p className="text-xs text-ink-500">
-            When on, every item in the Season Sale shows a &quot;Buy&nbsp;1 Get&nbsp;1 Free&quot; badge on the storefront.
-            The % / ₹ discount above still applies on top.
-          </p>
-        </div>
-      </label>
-
-      {isLoading && <p className="text-sm text-ink-500">Loading…</p>}
-      {!isLoading && items.length === 0 && (
-        <EmptyState
-          eyebrow="No items on sale"
-          title="Start a season sale"
-          body="Add items to the sale, then set one discount above — it applies to all of them on your storefront."
-        />
-      )}
-      {items.length > 0 && (
-        <ul className="divide-y divide-ink-100 rounded-md border border-ink-100 bg-ink-0">
-          {items.map((it) => (
-            <SaleItemRowCard key={it.id} item={it} />
-          ))}
-        </ul>
-      )}
-      {addOpen && <AddSaleItemsModal onClose={() => setAddOpen(false)} />}
-    </div>
-  );
-}
-
-// One sale row: thumbnail + name/SKU + a remove button. The discount is the
-// sale-wide universal one (set above), so rows are membership only.
-function SaleItemRowCard({ item }: { item: SaleItemRow }): JSX.Element {
-  const [removeItem] = useRemoveItemFromSaleMutation();
-
   const remove = (): void => {
-    if (!window.confirm(`Remove "${item.name ?? item.sku}" from the sale?`)) return;
-    removeItem(item.id)
+    if (!window.confirm(`Delete the "${campaign.name}" campaign? Its items leave the sale (they're not deleted).`)) return;
+    deleteCampaign(campaign.id)
+      .unwrap()
+      .catch(() => toast.error('Could not delete campaign'));
+  };
+
+  const removeMember = (itemId: string, label: string): void => {
+    if (!window.confirm(`Remove "${label}" from this sale?`)) return;
+    removeItem({ campaignId: campaign.id, itemId })
       .unwrap()
       .catch(() => toast.error('Could not remove item'));
   };
 
   return (
-    <li className="flex items-center gap-3 px-4 py-3">
-      <div className="h-12 w-12 shrink-0 overflow-hidden rounded bg-ink-50">
-        {item.images[0] ? (
-          <img src={item.images[0]} alt={item.name ?? item.sku} className="h-full w-full object-cover" />
-        ) : (
-          <div className="flex h-full w-full items-center justify-center text-ink-300">
-            <BadgePercent className="h-5 w-5" />
-          </div>
-        )}
+    <div className="space-y-4">
+      {/* Offer settings */}
+      <div className="rounded-md border border-ink-100 bg-ink-0 p-3 space-y-3">
+        <div className="flex flex-wrap items-center gap-2">
+          <input
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            onBlur={() => name.trim() && name.trim() !== campaign.name && save({ name: name.trim() })}
+            onKeyDown={(e) => e.key === 'Enter' && e.currentTarget.blur()}
+            className="h-9 flex-1 min-w-[160px] rounded-md border border-ink-200 px-2 text-sm font-medium focus:border-brand-400 focus:outline-none"
+            aria-label="Campaign name"
+            maxLength={60}
+          />
+          <label className="inline-flex items-center gap-1.5 text-sm text-ink-700">
+            <input
+              type="checkbox"
+              checked={campaign.isActive}
+              onChange={(e) => save({ isActive: e.target.checked })}
+              className="h-4 w-4 rounded border-ink-300 text-brand-600 focus:ring-brand-500"
+            />
+            Active
+          </label>
+          <button
+            type="button"
+            onClick={remove}
+            className="ml-1 inline-flex items-center gap-1 text-xs text-ink-400 hover:text-red-500"
+            aria-label="Delete campaign"
+          >
+            <Trash2 className="h-4 w-4" /> Delete
+          </button>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-1.5">
+          <select
+            value={type}
+            onChange={(e) => {
+              const next = e.target.value as SaleOfferType;
+              setType(next);
+              commitOffer(next, amount);
+            }}
+            className="h-9 rounded-md border border-ink-200 px-2 text-sm focus:border-brand-400 focus:outline-none"
+            aria-label="Offer type"
+          >
+            <option value="PERCENT">% off</option>
+            <option value="FLAT">₹ off</option>
+            <option value="FIXED_PRICE">Flat price (₹)</option>
+            <option value="BOGO">Buy 1 Get 1</option>
+          </select>
+          {type !== 'BOGO' && (
+            <>
+              {usesFlatField(type) && <span className="text-sm text-ink-500">₹</span>}
+              <input
+                type="number"
+                min={0}
+                step={usesFlatField(type) ? 1 : 0.5}
+                value={amount}
+                onChange={(e) => setAmount(e.target.value)}
+                onBlur={() => commitOffer(type, amount)}
+                onKeyDown={(e) => e.key === 'Enter' && e.currentTarget.blur()}
+                className="h-9 w-28 rounded-md border border-ink-200 px-2 text-right text-sm tabular-nums focus:border-brand-400 focus:outline-none"
+                aria-label="Offer amount"
+              />
+              <span className="text-sm text-ink-500">
+                {type === 'PERCENT' ? '% off' : type === 'FIXED_PRICE' ? 'final price' : 'off'}
+              </span>
+            </>
+          )}
+          {type === 'FIXED_PRICE' && (
+            <span className="text-sm text-ink-500">Every item in this sale sells at this price.</span>
+          )}
+          {type === 'BOGO' && (
+            <span className="text-sm text-ink-500">Buy one, get the cheaper of each pair free.</span>
+          )}
+          {saving && <span className="ml-1 text-[11px] text-ink-400">saving…</span>}
+        </div>
       </div>
-      <div className="min-w-0 flex-1">
-        <p className="truncate text-sm text-ink-900">{item.name ?? 'Unnamed item'}</p>
-        <p className="text-xs text-ink-500">{item.sku}</p>
+
+      {/* Members */}
+      <div className="flex items-center justify-between">
+        <p className="text-sm text-ink-600">{campaign.itemCount} item{campaign.itemCount === 1 ? '' : 's'} in this sale</p>
+        <Button onClick={() => setAddOpen(true)} size="sm">
+          <Plus className="h-4 w-4" /> Add items
+        </Button>
       </div>
-      <button
-        type="button"
-        onClick={remove}
-        className="ml-2 text-ink-400 hover:text-red-500 transition-colors"
-        aria-label={`Remove ${item.name ?? item.sku} from sale`}
-      >
-        <Trash2 className="h-4 w-4" />
-      </button>
-    </li>
+
+      {isLoading && <p className="text-sm text-ink-500">Loading…</p>}
+      {!isLoading && items.length === 0 && (
+        <EmptyState
+          eyebrow="No items yet"
+          title="Add items to this sale"
+          body="Pick the pieces this offer should apply to. An item can be in one campaign at a time."
+        />
+      )}
+      {items.length > 0 && (
+        <ul className="divide-y divide-ink-100 rounded-md border border-ink-100 bg-ink-0">
+          {items.map((it) => (
+            <li key={it.id} className="flex items-center gap-3 px-4 py-3">
+              <div className="h-12 w-12 shrink-0 overflow-hidden rounded bg-ink-50">
+                {it.images[0] ? (
+                  <img src={it.images[0]} alt={it.name ?? it.sku} className="h-full w-full object-cover" />
+                ) : (
+                  <div className="flex h-full w-full items-center justify-center text-ink-300">
+                    <BadgePercent className="h-5 w-5" />
+                  </div>
+                )}
+              </div>
+              <div className="min-w-0 flex-1">
+                <p className="truncate text-sm text-ink-900">{it.name ?? 'Unnamed item'}</p>
+                <p className="text-xs text-ink-500">{it.sku}</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => removeMember(it.id, it.name ?? it.sku)}
+                className="ml-2 text-ink-400 hover:text-red-500 transition-colors"
+                aria-label={`Remove ${it.name ?? it.sku} from sale`}
+              >
+                <Trash2 className="h-4 w-4" />
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+      {addOpen && <AddSaleItemsModal campaignId={campaign.id} onClose={() => setAddOpen(false)} />}
+    </div>
   );
 }
 
-// Item picker for the season sale — mirrors AddItemsModal but posts to the sale
-// pool. Membership only; the discount is the sale-wide universal one set on the
-// Season Sales tab.
-function AddSaleItemsModal({ onClose }: { onClose: () => void }): JSX.Element {
+// Item picker — adds the selected items to a specific campaign (moving them from
+// any other campaign they were in).
+function AddSaleItemsModal({ campaignId, onClose }: { campaignId: string; onClose: () => void }): JSX.Element {
   const { data: allItems } = useGetItemsQuery({});
-  const [addItems, { isLoading: adding }] = useAddItemsToSaleMutation();
+  const [addItems, { isLoading: adding }] = useAddItemsToCampaignMutation();
   const [selectedItemIds, setSelectedItemIds] = useState<Set<string>>(new Set());
   const [searchTerm, setSearchTerm] = useState('');
 
@@ -2039,8 +2154,9 @@ function AddSaleItemsModal({ onClose }: { onClose: () => void }): JSX.Element {
   const handleAdd = async (): Promise<void> => {
     if (selectedItemIds.size === 0) return void toast.error('Select at least one item');
     try {
-      await addItems({ itemIds: Array.from(selectedItemIds) }).unwrap();
-      toast.success(`Added ${selectedItemIds.size} item(s) to the sale`);
+      const res = await addItems({ campaignId, itemIds: Array.from(selectedItemIds) }).unwrap();
+      const movedNote = res.data.moved > 0 ? ` (${res.data.moved} moved from another sale)` : '';
+      toast.success(`Added ${res.data.added + res.data.moved} item(s)${movedNote}`);
       onClose();
     } catch (err) {
       const msg = (err as { data?: { error?: { message?: string } } }).data?.error?.message ?? 'Could not add items';
@@ -2066,7 +2182,7 @@ function AddSaleItemsModal({ onClose }: { onClose: () => void }): JSX.Element {
         </div>
 
         <p className="px-4 pt-3 text-xs text-ink-500">
-          The sale-wide discount (set on the Season Sales tab) applies to every item you add.
+          This campaign&apos;s offer applies to every item you add. An item already in another sale moves here.
         </p>
 
         <div className="flex-1 overflow-y-auto p-4 space-y-3">
@@ -2685,6 +2801,7 @@ function PurchaseOrdersTab(): JSX.Element {
   const [receivePO, { isLoading: receiving }] = useReceivePurchaseOrderMutation();
   const [deletePO] = useDeletePurchaseOrderMutation();
   const [createOpen, setCreateOpen] = useState(false);
+  const [poImportOpen, setPoImportOpen] = useState(false);
   // Id of the PO being edited (reuses the create dialog in edit mode).
   const [editPoId, setEditPoId] = useState<string | null>(null);
   // When multi-shop, we open a Sheet so the user can pick the destination
@@ -2767,10 +2884,18 @@ function PurchaseOrdersTab(): JSX.Element {
   return (
     <>
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-end gap-2 mb-1">
+        <Button variant="outline" onClick={() => setPoImportOpen(true)} className="self-start sm:self-auto">
+          <Download className="h-4 w-4" /> Import POs
+        </Button>
         <Button onClick={() => setCreateOpen(true)} className="self-start sm:self-auto">
           <Plus className="h-4 w-4" /> Create PO
         </Button>
       </div>
+      <BulkImportModal
+        open={poImportOpen}
+        onClose={() => setPoImportOpen(false)}
+        variant="purchase-orders"
+      />
       <TableToolbar
         query={search}
         onQueryChange={setSearch}
@@ -3506,6 +3631,9 @@ export function AddItemDialog({
     makingChargePct: '',
     makingPerGramRupees: '',
     gender: '' as '' | 'MEN' | 'WOMEN',
+    // HSN code + GST rate (%) for tax reporting. Rate defaults to 3% (gold).
+    hsnCode: '',
+    gstRatePct: '3',
   });
   // Images and publish-to-website live alongside the form but outside the
   // text/select state object so the upload UI can update images without
@@ -3666,6 +3794,8 @@ export function AddItemDialog({
         hallmarkRef: form.hallmarkRef.trim() || null,
         costPricePaise,
         sellingPricePaise,
+        hsnCode: form.hsnCode.trim() || null,
+        gstRateBps: Math.round(parseFloat(form.gstRatePct || '3') * 100),
         makingChargeBps: making.makingChargeBps,
         makingChargeMode: making.makingChargeMode,
         makingChargePerGramPaise: making.makingChargePerGramPaise,
@@ -3737,6 +3867,8 @@ export function AddItemDialog({
                       makingChargePct: it.makingChargeBps ? String(it.makingChargeBps / 100) : '',
                       makingPerGramRupees: '',
                       gender: (it.gender ?? '') as '' | 'MEN' | 'WOMEN',
+                      hsnCode: it.hsnCode ?? '',
+                      gstRatePct: String((it.gstRateBps ?? 300) / 100),
                     });
                     setImages(it.images ?? []);
                     toast.success(`Copied details from ${it.sku}`);
@@ -4006,6 +4138,32 @@ export function AddItemDialog({
                 />
               </Field>
             </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <Field label="HSN code">
+                <input
+                  value={form.hsnCode}
+                  onChange={(e) => setForm({ ...form, hsnCode: e.target.value })}
+                  className={fieldCls}
+                  placeholder="e.g. 7113"
+                  inputMode="numeric"
+                />
+                <p className="mt-1 text-[11px] text-ink-500">
+                  Shown HSN-wise in GST reports when this piece is sold.
+                </p>
+              </Field>
+              <Field label="GST rate (%)">
+                <input
+                  type="number"
+                  step="0.01"
+                  min={0}
+                  max={28}
+                  value={form.gstRatePct}
+                  onChange={(e) => setForm({ ...form, gstRatePct: e.target.value })}
+                  className={fieldCls}
+                />
+                <p className="mt-1 text-[11px] text-ink-500">Default 3% for gold/silver jewellery.</p>
+              </Field>
+            </div>
             <Field label="Gender">
               <select
                 value={form.gender}
@@ -4224,6 +4382,8 @@ export function EditItemDialog({
     makingPerGramRupees:
       item.makingChargePerGramPaise != null ? String(item.makingChargePerGramPaise / 100) : '',
     gender: ((item.gender as 'MEN' | 'WOMEN' | null) ?? '') as '' | 'MEN' | 'WOMEN',
+    hsnCode: (item as Item & { hsnCode?: string | null }).hsnCode ?? '',
+    gstRatePct: String(((item as Item & { gstRateBps?: number }).gstRateBps ?? 300) / 100),
   });
   const [images, setImages] = useState<string[]>(item.images ?? []);
   const [collectionIds, setCollectionIds] = useState<string[]>(itemExt.collectionIds ?? []);
@@ -4260,6 +4420,8 @@ export function EditItemDialog({
       makingPerGramRupees:
         item.makingChargePerGramPaise != null ? String(item.makingChargePerGramPaise / 100) : '',
       gender: ((item.gender as 'MEN' | 'WOMEN' | null) ?? '') as '' | 'MEN' | 'WOMEN',
+      hsnCode: (item as Item & { hsnCode?: string | null }).hsnCode ?? '',
+      gstRatePct: String(((item as Item & { gstRateBps?: number }).gstRateBps ?? 300) / 100),
     });
     setImages(item.images ?? []);
     setCollectionIds(itemExt.collectionIds ?? []);
@@ -4349,6 +4511,8 @@ export function EditItemDialog({
           hallmarkRef: form.hallmarkRef.trim() || null,
           costPricePaise,
           sellingPricePaise,
+          hsnCode: form.hsnCode.trim() || null,
+          gstRateBps: Math.round(parseFloat(form.gstRatePct || '3') * 100),
           makingChargeBps: making.makingChargeBps,
           makingChargeMode: making.makingChargeMode,
           makingChargePerGramPaise: making.makingChargePerGramPaise,
@@ -4580,6 +4744,32 @@ export function EditItemDialog({
                   className={fieldCls}
                   placeholder="optional"
                 />
+              </Field>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <Field label="HSN code">
+                <input
+                  value={form.hsnCode}
+                  onChange={(e) => setForm({ ...form, hsnCode: e.target.value })}
+                  className={fieldCls}
+                  placeholder="e.g. 7113"
+                  inputMode="numeric"
+                />
+                <p className="mt-1 text-[11px] text-ink-500">
+                  Shown HSN-wise in GST reports when this piece is sold.
+                </p>
+              </Field>
+              <Field label="GST rate (%)">
+                <input
+                  type="number"
+                  step="0.01"
+                  min={0}
+                  max={28}
+                  value={form.gstRatePct}
+                  onChange={(e) => setForm({ ...form, gstRatePct: e.target.value })}
+                  className={fieldCls}
+                />
+                <p className="mt-1 text-[11px] text-ink-500">Default 3% for gold/silver jewellery.</p>
               </Field>
             </div>
             <Field label="Gender">
@@ -5143,6 +5333,9 @@ interface POLine {
   qty: string;
   /** Fixed selling price in rupees; copied onto the Item on receive. */
   sellingPriceRupees?: string;
+  /** HSN code + GST rate (%) captured at PO time; copied onto the Item on receive. */
+  hsnCode?: string;
+  gstRatePct?: string;
   /** When true, the linked storefront Product is published on receive. */
   publishToStorefront?: boolean;
   /** UI-only: metal purchase rate ₹/g used to auto-compute costRupees. Not sent to server. */
@@ -5785,6 +5978,22 @@ function POLineEditor({
             </div>
           </div>
 
+          {/* HSN + GST rate — copied onto the Item on receive; feed the GST report. */}
+          <div className="grid grid-cols-2 gap-2">
+            <div>
+              <span className="text-[11px] uppercase tracking-wider text-ink-500 block mb-1">HSN code</span>
+              <input value={line.hsnCode ?? ''}
+                onChange={(e) => onPatch(index, { hsnCode: e.target.value })}
+                className={fieldCls} placeholder="e.g. 7113" inputMode="numeric" />
+            </div>
+            <div>
+              <span className="text-[11px] uppercase tracking-wider text-ink-500 block mb-1">GST rate (%)</span>
+              <input type="number" step="0.01" min="0" max="28" value={line.gstRatePct ?? ''}
+                onChange={(e) => onPatch(index, { gstRatePct: e.target.value })}
+                className={fieldCls} placeholder="3" />
+            </div>
+          </div>
+
           {/* Gender — copied onto the Item on receive; powers the storefront filter. */}
           <div>
             <span className="text-[11px] uppercase tracking-wider text-ink-500 block mb-1">Gender</span>
@@ -5869,6 +6078,8 @@ function poRowToLines(po: PurchaseOrderRow): POLine[] {
         : '',
     qty: String(it.quantity ?? 1),
     sellingPriceRupees: it.sellingPricePaise != null ? String(it.sellingPricePaise / 100) : '',
+    hsnCode: it.hsnCode ?? '',
+    gstRatePct: it.gstRateBps != null ? String(it.gstRateBps / 100) : '',
     publishToStorefront: it.publishToStorefront ?? false,
     name: it.name ?? undefined,
     description: it.description ?? undefined,
@@ -6036,6 +6247,11 @@ function POForm({ editPo, onClose }: { editPo: PurchaseOrderRow | null; onClose:
         sellingPricePaise:
           l.sellingPriceRupees && l.sellingPriceRupees.trim()
             ? Math.round(parseFloat(l.sellingPriceRupees) * 100)
+            : undefined,
+        hsnCode: l.hsnCode?.trim() || null,
+        gstRateBps:
+          l.gstRatePct && l.gstRatePct.trim()
+            ? Math.round(parseFloat(l.gstRatePct) * 100)
             : undefined,
         publishToStorefront: l.publishToStorefront ?? false,
         quantity: Math.max(1, parseInt(l.qty, 10) || 1),

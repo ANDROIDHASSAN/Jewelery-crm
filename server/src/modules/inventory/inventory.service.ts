@@ -44,6 +44,8 @@ type ItemForMirror = {
   costPricePaise: number;
   sellingPricePaise: number | null;
   gender: string | null;
+  hsnCode: string | null;
+  gstRateBps: number;
 };
 
 // Resolve the storefront Product price fields from an inventory Item. A fixed
@@ -124,6 +126,9 @@ async function createProductMirror(
       fixedPricePaise: pricing.fixedPricePaise,
       stoneChargePaise,
       gender: item.gender ?? null,
+      // Mirror HSN + GST rate so e-commerce order lines summarise by HSN too.
+      hsnCode: item.hsnCode ?? null,
+      gstRateBps: item.gstRateBps ?? 300,
       // Size variants (made-to-order). When present the storefront renders a
       // size selector and prices each size off the base by weight.
       ...(sizes && sizes.length > 0 ? { sizes } : {}),
@@ -162,6 +167,15 @@ export async function listItems(opts: { shopId?: string; categoryId?: string; cu
       // dialog's "Publish on storefront" checkbox reflects reality instead of
       // always defaulting to false (it's a Product column, not an Item one).
       storefrontProduct: { select: { isPublished: true, sizes: true } },
+      // Effective Season Sale offer (from the item's active campaign) so the
+      // POS counter can strike the same price the storefront shows.
+      saleItem: {
+        select: {
+          campaign: {
+            select: { id: true, discountType: true, discountBps: true, discountFlatPaise: true, isActive: true },
+          },
+        },
+      },
     },
   });
   const hasMore = items.length > take;
@@ -173,13 +187,35 @@ export async function listItems(opts: { shopId?: string; categoryId?: string; cu
 // client form can round-trip it directly (it submits collectionIds back), and
 // surface `isPublished` from the linked storefront Product (null when the piece
 // was never mirrored) so the Edit dialog can show the live publish state.
+type SaleItemWithCampaign = {
+  campaign?: {
+    id: string;
+    discountType: 'PERCENT' | 'FLAT' | 'BOGO' | 'FIXED_PRICE';
+    discountBps: number;
+    discountFlatPaise: number;
+    isActive: boolean;
+  } | null;
+} | null;
+
+// Resolve an item's effective Season Sale offer from its campaign. Null when the
+// item isn't in a campaign or the campaign is paused, so callers treat it as
+// "not on sale". campaignId lets the POS pair BOGO within a campaign.
+function resolveItemSale(
+  si: SaleItemWithCampaign,
+): { type: 'PERCENT' | 'FLAT' | 'BOGO' | 'FIXED_PRICE'; discountBps: number; discountFlatPaise: number; campaignId: string } | null {
+  const c = si?.campaign;
+  if (!c || !c.isActive) return null;
+  return { type: c.discountType, discountBps: c.discountBps, discountFlatPaise: c.discountFlatPaise, campaignId: c.id };
+}
+
 function withCollectionIds<
   T extends {
     collections: { collectionId: string }[];
     storefrontProduct?: { isPublished: boolean; sizes?: unknown } | null;
+    saleItem?: SaleItemWithCampaign;
   },
 >(item: T) {
-  const { storefrontProduct, ...rest } = item;
+  const { storefrontProduct, saleItem, ...rest } = item;
   return {
     ...rest,
     collectionIds: item.collections.map((c) => c.collectionId),
@@ -187,6 +223,9 @@ function withCollectionIds<
     // Size variants live on the linked Product; surface them so the Edit Item
     // dialog can round-trip them (it submits `sizes` back). Null when unsized.
     sizes: parseItemSizes(storefrontProduct?.sizes),
+    // Effective Season Sale offer for this item (null = not on sale). Used by
+    // the POS counter to strike the sale price.
+    sale: resolveItemSale(saleItem ?? null),
   };
 }
 
@@ -213,6 +252,13 @@ export async function getItem(id: string) {
       diamonds: true,
       collections: { select: { collectionId: true } },
       storefrontProduct: { select: { isPublished: true, sizes: true } },
+      saleItem: {
+        select: {
+          campaign: {
+            select: { id: true, discountType: true, discountBps: true, discountFlatPaise: true, isActive: true },
+          },
+        },
+      },
     },
   });
   if (!item) throw new NotFoundError();
@@ -403,6 +449,10 @@ export async function updateItem(id: string, patch: Partial<ItemInput>, performe
   if (itemPatch.weightMg !== undefined) mirrorPatch.weightMg = itemPatch.weightMg;
   if (itemPatch.purityCaratX100 !== undefined) mirrorPatch.purityCaratX100 = itemPatch.purityCaratX100;
   if (itemPatch.gender !== undefined) mirrorPatch.gender = itemPatch.gender;
+  // Keep the storefront mirror's HSN + GST rate in lockstep so e-commerce GST
+  // reporting matches the item.
+  if (itemPatch.hsnCode !== undefined) mirrorPatch.hsnCode = itemPatch.hsnCode;
+  if (itemPatch.gstRateBps !== undefined) mirrorPatch.gstRateBps = itemPatch.gstRateBps;
   if (itemPatch.makingChargeBps !== undefined && itemPatch.makingChargeBps !== null) {
     mirrorPatch.makingChargeBps = itemPatch.makingChargeBps;
   }
@@ -1436,6 +1486,8 @@ function poLineCreateData(i: PurchaseOrderCreate['items'][number]) {
     costPaise: i.costPaise,
     makingChargeBps: i.makingChargeBps ?? null,
     sellingPricePaise: i.sellingPricePaise ?? null,
+    hsnCode: i.hsnCode ?? null,
+    gstRateBps: i.gstRateBps ?? null,
     publishToStorefront: i.publishToStorefront ?? false,
     quantity: i.quantity ?? 1,
     // Full item-detail fields
@@ -1644,6 +1696,9 @@ export async function receivePurchaseOrder(
             makingChargePerGramPaise: line.makingChargePerGramPaise ?? null,
             // Fixed selling price from the PO line, if set at ordering time.
             sellingPricePaise: line.sellingPricePaise ?? null,
+            // HSN + GST rate captured on the PO line (default 3% when unset).
+            hsnCode: line.hsnCode ?? null,
+            gstRateBps: line.gstRateBps ?? 300,
             hallmarkStatus: (line.hallmarkStatus ?? 'PENDING') as 'PENDING' | 'SUBMITTED' | 'CERTIFIED' | 'EXEMPT',
             hallmarkRef: line.hallmarkRef ?? null,
             status: 'IN_STOCK',
