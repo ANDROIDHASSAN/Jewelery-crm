@@ -125,6 +125,51 @@ describe('computeBillTotals — old-gold exchange', () => {
   });
 });
 
+describe('computeBillTotals — per-line GST rate', () => {
+  it('defaults to 3% when gstRateBps is omitted (legacy behaviour)', () => {
+    const gold = computeMetalValuePaise(10_000, 2200, 6_50_000);
+    const r = computeBillTotals({
+      lines: [{ goldValuePaise: gold, makingPaise: 0, stoneChargePaise: 0 }],
+      shopStateCode: '06',
+    });
+    // 3% total, split intra as CGST+SGST that add back to the line GST exactly.
+    expect(r.cgstPaise + r.sgstPaise).toBe(Math.round((gold * 300) / 10_000));
+    expect(r.lineCgstPaise[0]! + r.lineSgstPaise[0]!).toBe(r.cgstPaise + r.sgstPaise);
+  });
+
+  it('applies each line its OWN rate and reports a per-line breakdown', () => {
+    const g1 = computeMetalValuePaise(10_000, 2200, 6_50_000); // 3% line
+    const g2 = 10_00_000; // ₹10,000 taxable at 5%
+    const r = computeBillTotals({
+      lines: [
+        { goldValuePaise: g1, makingPaise: 0, stoneChargePaise: 0, gstRateBps: 300 },
+        { goldValuePaise: g2, makingPaise: 0, stoneChargePaise: 0, gstRateBps: 500 },
+      ],
+      shopStateCode: '06',
+    });
+    // Line 0 taxed at 3%, line 1 at 5% — computed independently, then summed.
+    const line0Gst = Math.round((g1 * 300) / 10_000);
+    const line1Gst = Math.round((g2 * 500) / 10_000);
+    expect(r.lineCgstPaise[0]! + r.lineSgstPaise[0]!).toBe(line0Gst);
+    expect(r.lineCgstPaise[1]! + r.lineSgstPaise[1]!).toBe(line1Gst);
+    expect(r.cgstPaise + r.sgstPaise).toBe(line0Gst + line1Gst);
+    expect(r.igstPaise).toBe(0);
+  });
+
+  it('routes a per-line rate to IGST inter-state', () => {
+    const g = 10_00_000;
+    const r = computeBillTotals({
+      lines: [{ goldValuePaise: g, makingPaise: 0, stoneChargePaise: 0, gstRateBps: 500 }],
+      shopStateCode: '06',
+      customerStateCode: '29',
+    });
+    expect(r.cgstPaise).toBe(0);
+    expect(r.sgstPaise).toBe(0);
+    expect(r.igstPaise).toBe(Math.round((g * 500) / 10_000));
+    expect(r.lineIgstPaise[0]!).toBe(r.igstPaise);
+  });
+});
+
 describe('computeBillTotals — silver fix', () => {
   it('values silver (purity=0) at weight × rate without carat scaling', () => {
     // 50 g silver at ₹95/g (= 9500 paise/g) = ₹4,750 = 475,000 paise
