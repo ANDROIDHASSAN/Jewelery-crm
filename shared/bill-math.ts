@@ -21,7 +21,9 @@
 //     up a fresh sale. (The earlier client UI was applying it to every
 //     bill as a separate line — that's the divergence we're killing.)
 
-import { CGST_RATE_BPS, SGST_RATE_BPS, IGST_RATE_BPS } from './constants.js';
+// TOTAL_GST_BPS (3%) is defined locally below; per-line rates now come from
+// each line's gstRateBps, so the flat CGST/SGST/IGST constants are no longer
+// imported here.
 
 // ── Money primitives (identical to client/src/lib/money.ts + server/src/lib/money.ts).
 // Duplicated here so this module has no cross-runtime imports.
@@ -113,6 +115,12 @@ export interface BillMathLine {
   makingPaise: number;
   /** Stone / diamond charges added flat to the line, paise. */
   stoneChargePaise: number;
+  /**
+   * GST rate for this line in basis points. Defaults to 3% (300) when omitted,
+   * so callers that don't yet pass a per-item rate keep the historical flat-3%
+   * behaviour. Set from the item's `gstRateBps` at sale time.
+   */
+  gstRateBps?: number;
 }
 
 export interface OldGoldInput {
@@ -148,6 +156,11 @@ export interface BillMathResult {
   lineTaxablePaise: number[];
   /** Per-line full value (gold + making + stone), same index order as input.lines. */
   linePaise: number[];
+  /** Per-line GST breakdown, same index order as input.lines. Persisted onto
+   *  each BillLine so the GST report can summarise by HSN with exact tax. */
+  lineCgstPaise: number[];
+  lineSgstPaise: number[];
+  lineIgstPaise: number[];
   cgstPaise: number;
   sgstPaise: number;
   igstPaise: number;
@@ -194,18 +207,31 @@ export function computeBillTotals(input: BillMathInput): BillMathResult {
     return Math.max(0, linePaise - allocatedExchange);
   });
 
-  // GST per line, then sum. Banker's-rounded per-line so totals match
-  // line-by-line rounding on the receipt.
+  // GST per line at the line's OWN rate (default 3%), then sum. Banker's-rounded
+  // per-line so totals match line-by-line rounding on the receipt. CGST/SGST
+  // split the line's total GST so they always add back to it exactly (an odd
+  // total gives the extra paise to SGST), matching splitTaxByPlaceOfSupply.
   const intra = isIntraStateShared(input.shopStateCode, input.customerStateCode);
-  let cgstPaise = 0;
-  let sgstPaise = 0;
-  let igstPaise = 0;
-  if (intra) {
-    cgstPaise = sumPaiseShared(lineTaxablePaise.map((t) => applyBpsShared(t, CGST_RATE_BPS)));
-    sgstPaise = sumPaiseShared(lineTaxablePaise.map((t) => applyBpsShared(t, SGST_RATE_BPS)));
-  } else {
-    igstPaise = sumPaiseShared(lineTaxablePaise.map((t) => applyBpsShared(t, IGST_RATE_BPS)));
+  const lineCgstPaise: number[] = [];
+  const lineSgstPaise: number[] = [];
+  const lineIgstPaise: number[] = [];
+  for (let i = 0; i < lineTaxablePaise.length; i++) {
+    const rate = input.lines[i]?.gstRateBps ?? TOTAL_GST_BPS;
+    const lineGst = applyBpsShared(lineTaxablePaise[i]!, rate);
+    if (intra) {
+      const cgst = Math.floor(lineGst / 2);
+      lineCgstPaise.push(cgst);
+      lineSgstPaise.push(lineGst - cgst);
+      lineIgstPaise.push(0);
+    } else {
+      lineCgstPaise.push(0);
+      lineSgstPaise.push(0);
+      lineIgstPaise.push(lineGst);
+    }
   }
+  const cgstPaise = sumPaiseShared(lineCgstPaise);
+  const sgstPaise = sumPaiseShared(lineSgstPaise);
+  const igstPaise = sumPaiseShared(lineIgstPaise);
 
   const discountPaise = Math.max(0, input.discountPaise ?? 0);
   const loyaltyPaise = Math.max(0, input.loyaltyPaise ?? 0);
@@ -228,6 +254,9 @@ export function computeBillTotals(input: BillMathInput): BillMathResult {
     oldGoldValuePaise,
     lineTaxablePaise,
     linePaise: lineValues,
+    lineCgstPaise,
+    lineSgstPaise,
+    lineIgstPaise,
     cgstPaise,
     sgstPaise,
     igstPaise,

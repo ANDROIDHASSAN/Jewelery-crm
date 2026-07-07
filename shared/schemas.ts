@@ -25,6 +25,24 @@ export const CuidSchema = z.string().min(20).max(40); // CUIDs are 25 chars; all
 export const PaiseSchema = z.number().int().nonnegative();
 export const MgSchema = z.number().int().nonnegative();
 export const BpsSchema = z.number().int().min(0).max(10_000);
+
+// HSN/SAC code for GST filing — a 4–8 digit code linked to an item and
+// snapshotted onto each sale line so the GST report can produce an HSN-wise
+// (GSTR-1) summary. Optional at data-entry time; an empty string is coerced to
+// null so a blank field round-trips cleanly.
+export const HsnCodeSchema = z.preprocess(
+  (v) => (typeof v === 'string' && v.trim() === '' ? null : v),
+  z
+    .string()
+    .trim()
+    .regex(/^\d{4,8}$/, 'HSN must be 4–8 digits')
+    .nullable()
+    .optional(),
+);
+
+// Per-item GST rate in basis points. Default 300 = 3%, the standard rate on
+// gold/silver jewellery (HSN 7113). Capped at 28% (2800 bps), the top GST slab.
+export const GstRateBpsSchema = z.number().int().min(0).max(2800);
 // Purity stored as carat × 100 (gold) or millesimal fineness (silver/platinum).
 // PURITY_VALUES is the curated quick-pick list (24K/22K/18K/14K/Silver/Pt950)
 // that drives presets in dropdowns and the bulk-import parser; the validator
@@ -329,6 +347,11 @@ export const ItemSchema = z.object({
   // weight×rate (gold/silver) or basePrice (non-precious), as before. Cost
   // price stays internal (COGS / analytics) and is never shown to customers.
   sellingPricePaise: PaiseSchema.optional().nullable(),
+  // HSN code + GST rate for tax filing. Set once at intake (Add item or PO) and
+  // snapshotted onto each sale line so GST reports summarise by HSN. gstRateBps
+  // defaults to 3% — the standard jewellery rate.
+  hsnCode: HsnCodeSchema,
+  gstRateBps: GstRateBpsSchema.default(300),
   makingChargeBps: BpsSchema.optional().nullable(),
   // Item-level making-charge override. When makingChargeMode is null the item
   // inherits its category's mode + rate. PER_GRAM uses makingChargePerGramPaise.
@@ -562,6 +585,10 @@ export const PurchaseOrderItemInputSchema = z.object({
   makingChargeBps: BpsSchema.optional().nullable(),
   // Fixed selling price (paise) applied to the Item on receive; null = not set.
   sellingPricePaise: PaiseSchema.optional().nullable(),
+  // HSN code + GST rate captured on the PO line; copied onto the Item created on
+  // receive so tax classification is set at intake. gstRateBps defaults to 3%.
+  hsnCode: HsnCodeSchema,
+  gstRateBps: GstRateBpsSchema.optional().nullable(),
   // When true, the linked storefront Product is published when the PO is received.
   publishToStorefront: z.boolean().default(false),
   // qty > 1 → lot item on receive (isSerialized=false, quantityOnHand=quantity).
@@ -719,6 +746,16 @@ export const ExpenseInputSchema = z.object({
 });
 
 export const ExpenseUpdateSchema = ExpenseInputSchema.partial();
+
+// User-managed expense ledgers (heads). Name is a short label; classification
+// drives the default REVENUE/CAPITAL split when the head is picked in the
+// Record-expense form.
+export const ExpenseCategoryInputSchema = z.object({
+  name: z.string().trim().min(1).max(60),
+  classification: ExpenseClassificationSchema.default('REVENUE'),
+});
+
+export const ExpenseCategoryUpdateSchema = ExpenseCategoryInputSchema.partial();
 
 export const GoldLoanSchema = z.object({
   id: CuidSchema,

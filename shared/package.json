@@ -10,7 +10,8 @@
     "./schemas": "./schemas.ts",
     "./types": "./types.ts",
     "./constants": "./constants.ts",
-    "./bill-math": "./bill-math.ts"
+    "./bill-math": "./bill-math.ts",
+    "./sale": "./sale.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit"

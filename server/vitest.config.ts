@@ -22,6 +22,7 @@ export default defineConfig({
       '@goldos/shared/types': resolve(here, '../shared/types.ts'),
       '@goldos/shared/defaults': resolve(here, '../shared/defaults.ts'),
       '@goldos/shared/bill-math': resolve(here, '../shared/bill-math.ts'),
+      '@goldos/shared/sale': resolve(here, '../shared/sale.ts'),
       '@goldos/shared': resolve(here, '../shared/index.ts'),
     },
   },
