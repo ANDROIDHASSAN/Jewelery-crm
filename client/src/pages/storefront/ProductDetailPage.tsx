@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { Fragment, useState } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
 import { Heart, Truck, RotateCcw, RefreshCw, Sparkles, Award, Banknote, ChevronDown, ChevronLeft, ChevronRight, Minus, Plus, X } from 'lucide-react';
 import * as Dialog from '@radix-ui/react-dialog';
@@ -585,8 +585,14 @@ export function ProductDetailPage(): JSX.Element {
                     <dd className="text-ink-800 tabular-nums">{(product.makingChargeBps / 100).toFixed(2)}%</dd>
                   </>
                 )}
-                <dt className="text-ink-500">Made in</dt>
-                <dd className="text-ink-800">Gurugram, Haryana</dd>
+                {/* Custom "Details & Dimensions" spec rows captured at intake
+                    (Add item / PO), shown only when the item carries them. */}
+                {(product.specs ?? []).map((s, i) => (
+                  <Fragment key={`${s.label}-${i}`}>
+                    <dt className="text-ink-500">{s.label}</dt>
+                    <dd className="text-ink-800">{s.value}</dd>
+                  </Fragment>
+                ))}
               </dl>
               {!nonPrecious && (
                 <p className="mt-4 text-sm text-ink-600 leading-relaxed">

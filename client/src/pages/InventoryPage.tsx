@@ -3642,6 +3642,7 @@ export function AddItemDialog({
   const [collectionIds, setCollectionIds] = useState<string[]>([]);
   const [diamonds, setDiamonds] = useState<DiamondRow[]>([]);
   const [sizes, setSizes] = useState<SizeRow[]>([]);
+  const [specs, setSpecs] = useState<SpecRow[]>([]);
   const [publishToWebsite, setPublishToWebsite] = useState(true);
   const [uploading, setUploading] = useState<{ name: string; progress: number }[]>([]);
   const [calcSellTotal, setCalcSellTotal] = useState(0);
@@ -3809,6 +3810,7 @@ export function AddItemDialog({
         collectionIds,
         diamonds: diamondRowsToInput(diamonds),
         sizes: sizeRowsToInput(sizes),
+        specs: specRowsToInput(specs),
       }).unwrap();
       const newSku = form.sku.trim();
       const stockLabel = isSerialized ? '' : ` (${quantityOnHand} in stock)`;
@@ -4255,6 +4257,10 @@ export function AddItemDialog({
               />
             </Field>
 
+            <Field label="Details & Dimensions (optional)">
+              <SpecsEditor rows={specs} onChange={setSpecs} />
+            </Field>
+
             {calcSellTotal > 0 && diamonds.length > 0 && (() => {
               const diamondSell = diamonds.reduce((s, r) => s + (parseFloat(r.sellingPriceRupees) || 0), 0);
               return diamondSell > 0 ? (
@@ -4363,6 +4369,7 @@ export function EditItemDialog({
     collectionIds?: string[];
     diamonds?: Array<{ shape?: string | null; caratWeightX100?: number; cut?: string | null; clarity?: string | null; color?: string | null; count?: number; costPaise?: number; sellingPricePaise?: number | null; purchaseRatePaise?: number | null; sellRatePaise?: number | null }>;
     sizes?: { label: string; weightMg: number }[] | null;
+    specs?: { label: string; value: string }[] | null;
   };
   const [form, setForm] = useState({
     name: item.name ?? '',
@@ -4389,6 +4396,7 @@ export function EditItemDialog({
   const [collectionIds, setCollectionIds] = useState<string[]>(itemExt.collectionIds ?? []);
   const [diamonds, setDiamonds] = useState<DiamondRow[]>(dbDiamondsToRows(itemExt.diamonds));
   const [sizes, setSizes] = useState<SizeRow[]>(dbSizesToRows(itemExt.sizes));
+  const [specs, setSpecs] = useState<SpecRow[]>(dbSpecsToRows(itemExt.specs));
   const [calcSellTotal, setCalcSellTotal] = useState(0);
   const [publishToWebsite, setPublishToWebsite] = useState<boolean>(
     (item as Item & { isPublished?: boolean }).isPublished ?? false,
@@ -4427,6 +4435,7 @@ export function EditItemDialog({
     setCollectionIds(itemExt.collectionIds ?? []);
     setDiamonds(dbDiamondsToRows(itemExt.diamonds));
     setSizes(dbSizesToRows(itemExt.sizes));
+    setSpecs(dbSpecsToRows(itemExt.specs));
     setPublishToWebsite((item as Item & { isPublished?: boolean }).isPublished ?? false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, item.id]);
@@ -4520,6 +4529,7 @@ export function EditItemDialog({
           collectionIds,
           diamonds: diamondRowsToInput(diamonds),
           sizes: sizeRowsToInput(sizes),
+          specs: specRowsToInput(specs),
           publishToWebsite,
         },
       }).unwrap();
@@ -4863,6 +4873,10 @@ export function EditItemDialog({
                 baseCostRupees={form.costPriceRupees}
                 baseSellRupees={form.sellingPriceRupees}
               />
+            </Field>
+
+            <Field label="Details & Dimensions (optional)">
+              <SpecsEditor rows={specs} onChange={setSpecs} />
             </Field>
 
             {calcSellTotal > 0 && diamonds.length > 0 && (() => {
@@ -5360,6 +5374,8 @@ interface POLine {
   gender?: 'MEN' | 'WOMEN';
   collectionIds?: string[];
   diamonds?: DiamondRow[];
+  /** Custom "Details & Dimensions" spec rows; copied onto the Item on receive. */
+  specs?: SpecRow[];
 }
 
 // Item picker sheet — lets the user pick existing inventory items (by category
@@ -6057,6 +6073,15 @@ function POLineEditor({
               onChange={(rows) => onPatch(index, { diamonds: rows })}
             />
           </div>
+
+          {/* Details & Dimensions */}
+          <div>
+            <span className="text-[11px] uppercase tracking-wider text-ink-500 block mb-1">Details &amp; Dimensions</span>
+            <SpecsEditor
+              rows={line.specs ?? []}
+              onChange={(rows) => onPatch(index, { specs: rows })}
+            />
+          </div>
         </div>
       )}
     </div>
@@ -6094,6 +6119,7 @@ function poRowToLines(po: PurchaseOrderRow): POLine[] {
     gender: it.gender ?? undefined,
     collectionIds: it.collectionIds ?? [],
     diamonds: dbDiamondsToRows(it.diamondsJson),
+    specs: dbSpecsToRows(it.specs),
   }));
 }
 
@@ -6269,6 +6295,7 @@ function POForm({ editPo, onClose }: { editPo: PurchaseOrderRow | null; onClose:
         gender: l.gender ?? undefined,
         collectionIds: l.collectionIds ?? [],
         diamonds: l.diamonds ? diamondRowsToInput(l.diamonds) : [],
+        specs: l.specs ? specRowsToInput(l.specs) : [],
       };
     });
     if (items.some((i) => !i.itemSku || !Number.isFinite(i.weightMg) || i.weightMg <= 0 || !Number.isFinite(i.costPaise) || i.costPaise <= 0)) {
@@ -6749,6 +6776,82 @@ function SizesEditor({
         className="inline-flex items-center gap-1.5 text-xs text-brand-700 hover:text-brand-800 hover:underline"
       >
         <Plus className="h-3.5 w-3.5" /> Add size
+      </button>
+    </div>
+  );
+}
+
+// ── Details & Dimensions specs ───────────────────────────────────────────────
+// Free-form label/value rows shown on the storefront PDP under "Details &
+// Dimensions" (e.g. Closure / Hoopwire, Length / 1.5 cm, Net Quantity / 1 Pair).
+// One SKU carries any number. Mirrored onto the linked storefront Product.
+export type SpecRow = { label: string; value: string };
+
+export function dbSpecsToRows(
+  specs: { label: string; value: string }[] | null | undefined,
+): SpecRow[] {
+  return (specs ?? []).map((s) => ({ label: s.label, value: s.value }));
+}
+
+// Form rows → API shape. Drops rows missing a label or a value.
+export function specRowsToInput(rows: SpecRow[]): { label: string; value: string }[] {
+  return rows
+    .map((r) => ({ label: r.label.trim(), value: r.value.trim() }))
+    .filter((r) => r.label.length > 0 && r.value.length > 0);
+}
+
+// Spec editor — "Add specification" rows of {label, value}. Used by both the
+// Add and Edit Item dialogs.
+function SpecsEditor({
+  rows,
+  onChange,
+}: {
+  rows: SpecRow[];
+  onChange: (rows: SpecRow[]) => void;
+}): JSX.Element {
+  const set = (i: number, patch: Partial<SpecRow>): void =>
+    onChange(rows.map((r, idx) => (idx === i ? { ...r, ...patch } : r)));
+  return (
+    <div className="space-y-2">
+      <p className="text-[11px] text-ink-500">
+        Shown on the storefront product page under “Details &amp; Dimensions” when the
+        item is published. Add any attribute — e.g. Closure / Hoopwire, Length / 1.5 cm,
+        Net Quantity / 1 Pair.
+      </p>
+      {rows.length === 0 && (
+        <p className="text-[11px] text-ink-400 italic">
+          No specifications yet. Click “Add specification” to add rows.
+        </p>
+      )}
+      {rows.map((r, i) => (
+        <div key={i} className="grid grid-cols-[1fr_1fr_auto] gap-2 items-center">
+          <input
+            value={r.label}
+            onChange={(e) => set(i, { label: e.target.value })}
+            placeholder="Label (e.g. Closure)"
+            className={`${fieldCls} text-xs`}
+          />
+          <input
+            value={r.value}
+            onChange={(e) => set(i, { value: e.target.value })}
+            placeholder="Value (e.g. Hoopwire)"
+            className={`${fieldCls} text-xs`}
+          />
+          <button
+            type="button"
+            onClick={() => onChange(rows.filter((_, idx) => idx !== i))}
+            className="text-[11px] text-ink-500 hover:text-danger-700 px-1"
+          >
+            Remove
+          </button>
+        </div>
+      ))}
+      <button
+        type="button"
+        onClick={() => onChange([...rows, { label: '', value: '' }])}
+        className="inline-flex items-center gap-1.5 text-xs text-brand-700 hover:text-brand-800 hover:underline"
+      >
+        <Plus className="h-3.5 w-3.5" /> Add specification
       </button>
     </div>
   );

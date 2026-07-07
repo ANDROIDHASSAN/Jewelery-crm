@@ -58,6 +58,12 @@ export interface PublicProduct {
    * single-weight piece priced off `weightMg`.
    */
   sizes?: { label: string; weightMg: number }[] | null;
+  /**
+   * Custom "Details & Dimensions" spec rows mirrored from the inventory item —
+   * rendered under the PDP Specification (e.g. Closure/Hoopwire, Length/1.5 cm,
+   * Net Quantity/1 Pair). Null/empty = none.
+   */
+  specs?: { label: string; value: string }[] | null;
   categoryId: string;
   /** Target audience — drives the storefront "Shop by Gender" filter. Null = unspecified/unisex. */
   gender: 'MEN' | 'WOMEN' | null;

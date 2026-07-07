@@ -130,6 +130,7 @@ export interface PurchaseOrderRow {
       purchaseRatePaise?: number | null;
       sellRatePaise?: number | null;
     }>;
+    specs: Array<{ label: string; value: string }>;
   }>;
 }
 
