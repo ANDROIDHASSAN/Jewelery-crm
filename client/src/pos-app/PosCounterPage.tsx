@@ -63,6 +63,8 @@ import { enqueueOffline, isReallyOnline } from '@/features/pos/offline';
 import type { Item } from '@goldos/shared/types';
 import type { PaymentMode } from '@goldos/shared/constants';
 import { computeBillTotals, taxableFromInclusivePaise } from '@goldos/shared/bill-math';
+import { applySaleToPrePaise } from '@goldos/shared/sale';
+import type { ItemSaleOffer } from '@/features/inventory/inventoryApi';
 
 // ---------------------------------------------------------------------------
 // Types & helpers (mirror PosPage so swapping the surface is risk-free)
@@ -84,6 +86,9 @@ interface CartLine {
   goldValuePaise: number;
   makingPaise: number;
   linePaise: number;
+  /** Effective Season Sale offer for this item (null = not on sale). Drives the
+   *  struck price + badge and the discount applied to the bill total. */
+  sale?: ItemSaleOffer | null;
 }
 
 interface CustomerInfo {
@@ -296,9 +301,45 @@ function PosBillingScreen(): JSX.Element {
   // and subtracted discount/loyalty from the taxable base (server doesn't),
   // which meant the customer was sometimes told a different total than the
   // receipt then printed.
-  const subtotal = lines.reduce((s, l) => s + l.goldValuePaise, 0);
-  const making = lines.reduce((s, l) => s + l.makingPaise, 0);
-  const stone = lines.reduce((s, l) => s + l.stoneChargePaise, 0);
+  // Apply each line's Season Sale offer to its pre-GST components so the cashier
+  // preview matches the server's charged total (shared/sale.ts). PERCENT/FLAT
+  // scale the components; BOGO frees the cheaper of each pair within a campaign.
+  const effectiveLines = (() => {
+    const base = lines.map((l) => {
+      const offer = l.sale;
+      if (!offer || offer.type === 'BOGO') {
+        return { gold: l.goldValuePaise, making: l.makingPaise, stone: l.stoneChargePaise };
+      }
+      const sum = l.goldValuePaise + l.makingPaise + l.stoneChargePaise;
+      if (sum <= 0) return { gold: l.goldValuePaise, making: l.makingPaise, stone: l.stoneChargePaise };
+      const factor = applySaleToPrePaise(sum, offer) / sum;
+      return {
+        gold: Math.round(l.goldValuePaise * factor),
+        making: Math.round(l.makingPaise * factor),
+        stone: Math.round(l.stoneChargePaise * factor),
+      };
+    });
+    const bogoGroups = new Map<string, number[]>();
+    lines.forEach((l, i) => {
+      if (l.sale?.type === 'BOGO') {
+        const arr = bogoGroups.get(l.sale.campaignId) ?? [];
+        arr.push(i);
+        bogoGroups.set(l.sale.campaignId, arr);
+      }
+    });
+    for (const idxs of bogoGroups.values()) {
+      const sorted = [...idxs].sort(
+        (a, b) =>
+          base[b]!.gold + base[b]!.making + base[b]!.stone - (base[a]!.gold + base[a]!.making + base[a]!.stone),
+      );
+      for (let k = 1; k < sorted.length; k += 2) base[sorted[k]!] = { gold: 0, making: 0, stone: 0 };
+    }
+    return base;
+  })();
+
+  const subtotal = effectiveLines.reduce((s, l) => s + l.gold, 0);
+  const making = effectiveLines.reduce((s, l) => s + l.making, 0);
+  const stone = effectiveLines.reduce((s, l) => s + l.stone, 0);
 
   const exchangeRate = exchange ? rateForPurity(rates, exchange.purityCaratX100).paise : 0;
 
@@ -318,10 +359,10 @@ function PosBillingScreen(): JSX.Element {
   })();
 
   const totals = computeBillTotals({
-    lines: lines.map((l) => ({
-      goldValuePaise: l.goldValuePaise,
-      makingPaise: l.makingPaise,
-      stoneChargePaise: l.stoneChargePaise,
+    lines: effectiveLines.map((l) => ({
+      goldValuePaise: l.gold,
+      makingPaise: l.making,
+      stoneChargePaise: l.stone,
     })),
     oldGold: exchange && exchange.weightMg > 0
       ? {
@@ -396,6 +437,7 @@ function PosBillingScreen(): JSX.Element {
           goldValuePaise: goldValue,
           makingPaise,
           linePaise: goldValue + makingPaise,
+          sale: (it as Item & { sale?: ItemSaleOffer | null }).sale ?? null,
         },
       ]);
     },
@@ -442,6 +484,7 @@ function PosBillingScreen(): JSX.Element {
                 goldValuePaise: goldValue,
                 makingPaise,
                 linePaise: goldValue + makingPaise + stoneChargePaise,
+                sale: (it as Item & { sale?: ItemSaleOffer | null }).sale ?? null,
               });
             }
           }
@@ -1404,6 +1447,22 @@ function BillAndPaymentColumn(props: BillColumnProps): JSX.Element {
 function BillLineRow({ line, onRemove }: { line: CartLine; onRemove: () => void }): JSX.Element {
   const purityLabel = PURITY_LABEL[line.purityCaratX100] ?? `${line.purityCaratX100 / 100}c`;
   const thumb = cloudinaryThumb(line.imageUrl, 96);
+  // Season Sale badge + struck price. PERCENT/FLAT show the cut price; BOGO shows
+  // just a badge (whether this exact unit is free depends on cart pairing).
+  const offer = line.sale;
+  const saleBadge = offer
+    ? offer.type === 'BOGO'
+      ? 'B1G1'
+      : offer.type === 'FIXED_PRICE'
+        ? `₹${Math.round(offer.discountFlatPaise / 100)}`
+        : offer.type === 'FLAT'
+          ? `₹${Math.round(offer.discountFlatPaise / 100)} off`
+          : `${(offer.discountBps / 100).toLocaleString('en-IN', { maximumFractionDigits: 2 })}% off`
+    : null;
+  const discountedLine =
+    offer && offer.type !== 'BOGO' ? applySaleToPrePaise(line.linePaise, offer) : line.linePaise;
+  const priceChanged = discountedLine !== line.linePaise;
+  const showStrike = discountedLine < line.linePaise;
   return (
     <div className="flex items-start gap-3 py-2.5 border-b border-ink-50 last:border-b-0">
       <div className="relative h-14 w-14 rounded-md overflow-hidden bg-gradient-to-br from-brand-50 to-ink-50 shrink-0">
@@ -1428,6 +1487,14 @@ function BillLineRow({ line, onRemove }: { line: CartLine; onRemove: () => void 
           <span className="text-brand-700 font-medium">{purityLabel}</span>
           <span className="text-ink-300">·</span>
           <span className="tabular-nums">{(line.weightMg / 1000).toFixed(2)} g</span>
+          {saleBadge && (
+            <>
+              <span className="text-ink-300">·</span>
+              <span className="rounded-sm bg-brand-50 px-1 py-px text-[10px] font-medium text-brand-700">
+                {saleBadge}
+              </span>
+            </>
+          )}
         </div>
         <div className="text-[11px] text-ink-400 mt-0.5 tabular-nums">
           {line.ratePerGramPaise > 0
@@ -1436,7 +1503,16 @@ function BillLineRow({ line, onRemove }: { line: CartLine; onRemove: () => void 
         </div>
       </div>
       <div className="text-right shrink-0">
-        <Money paise={line.linePaise} className="text-sm font-mono font-semibold text-ink-900" />
+        {priceChanged ? (
+          <div className="leading-tight">
+            {showStrike && (
+              <Money paise={line.linePaise} className="text-[11px] font-mono text-ink-400 line-through block" />
+            )}
+            <Money paise={discountedLine} className="text-sm font-mono font-semibold text-brand-700" />
+          </div>
+        ) : (
+          <Money paise={line.linePaise} className="text-sm font-mono font-semibold text-ink-900" />
+        )}
         <button
           type="button"
           onClick={onRemove}

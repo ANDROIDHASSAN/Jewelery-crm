@@ -13,8 +13,46 @@ import { BusinessRuleError, ConflictError, NotFoundError } from '../../lib/error
 import { getTenantId } from '../../lib/async-context.js';
 import type { BillCreate } from '@goldos/shared/types';
 import { computeBillTotals, resolveMakingChargePaise, taxableFromInclusivePaise } from '@goldos/shared/bill-math';
+import { applySaleToPrePaise, type SaleOffer } from '@goldos/shared/sale';
 
 const DEFAULT_GOLD_RATE = 642_000; // ₹6,420/g — dev fallback.
+
+// The item's effective Season Sale offer (its active campaign's), or null.
+// campaignId lets BOGO pair only within the same campaign.
+function itemSaleOffer(item: {
+  saleItem?: {
+    campaign?: {
+      id: string;
+      discountType: 'PERCENT' | 'FLAT' | 'BOGO' | 'FIXED_PRICE';
+      discountBps: number;
+      discountFlatPaise: number;
+      isActive: boolean;
+    } | null;
+  } | null;
+}): (SaleOffer & { campaignId: string }) | null {
+  const c = item.saleItem?.campaign;
+  if (!c || !c.isActive) return null;
+  return { type: c.discountType, discountBps: c.discountBps, discountFlatPaise: c.discountFlatPaise, campaignId: c.id };
+}
+
+// Scale a line's metal / making / stone components by a PERCENT or FLAT offer
+// (proportionally, so the pre-GST total drops by exactly the offer amount and
+// GST is charged on the reduced base — matching the storefront). BOGO makes no
+// per-unit change here; it frees the cheaper of a pair in a separate pass.
+function scaleComponentsForOffer(
+  c: { gold: number; making: number; stone: number },
+  offer: SaleOffer | null,
+): { gold: number; making: number; stone: number } {
+  if (!offer || offer.type === 'BOGO') return c;
+  const sum = c.gold + c.making + c.stone;
+  if (sum <= 0) return c;
+  const factor = applySaleToPrePaise(sum, offer) / sum;
+  return {
+    gold: Math.round(c.gold * factor),
+    making: Math.round(c.making * factor),
+    stone: Math.round(c.stone * factor),
+  };
+}
 
 export async function createBill(input: BillCreate, createdByUserId?: string) {
   const tenantId = getTenantId();
@@ -63,6 +101,15 @@ export async function createBill(input: BillCreate, createdByUserId?: string) {
           defaultMakingChargePerGramPaise: true,
         },
       },
+      // The item's active Season Sale campaign, so POS strikes the same sale
+      // price the storefront shows (shared/sale.ts math).
+      saleItem: {
+        select: {
+          campaign: {
+            select: { id: true, discountType: true, discountBps: true, discountFlatPaise: true, isActive: true },
+          },
+        },
+      },
     },
   });
   const itemById = new Map(items.map((i) => [i.id, i]));
@@ -77,21 +124,26 @@ export async function createBill(input: BillCreate, createdByUserId?: string) {
   const lineComputes = await Promise.all(
     input.lines.map(async (l) => {
       const item = itemById.get(l.itemId)!;
+      // Season Sale offer for this item, applied to the pre-GST line value so
+      // POS strikes the same price as the storefront.
+      const offer = itemSaleOffer(item);
       // Fixed (GST-inclusive) selling price overrides the live-rate calc for
       // ANY metal type: back out the pre-GST taxable base and feed it as the
       // line's metal value with no making/stone, so computeBillTotals adds GST
       // on top and the customer pays exactly the inclusive selling price.
       if (item.sellingPricePaise != null) {
         const taxableBase = taxableFromInclusivePaise(item.sellingPricePaise);
+        const scaled = scaleComponentsForOffer({ gold: taxableBase, making: 0, stone: 0 }, offer);
         return {
           l,
           item,
+          offer,
           ratePerGramPaise: 0,
-          goldValuePaise: taxableBase,
+          goldValuePaise: scaled.gold,
           makingPaise: 0,
           makingBps: 0,
           stoneChargePaise: 0,
-          linePaise: taxableBase,
+          linePaise: scaled.gold,
         };
       }
       const cached = await readGoldRatePaise(l.purityCaratX100);
@@ -134,19 +186,47 @@ export async function createBill(input: BillCreate, createdByUserId?: string) {
       // Persisted on the bill line for the receipt. PER_GRAM lines carry 0 bps;
       // the rupee making amount is still captured inside linePaise.
       const makingBps = mode === 'PERCENTAGE' ? bps : 0;
-      const linePaise = goldValuePaise + makingPaise + l.stoneChargePaise;
+      // Apply the Season Sale offer proportionally across the components.
+      const scaled = scaleComponentsForOffer(
+        { gold: goldValuePaise, making: makingPaise, stone: l.stoneChargePaise },
+        offer,
+      );
+      const linePaise = scaled.gold + scaled.making + scaled.stone;
       return {
         l,
         item,
+        offer,
         ratePerGramPaise,
-        goldValuePaise,
-        makingPaise,
+        goldValuePaise: scaled.gold,
+        makingPaise: scaled.making,
         makingBps,
-        stoneChargePaise: l.stoneChargePaise,
+        stoneChargePaise: scaled.stone,
         linePaise,
       };
     }),
   );
+
+  // Buy-1-Get-1: within each BOGO campaign, free the cheaper of each pair by
+  // zeroing its charge (the whole unit — GST included — is free, matching the
+  // storefront). POS rings one unit per line, so pairing is line-by-line.
+  const bogoGroups = new Map<string, number[]>();
+  lineComputes.forEach((c, i) => {
+    if (c.offer?.type === 'BOGO') {
+      const arr = bogoGroups.get(c.offer.campaignId) ?? [];
+      arr.push(i);
+      bogoGroups.set(c.offer.campaignId, arr);
+    }
+  });
+  for (const indices of bogoGroups.values()) {
+    const sorted = [...indices].sort((a, b) => lineComputes[b]!.linePaise - lineComputes[a]!.linePaise);
+    for (let k = 1; k < sorted.length; k += 2) {
+      const c = lineComputes[sorted[k]!]!;
+      c.goldValuePaise = 0;
+      c.makingPaise = 0;
+      c.stoneChargePaise = 0;
+      c.linePaise = 0;
+    }
+  }
 
   // Resolve the old-gold rate (matched to the exchanged piece's purity) so
   // shared/bill-math computes wastage off the same number we'll persist.
@@ -161,6 +241,9 @@ export async function createBill(input: BillCreate, createdByUserId?: string) {
       goldValuePaise: c.goldValuePaise,
       makingPaise: c.makingPaise,
       stoneChargePaise: c.stoneChargePaise,
+      // Per-line GST rate from the item (default 3%). Drives the CGST/SGST/IGST
+      // computed for this line and snapshotted onto the BillLine below.
+      gstRateBps: c.item.gstRateBps ?? 300,
     })),
     oldGold: input.oldGoldExchange
       ? {
@@ -235,7 +318,7 @@ export async function createBill(input: BillCreate, createdByUserId?: string) {
         idempotencyKey: input.idempotencyKey,
         createdByUserId: createdByUserId ?? null,
         lines: {
-          create: lineComputes.map((c) => ({
+          create: lineComputes.map((c, i) => ({
             itemId: c.l.itemId,
             weightMg: c.l.weightMg,
             purityCaratX100: c.l.purityCaratX100,
@@ -243,6 +326,16 @@ export async function createBill(input: BillCreate, createdByUserId?: string) {
             makingChargeBps: c.makingBps,
             stoneChargePaise: c.stoneChargePaise,
             linePaise: c.linePaise,
+            // GST snapshot — HSN + rate from the item, and the per-line taxable
+            // base + CGST/SGST/IGST from computeBillTotals (same index order),
+            // so the GST report can summarise by HSN with exact tax figures.
+            hsnCode: c.item.hsnCode ?? null,
+            gstRateBps: c.item.gstRateBps ?? 300,
+            quantity: 1,
+            taxablePaise: totals.lineTaxablePaise[i] ?? 0,
+            cgstPaise: totals.lineCgstPaise[i] ?? 0,
+            sgstPaise: totals.lineSgstPaise[i] ?? 0,
+            igstPaise: totals.lineIgstPaise[i] ?? 0,
           })),
         },
         payments: { create: [...input.payments, ...advancePayments] },
