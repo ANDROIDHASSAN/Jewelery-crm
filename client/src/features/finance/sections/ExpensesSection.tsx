@@ -10,6 +10,7 @@ import {
   useGetExpensesQuery,
   useGetExpensesByCategoryQuery,
   useDeleteExpenseMutation,
+  useGetExpenseCategoriesQuery,
 } from '@/features/finance/financeApi';
 import { downloadCsv, paiseToRupeeString } from '@/features/finance/lib/export';
 import {
@@ -18,7 +19,7 @@ import {
   DateInput,
 } from '@/features/finance/components/FinanceFilters';
 import { useGetShopsQuery } from '@/features/shops/shopsApi';
-import { AddExpenseDialog, EXPENSE_CATEGORIES } from '@/features/finance/components/AddExpenseDialog';
+import { AddExpenseDialog } from '@/features/finance/components/AddExpenseDialog';
 import { hasPermission } from '@/features/auth/authSlice';
 import { useAppSelector } from '@/app/hooks';
 
@@ -59,6 +60,8 @@ export function ExpensesSection(): JSX.Element {
   });
   const [deleteExpense] = useDeleteExpenseMutation();
   const { data: shopsRes } = useGetShopsQuery();
+  const { data: ledgersRes } = useGetExpenseCategoriesQuery();
+  const ledgers = ledgersRes?.data ?? [];
 
   const rows = expensesRes?.data ?? [];
   const byCat = byCatRes?.data ?? [];
@@ -112,9 +115,9 @@ export function ExpensesSection(): JSX.Element {
               className="mt-1 w-full h-10 px-2 rounded-md border border-ink-200 bg-ink-0 text-sm"
             >
               <option value="">All</option>
-              {EXPENSE_CATEGORIES.map((c) => (
-                <option key={c} value={c}>
-                  {c}
+              {ledgers.map((c) => (
+                <option key={c.id} value={c.name}>
+                  {c.name}
                 </option>
               ))}
             </select>

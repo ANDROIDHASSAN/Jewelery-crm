@@ -6,7 +6,11 @@ import { Button } from '@/components/ui/button';
 import { Money } from '@/components/ui/money';
 import { MetricCard } from '@/components/ui/MetricCard';
 import { ChartCard, CurrencyDonutChart } from '@/components/ui/charts';
-import { useGetGstSummaryQuery, useGetGstBillsQuery } from '@/features/finance/financeApi';
+import {
+  useGetGstSummaryQuery,
+  useGetGstBillsQuery,
+  useGetGstHsnSummaryQuery,
+} from '@/features/finance/financeApi';
 import { downloadCsv, paiseToRupeeString, printSection } from '@/features/finance/lib/export';
 import { FilterRow, ShopPicker, MonthInput } from '@/features/finance/components/FinanceFilters';
 
@@ -20,8 +24,11 @@ export function GstSection(): JSX.Element {
   const [shopId, setShopId] = useState<string | undefined>(undefined);
   const { data: summaryRes } = useGetGstSummaryQuery({ month, shopId });
   const { data: billsRes } = useGetGstBillsQuery({ month, shopId });
+  const { data: hsnRes } = useGetGstHsnSummaryQuery({ month, shopId });
   const gst = summaryRes?.data;
   const bills = billsRes?.data ?? [];
+  const hsnRows = hsnRes?.data ?? [];
+  const ratePct = (bps: number): string => `${(bps / 100).toLocaleString('en-IN', { maximumFractionDigits: 2 })}%`;
 
   const total = gst ? gst.cgstPaise + gst.sgstPaise + gst.igstPaise : 0;
   const donut = gst
@@ -46,6 +53,19 @@ export function GstSection(): JSX.Element {
       ['Net GST payable', paiseToRupeeString(gst.netGstPayablePaise)],
       ['Taxable revenue', paiseToRupeeString(gst.taxableRevenuePaise)],
       ['Bills', gst.billCount],
+      [],
+      ['HSN summary'],
+      ['HSN', 'Rate', 'Qty', 'Taxable', 'CGST', 'SGST', 'IGST', 'Total tax'],
+      ...hsnRows.map((h) => [
+        h.hsnCode ?? 'Unclassified',
+        ratePct(h.gstRateBps),
+        h.quantity,
+        paiseToRupeeString(h.taxablePaise),
+        paiseToRupeeString(h.cgstPaise),
+        paiseToRupeeString(h.sgstPaise),
+        paiseToRupeeString(h.igstPaise),
+        paiseToRupeeString(h.cgstPaise + h.sgstPaise + h.igstPaise),
+      ]),
       [],
       ['Bill no', 'Date', 'Shop', 'State', 'Customer', 'Taxable', 'CGST', 'SGST', 'IGST', 'Total'],
       ...bills.map((b) => [
@@ -188,6 +208,81 @@ export function GstSection(): JSX.Element {
               </table>
             </div>
           </section>
+        </section>
+
+        {/* HSN-wise summary (GSTR-1). Rate-wise taxable value + tax per HSN. */}
+        <section className="rounded-md border border-ink-100 bg-ink-0">
+          <header className="px-4 py-3 border-b border-ink-100">
+            <p className="text-eyebrow uppercase text-ink-500">GSTR-1 · {hsnRows.length} HSN groups</p>
+            <h2 className="text-md font-medium text-ink-900">HSN summary</h2>
+          </header>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm min-w-[720px]">
+              <thead className="text-eyebrow uppercase text-ink-500 bg-ink-25">
+                <tr>
+                  <th className="text-left px-4 py-2.5">HSN</th>
+                  <th className="text-right px-4 py-2.5">Rate</th>
+                  <th className="text-right px-4 py-2.5">Qty</th>
+                  <th className="text-right px-4 py-2.5">Taxable</th>
+                  <th className="text-right px-4 py-2.5">CGST</th>
+                  <th className="text-right px-4 py-2.5">SGST</th>
+                  <th className="text-right px-4 py-2.5">IGST</th>
+                  <th className="text-right px-4 py-2.5">Total tax</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-ink-100">
+                {hsnRows.length === 0 ? (
+                  <tr>
+                    <td colSpan={8} className="px-4 py-6 text-center text-ink-500">
+                      No sales with HSN in this month. Set an HSN code on items to populate this.
+                    </td>
+                  </tr>
+                ) : (
+                  hsnRows.map((h) => (
+                    <tr key={`${h.hsnCode ?? 'none'}-${h.gstRateBps}`}>
+                      <td className="px-4 py-2 font-mono text-xs text-ink-900">
+                        {h.hsnCode ?? <span className="text-ink-400">Unclassified</span>}
+                      </td>
+                      <td className="px-4 py-2 text-right text-ink-600 font-mono text-xs">{ratePct(h.gstRateBps)}</td>
+                      <td className="px-4 py-2 text-right text-ink-700 tabular-nums">{h.quantity}</td>
+                      <td className="px-4 py-2 text-right"><Money paise={h.taxablePaise} /></td>
+                      <td className="px-4 py-2 text-right text-ink-700"><Money paise={h.cgstPaise} /></td>
+                      <td className="px-4 py-2 text-right text-ink-700"><Money paise={h.sgstPaise} /></td>
+                      <td className="px-4 py-2 text-right text-ink-700"><Money paise={h.igstPaise} /></td>
+                      <td className="px-4 py-2 text-right font-medium">
+                        <Money paise={h.cgstPaise + h.sgstPaise + h.igstPaise} />
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+              {hsnRows.length > 0 && (
+                <tfoot className="border-t border-ink-200 bg-ink-25 font-medium text-ink-900">
+                  <tr>
+                    <td className="px-4 py-2" colSpan={2}>Total</td>
+                    <td className="px-4 py-2 text-right tabular-nums">
+                      {hsnRows.reduce((s, h) => s + h.quantity, 0)}
+                    </td>
+                    <td className="px-4 py-2 text-right">
+                      <Money paise={hsnRows.reduce((s, h) => s + h.taxablePaise, 0)} />
+                    </td>
+                    <td className="px-4 py-2 text-right">
+                      <Money paise={hsnRows.reduce((s, h) => s + h.cgstPaise, 0)} />
+                    </td>
+                    <td className="px-4 py-2 text-right">
+                      <Money paise={hsnRows.reduce((s, h) => s + h.sgstPaise, 0)} />
+                    </td>
+                    <td className="px-4 py-2 text-right">
+                      <Money paise={hsnRows.reduce((s, h) => s + h.igstPaise, 0)} />
+                    </td>
+                    <td className="px-4 py-2 text-right">
+                      <Money paise={hsnRows.reduce((s, h) => s + h.cgstPaise + h.sgstPaise + h.igstPaise, 0)} />
+                    </td>
+                  </tr>
+                </tfoot>
+              )}
+            </table>
+          </div>
         </section>
       </div>
     </div>

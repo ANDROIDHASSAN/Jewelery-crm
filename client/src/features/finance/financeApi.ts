@@ -9,6 +9,8 @@ import type {
   ApiOne,
   ExpenseInput,
   ExpenseUpdate,
+  ExpenseCategoryInput,
+  ExpenseCategoryUpdate,
   GoldLoanInput,
   GoldLoanRepaymentInput,
   PayrollInput,
@@ -66,6 +68,16 @@ export interface GstSummary {
   billCount: number;
 }
 
+export interface GstHsnRow {
+  hsnCode: string | null;
+  gstRateBps: number;
+  quantity: number;
+  taxablePaise: number;
+  cgstPaise: number;
+  sgstPaise: number;
+  igstPaise: number;
+}
+
 export interface GstBill {
   id: string;
   billNumber: string | null;
@@ -100,6 +112,15 @@ export interface ExpenseByCategory {
   category: string;
   amountPaise: number;
   count: number;
+}
+
+export interface ExpenseCategoryRow {
+  id: string;
+  name: string;
+  classification: 'REVENUE' | 'CAPITAL';
+  isSystem: boolean;
+  isArchived: boolean;
+  sortOrder: number;
 }
 
 export interface BranchSummary {
@@ -508,6 +529,10 @@ export const financeApi = baseApi.injectEndpoints({
       query: (params) => ({ url: '/finance/gst-bills', params }),
       providesTags: ['GstSummary'],
     }),
+    getGstHsnSummary: b.query<{ data: GstHsnRow[] }, { month: string; shopId?: string }>({
+      query: (params) => ({ url: '/finance/gst-hsn-summary', params }),
+      providesTags: ['GstSummary'],
+    }),
 
     // Expenses
     getExpenses: b.query<
@@ -543,6 +568,27 @@ export const financeApi = baseApi.injectEndpoints({
     deleteExpense: b.mutation<void, string>({
       query: (id) => ({ url: `/finance/expenses/${id}`, method: 'DELETE' }),
       invalidatesTags: ['Expense', 'FinanceSummary', 'PL'],
+    }),
+
+    // Expense categories (ledgers / heads)
+    getExpenseCategories: b.query<{ data: ExpenseCategoryRow[] }, { includeArchived?: boolean } | void>({
+      query: (params) => ({ url: '/finance/expense-categories', params: params ?? undefined }),
+      providesTags: ['ExpenseCategory'],
+    }),
+    createExpenseCategory: b.mutation<ApiOne<ExpenseCategoryRow>, ExpenseCategoryInput>({
+      query: (body) => ({ url: '/finance/expense-categories', method: 'POST', body }),
+      invalidatesTags: ['ExpenseCategory'],
+    }),
+    updateExpenseCategory: b.mutation<
+      ApiOne<ExpenseCategoryRow>,
+      { id: string; body: ExpenseCategoryUpdate }
+    >({
+      query: ({ id, body }) => ({ url: `/finance/expense-categories/${id}`, method: 'PATCH', body }),
+      invalidatesTags: ['ExpenseCategory', 'Expense', 'FinanceSummary', 'PL'],
+    }),
+    deleteExpenseCategory: b.mutation<unknown, string>({
+      query: (id) => ({ url: `/finance/expense-categories/${id}`, method: 'DELETE' }),
+      invalidatesTags: ['ExpenseCategory'],
     }),
 
     // Gold loans
@@ -734,11 +780,16 @@ export const {
   useGetPlQuery,
   useGetGstSummaryQuery,
   useGetGstBillsQuery,
+  useGetGstHsnSummaryQuery,
   useGetExpensesQuery,
   useGetExpensesByCategoryQuery,
   useCreateExpenseMutation,
   useUpdateExpenseMutation,
   useDeleteExpenseMutation,
+  useGetExpenseCategoriesQuery,
+  useCreateExpenseCategoryMutation,
+  useUpdateExpenseCategoryMutation,
+  useDeleteExpenseCategoryMutation,
   useGetGoldLoansQuery,
   useCreateGoldLoanMutation,
   useAddGoldLoanRepaymentMutation,

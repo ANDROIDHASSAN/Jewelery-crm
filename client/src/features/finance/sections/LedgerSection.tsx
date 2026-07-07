@@ -11,10 +11,10 @@ import {
   useGetLedgerQuery,
   useGetBankAccountsQuery,
   useGetVendorListQuery,
+  useGetExpenseCategoriesQuery,
 } from '@/features/finance/financeApi';
 import { downloadCsv, paiseToRupeeString, printSection } from '@/features/finance/lib/export';
 import { FilterRow, DateInput } from '@/features/finance/components/FinanceFilters';
-import { EXPENSE_CATEGORIES } from '@/features/finance/components/AddExpenseDialog';
 
 function startOfMonth(): string {
   const d = new Date();
@@ -31,6 +31,7 @@ export function LedgerSection(): JSX.Element {
 
   const { data: banksRes } = useGetBankAccountsQuery();
   const { data: vendorsRes } = useGetVendorListQuery();
+  const { data: ledgersRes } = useGetExpenseCategoriesQuery();
 
   const accountOptions = useMemo(() => {
     const opts: Array<{ value: string; label: string; group: string }> = [
@@ -54,15 +55,15 @@ export function LedgerSection(): JSX.Element {
         label: `Vendor — ${v.name}`,
       });
     }
-    for (const c of EXPENSE_CATEGORIES) {
+    for (const c of ledgersRes?.data ?? []) {
       opts.push({
         group: 'Expenses',
-        value: `expense-${c}`,
-        label: `Expense — ${c}`,
+        value: `expense-${c.name}`,
+        label: `Expense — ${c.name}`,
       });
     }
     return opts;
-  }, [banksRes, vendorsRes]);
+  }, [banksRes, vendorsRes, ledgersRes]);
 
   const grouped = useMemo(() => {
     const map = new Map<string, typeof accountOptions>();

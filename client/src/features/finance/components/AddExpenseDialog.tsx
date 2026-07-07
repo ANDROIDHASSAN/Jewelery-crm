@@ -4,7 +4,7 @@
 
 import { useEffect, useState } from 'react';
 import * as Dialog from '@radix-ui/react-dialog';
-import { X } from 'lucide-react';
+import { Settings2, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -13,8 +13,15 @@ import {
   useCreateExpenseMutation,
   useGetVendorListQuery,
   useGetBankAccountsQuery,
+  useGetExpenseCategoriesQuery,
 } from '@/features/finance/financeApi';
+import { hasPermission } from '@/features/auth/authSlice';
+import { useAppSelector } from '@/app/hooks';
+import { ManageLedgersDialog } from './ManageLedgersDialog';
 
+// Fallback names for any surface that still wants a static list before the
+// live ledgers load. The source of truth is now the ExpenseCategory table
+// (GET /finance/expense-categories); the dialog fetches it live.
 export const EXPENSE_CATEGORIES = [
   'Rent',
   'Salaries',
@@ -33,8 +40,6 @@ export const EXPENSE_CATEGORIES = [
   'Miscellaneous',
 ];
 
-const CAPITAL_CATEGORIES = new Set(['Machinery', 'Furniture', 'Vehicle']);
-
 export function AddExpenseDialog({
   open,
   onClose,
@@ -42,17 +47,22 @@ export function AddExpenseDialog({
   open: boolean;
   onClose: () => void;
 }): JSX.Element {
+  const user = useAppSelector((s) => s.auth.user);
+  const canManageLedgers = hasPermission(user, 'finance.expense_write');
   const { data: shopsRes, isLoading: shopsLoading } = useGetShopsQuery();
   const { data: vendorsRes } = useGetVendorListQuery(undefined, { skip: !open });
   const { data: banksRes } = useGetBankAccountsQuery(undefined, { skip: !open });
+  const { data: ledgersRes } = useGetExpenseCategoriesQuery(undefined, { skip: !open });
   const [createExpense, { isLoading }] = useCreateExpenseMutation();
 
   const shops = shopsRes?.data ?? [];
   const vendors = vendorsRes?.data ?? [];
   const banks = banksRes?.data ?? [];
+  const ledgers = ledgersRes?.data ?? [];
+  const [manageOpen, setManageOpen] = useState(false);
 
   const [shopId, setShopId] = useState('');
-  const [category, setCategory] = useState(EXPENSE_CATEGORIES[0]!);
+  const [category, setCategory] = useState('');
   const [amount, setAmount] = useState('');
   const [paidAt, setPaidAt] = useState(() => new Date().toISOString().slice(0, 10));
   const [paymentMode, setPaymentMode] = useState<string>('CASH');
@@ -67,10 +77,17 @@ export function AddExpenseDialog({
     if (!shopId && shops[0]) setShopId(shops[0].id);
   }, [shopId, shops]);
 
-  // Auto-flip classification when user picks an obviously-capital category.
+  // Default the selected ledger to the first one once they load.
   useEffect(() => {
-    setClassification(CAPITAL_CATEGORIES.has(category) ? 'CAPITAL' : 'REVENUE');
-  }, [category]);
+    if (!category && ledgers[0]) setCategory(ledgers[0].name);
+  }, [category, ledgers]);
+
+  // Auto-flip classification to the selected ledger's default. The user can
+  // still override via the Classification dropdown before saving.
+  useEffect(() => {
+    const led = ledgers.find((l) => l.name === category);
+    if (led) setClassification(led.classification);
+  }, [category, ledgers]);
 
   async function handleSubmit(e: React.FormEvent): Promise<void> {
     e.preventDefault();
@@ -81,6 +98,10 @@ export function AddExpenseDialog({
     }
     if (!shopId) {
       toast.error('Select a shop');
+      return;
+    }
+    if (!category) {
+      toast.error('Select a ledger');
       return;
     }
     try {
@@ -113,6 +134,8 @@ export function AddExpenseDialog({
   }
 
   return (
+    <>
+    <ManageLedgersDialog open={manageOpen} onClose={() => setManageOpen(false)} />
     <Dialog.Root
       open={open}
       onOpenChange={(next) => {
@@ -129,7 +152,7 @@ export function AddExpenseDialog({
                   Record expense
                 </Dialog.Title>
                 <p className="text-xs text-ink-500 mt-0.5">
-                  Auto-classifies as capital for machinery / furniture / vehicle.
+                  Classification follows the ledger's default — override it below if needed.
                 </p>
               </div>
               <Dialog.Close className="text-ink-500 hover:text-ink-900 p-1" aria-label="Close">
@@ -157,15 +180,27 @@ export function AddExpenseDialog({
               </label>
 
               <label className="block text-sm">
-                <span className="text-[11px] uppercase tracking-wider text-ink-500">Category</span>
+                <span className="flex items-center justify-between text-[11px] uppercase tracking-wider text-ink-500">
+                  Ledger
+                  {canManageLedgers && (
+                    <button
+                      type="button"
+                      onClick={() => setManageOpen(true)}
+                      className="inline-flex items-center gap-1 normal-case tracking-normal text-brand-700 hover:text-brand-800"
+                    >
+                      <Settings2 className="h-3 w-3" /> Manage
+                    </button>
+                  )}
+                </span>
                 <select
                   value={category}
                   onChange={(e) => setCategory(e.target.value)}
                   className="mt-1 w-full h-10 px-3 rounded-md border border-ink-200 text-sm"
                 >
-                  {EXPENSE_CATEGORIES.map((c) => (
-                    <option key={c} value={c}>
-                      {c}
+                  {ledgers.length === 0 && <option value="">Loading…</option>}
+                  {ledgers.map((c) => (
+                    <option key={c.id} value={c.name}>
+                      {c.name}
                     </option>
                   ))}
                 </select>
@@ -308,5 +343,6 @@ export function AddExpenseDialog({
         </Dialog.Content>
       </Dialog.Portal>
     </Dialog.Root>
+    </>
   );
 }

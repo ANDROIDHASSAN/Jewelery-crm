@@ -19,6 +19,8 @@ import { Prisma, OrderStatus, PaymentStatus } from '@prisma/client';
 import {
   ExpenseInputSchema,
   ExpenseUpdateSchema,
+  ExpenseCategoryInputSchema,
+  ExpenseCategoryUpdateSchema,
   GoldLoanInputSchema,
   GoldLoanRepaymentInputSchema,
   PayrollInputSchema,
@@ -1023,6 +1025,186 @@ financeRouter.delete(
 );
 
 // =====================================================================
+// 4b. EXPENSE CATEGORIES (ledgers) — user-managed heads, CRUD
+// =====================================================================
+
+// Built-in heads seeded per tenant on first read. Machinery / Furniture /
+// Vehicle default to CAPITAL (fixed asset); everything else is REVENUE.
+const DEFAULT_EXPENSE_CATEGORIES: Array<{
+  name: string;
+  classification: 'REVENUE' | 'CAPITAL';
+}> = [
+  { name: 'Rent', classification: 'REVENUE' },
+  { name: 'Salaries', classification: 'REVENUE' },
+  { name: 'Electricity', classification: 'REVENUE' },
+  { name: 'Water', classification: 'REVENUE' },
+  { name: 'Marketing', classification: 'REVENUE' },
+  { name: 'Repairs', classification: 'REVENUE' },
+  { name: 'Insurance', classification: 'REVENUE' },
+  { name: 'Travel', classification: 'REVENUE' },
+  { name: 'Vendor payment', classification: 'REVENUE' },
+  { name: 'Office supplies', classification: 'REVENUE' },
+  { name: 'GST payment', classification: 'REVENUE' },
+  { name: 'Machinery', classification: 'CAPITAL' },
+  { name: 'Furniture', classification: 'CAPITAL' },
+  { name: 'Vehicle', classification: 'CAPITAL' },
+  { name: 'Miscellaneous', classification: 'REVENUE' },
+];
+
+// Lazily seed the built-in heads the first time a tenant reads its ledgers, so
+// existing tenants get them without a data migration. Idempotent: skipDuplicates
+// on the (tenantId, name) unique guards against races.
+async function ensureExpenseCategoriesSeeded(tenantId: string): Promise<void> {
+  const count = await prisma.expenseCategory.count();
+  if (count > 0) return;
+  await prisma.expenseCategory.createMany({
+    data: DEFAULT_EXPENSE_CATEGORIES.map((c, i) => ({
+      tenantId,
+      name: c.name,
+      classification: c.classification,
+      isSystem: true,
+      sortOrder: i,
+    })),
+    skipDuplicates: true,
+  });
+}
+
+financeRouter.get('/expense-categories', async (req, res, next) => {
+  try {
+    const q = z
+      .object({ includeArchived: z.coerce.boolean().optional() })
+      .parse(req.query);
+    const tenantId = getTenantId();
+    if (!tenantId) throw new Error('tenantId missing');
+    await ensureExpenseCategoriesSeeded(tenantId);
+    const rows = await prisma.expenseCategory.findMany({
+      where: q.includeArchived ? {} : { isArchived: false },
+      orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }],
+    });
+    res.json({ data: rows });
+  } catch (err) {
+    next(err);
+  }
+});
+
+financeRouter.post(
+  '/expense-categories',
+  requirePermission('finance.expense_write'),
+  async (req, res, next) => {
+    try {
+      const body = ExpenseCategoryInputSchema.parse(req.body);
+      const tenantId = getTenantId();
+      if (!tenantId) throw new Error('tenantId missing');
+      // Case-insensitive duplicate guard on top of the DB unique (which is
+      // case-sensitive) — "rent" and "Rent" would otherwise both file.
+      const existing = await prisma.expenseCategory.findFirst({
+        where: { name: { equals: body.name, mode: 'insensitive' } },
+      });
+      if (existing) {
+        res.status(409).json({
+          error: { code: 'DUPLICATE_LEDGER', message: `A ledger named "${body.name}" already exists.` },
+        });
+        return;
+      }
+      const max = await prisma.expenseCategory.aggregate({ _max: { sortOrder: true } });
+      const created = await prisma.expenseCategory.create({
+        data: {
+          tenantId,
+          name: body.name,
+          classification: body.classification,
+          isSystem: false,
+          sortOrder: (max._max.sortOrder ?? 0) + 1,
+        },
+      });
+      res.status(201).json({ data: created });
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+financeRouter.patch(
+  '/expense-categories/:id',
+  requirePermission('finance.expense_write'),
+  async (req, res, next) => {
+    try {
+      const body = ExpenseCategoryUpdateSchema.parse(req.body);
+      const tenantId = getTenantId();
+      if (!tenantId) throw new Error('tenantId missing');
+      const current = await prisma.expenseCategory.findUnique({ where: { id: req.params.id } });
+      if (!current) {
+        res.status(404).json({ error: { code: 'NOT_FOUND', message: 'Ledger not found.' } });
+        return;
+      }
+      if (body.name !== undefined && body.name !== current.name) {
+        const clash = await prisma.expenseCategory.findFirst({
+          where: { id: { not: current.id }, name: { equals: body.name, mode: 'insensitive' } },
+        });
+        if (clash) {
+          res.status(409).json({
+            error: { code: 'DUPLICATE_LEDGER', message: `A ledger named "${body.name}" already exists.` },
+          });
+          return;
+        }
+      }
+      const updated = await prisma.$transaction(async (tx) => {
+        const row = await tx.expenseCategory.update({
+          where: { id: current.id },
+          data: {
+            ...(body.name !== undefined ? { name: body.name } : {}),
+            ...(body.classification !== undefined ? { classification: body.classification } : {}),
+          },
+        });
+        // Expense.category is a name snapshot — keep historical rows pointing at
+        // the renamed head so filters and the ledger drill-down stay consistent.
+        if (body.name !== undefined && body.name !== current.name) {
+          await tx.expense.updateMany({
+            where: { category: current.name },
+            data: { category: body.name },
+          });
+        }
+        return row;
+      });
+      bustTenant(tenantId);
+      res.json({ data: updated });
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+financeRouter.delete(
+  '/expense-categories/:id',
+  requirePermission('finance.expense_write'),
+  async (req, res, next) => {
+    try {
+      const tenantId = getTenantId();
+      if (!tenantId) throw new Error('tenantId missing');
+      const cat = await prisma.expenseCategory.findUnique({ where: { id: req.params.id } });
+      if (!cat) {
+        res.status(404).json({ error: { code: 'NOT_FOUND', message: 'Ledger not found.' } });
+        return;
+      }
+      // Archive (not delete) when historical expenses reference this head, so the
+      // name survives for reports; hard-delete only an unused head.
+      const usage = await prisma.expense.count({ where: { category: cat.name } });
+      if (usage > 0) {
+        const archived = await prisma.expenseCategory.update({
+          where: { id: cat.id },
+          data: { isArchived: true },
+        });
+        res.json({ data: archived, archived: true });
+        return;
+      }
+      await prisma.expenseCategory.delete({ where: { id: cat.id } });
+      res.status(204).end();
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+// =====================================================================
 // 5. TALLY EXPORT — sales + expenses + vendor payments
 // =====================================================================
 
@@ -1527,6 +1709,134 @@ financeRouter.get('/gst-bills', async (req, res, next) => {
     });
 
     res.json({ data: [...bills, ...ecomRows].sort((a, b) => new Date(a.createdAt!).getTime() - new Date(b.createdAt!).getTime()) });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// HSN-wise GST summary (GSTR-1 style). Groups every sale line in the month by
+// (HSN code, GST rate) and reports quantity, taxable value, and CGST/SGST/IGST.
+// POS lines come from the per-line GST snapshot persisted on BillLine (exact,
+// SQL-grouped); e-commerce lines are derived from each OrderItem's GST-inclusive
+// price and the HSN/rate mirrored onto its Product, split by place of supply.
+financeRouter.get('/gst-hsn-summary', async (req, res, next) => {
+  try {
+    const q = z
+      .object({ month: z.string().regex(/^\d{4}-\d{2}$/), shopId: z.string().optional() })
+      .parse(req.query);
+    const [year, monthStr] = q.month.split('-');
+    const from = new Date(Date.UTC(Number(year), Number(monthStr) - 1, 1));
+    const to = new Date(Date.UTC(Number(year), Number(monthStr), 1));
+    const tenantId = getTenantId();
+    if (!tenantId) {
+      res.status(400).json(noTenantError());
+      return;
+    }
+
+    type HsnRow = {
+      hsnCode: string | null;
+      gstRateBps: number;
+      quantity: number;
+      taxablePaise: number;
+      cgstPaise: number;
+      sgstPaise: number;
+      igstPaise: number;
+    };
+    const byKey = new Map<string, HsnRow>();
+    const keyOf = (hsn: string | null, rate: number): string => `${hsn ?? ''}|${rate}`;
+    const bump = (r: HsnRow): void => {
+      const key = keyOf(r.hsnCode, r.gstRateBps);
+      const cur = byKey.get(key);
+      if (cur) {
+        cur.quantity += r.quantity;
+        cur.taxablePaise += r.taxablePaise;
+        cur.cgstPaise += r.cgstPaise;
+        cur.sgstPaise += r.sgstPaise;
+        cur.igstPaise += r.igstPaise;
+      } else {
+        byKey.set(key, { ...r });
+      }
+    };
+
+    // POS: SQL groupBy over BillLine's persisted per-line GST snapshot. BillLine
+    // has no tenantId column, so scope through the bill relation explicitly
+    // (the tenant extension does not rewrite nested relation filters).
+    const posGroups = await prisma.billLine.groupBy({
+      by: ['hsnCode', 'gstRateBps'],
+      where: {
+        bill: { is: { tenantId, createdAt: { gte: from, lt: to }, ...shopWhere(q.shopId) } },
+      },
+      _sum: {
+        quantity: true,
+        taxablePaise: true,
+        cgstPaise: true,
+        sgstPaise: true,
+        igstPaise: true,
+      },
+    });
+    for (const g of posGroups) {
+      bump({
+        hsnCode: g.hsnCode,
+        gstRateBps: g.gstRateBps,
+        quantity: g._sum.quantity ?? 0,
+        taxablePaise: g._sum.taxablePaise ?? 0,
+        cgstPaise: g._sum.cgstPaise ?? 0,
+        sgstPaise: g._sum.sgstPaise ?? 0,
+        igstPaise: g._sum.igstPaise ?? 0,
+      });
+    }
+
+    // E-commerce: derive per OrderItem from the GST-inclusive line price and the
+    // HSN/rate mirrored onto the Product, split by place of supply. Grouped in JS
+    // because HSN + rate live on the joined Product (not SQL-groupable).
+    const orders = await prisma.order.findMany({
+      where: {
+        paidAt: { gte: from, lt: to },
+        paymentStatus: PaymentStatus.PAID,
+        status: { notIn: [OrderStatus.CANCELLED, OrderStatus.RETURNED] },
+      },
+      select: {
+        shippingState: true,
+        items: {
+          select: {
+            qty: true,
+            pricePaise: true,
+            product: {
+              select: {
+                hsnCode: true,
+                gstRateBps: true,
+                linkedItem: { select: { shopId: true } },
+              },
+            },
+          },
+        },
+      },
+    });
+    const homeStateCode = await getHomeStateCode();
+    for (const o of orders) {
+      // Respect the shop filter using the same attribution as the other GST
+      // views (order → shop that stocks the largest line value).
+      if (q.shopId && attributeOrderShopId(o.items) !== q.shopId) continue;
+      for (const it of o.items) {
+        const rate = it.product.gstRateBps ?? 300;
+        const inclusive = it.pricePaise * it.qty;
+        const taxablePaise = Math.round((inclusive * 10_000) / (10_000 + rate));
+        const lineGst = inclusive - taxablePaise;
+        const split = splitTaxByPlaceOfSupply(lineGst, o.shippingState, homeStateCode);
+        bump({
+          hsnCode: it.product.hsnCode,
+          gstRateBps: rate,
+          quantity: it.qty,
+          taxablePaise,
+          cgstPaise: split.cgstPaise,
+          sgstPaise: split.sgstPaise,
+          igstPaise: split.igstPaise,
+        });
+      }
+    }
+
+    const rows = [...byKey.values()].sort((a, b) => b.taxablePaise - a.taxablePaise);
+    res.json({ data: rows });
   } catch (err) {
     next(err);
   }

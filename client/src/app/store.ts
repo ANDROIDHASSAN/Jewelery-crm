@@ -98,6 +98,7 @@ export const baseApi = createApi({
     'Payment',
     'Customer',
     'Expense',
+    'ExpenseCategory',
     'GoldLoan',
     'Payroll',
     'GstSummary',
