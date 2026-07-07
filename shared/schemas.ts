@@ -318,6 +318,15 @@ export const ItemDiamondSchema = z.object({
   sellRatePaise: PaiseSchema.optional().nullable(),
 });
 
+// A custom "Details & Dimensions" spec row shown on the storefront PDP. `label`
+// is the attribute name (Closure, Length, Net Quantity…), `value` its free text
+// (Hoopwire, 1.5 cm, 1 Pair). One item carries any number of these.
+export const ItemSpecSchema = z.object({
+  label: z.string().min(1).max(60),
+  value: z.string().min(1).max(200),
+});
+export type ItemSpec = z.infer<typeof ItemSpecSchema>;
+
 export const ItemSchema = z.object({
   id: CuidSchema,
   tenantId: CuidSchema,
@@ -364,6 +373,10 @@ export const ItemSchema = z.object({
   // Target audience — MEN / WOMEN (null = unspecified / unisex). Powers the
   // storefront "Shop by Gender" filter.
   gender: z.enum(GENDER_TYPES).optional().nullable(),
+  // Custom "Details & Dimensions" spec rows — free-form label/value pairs shown
+  // under the PDP Specification (e.g. Closure/Hoopwire, Length/1.5 cm,
+  // Net Quantity/1 Pair). Mirrored onto the storefront Product. Omitted/[] = none.
+  specs: z.array(ItemSpecSchema).max(30).optional().nullable(),
   createdAt: z.coerce.date(),
 });
 
@@ -607,6 +620,9 @@ export const PurchaseOrderItemInputSchema = z.object({
   gender: z.enum(GENDER_TYPES).optional().nullable(),
   collectionIds: z.array(CuidSchema).max(50).optional(),
   diamonds: z.array(ItemDiamondSchema).max(50).optional(),
+  // Custom "Details & Dimensions" spec rows captured on the PO line; copied onto
+  // the Item on receive and mirrored to the PDP.
+  specs: z.array(ItemSpecSchema).max(30).optional(),
 });
 
 export const PurchaseOrderCreateSchema = z.object({

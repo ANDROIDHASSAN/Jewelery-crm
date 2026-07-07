@@ -46,6 +46,7 @@ type ItemForMirror = {
   gender: string | null;
   hsnCode: string | null;
   gstRateBps: number;
+  specs: Prisma.JsonValue;
 };
 
 // Resolve the storefront Product price fields from an inventory Item. A fixed
@@ -132,6 +133,10 @@ async function createProductMirror(
       // Size variants (made-to-order). When present the storefront renders a
       // size selector and prices each size off the base by weight.
       ...(sizes && sizes.length > 0 ? { sizes } : {}),
+      // Custom "Details & Dimensions" spec rows → PDP Specification.
+      ...(Array.isArray(item.specs) && item.specs.length > 0
+        ? { specs: item.specs as Prisma.InputJsonValue }
+        : {}),
       isPublished: true,
     },
   });
@@ -271,7 +276,7 @@ export async function createItem(input: ItemInput, performedByUserId?: string) {
   // `publishToWebsite`, `collectionIds`, `diamonds` and `sizes` are write-time
   // fields, not Item columns — strip them before handing the row to Prisma.
   // `sizes` lives on the linked storefront Product (Product.sizes JSON).
-  const { publishToWebsite, collectionIds, diamonds, sizes, ...itemData } = input;
+  const { publishToWebsite, collectionIds, diamonds, sizes, specs, ...itemData } = input;
   // Guard the (tenantId, shopId, sku) unique key with a friendly error instead
   // of a raw P2002 500 (mirrors updateItem). suggestSku is now collision-free,
   // but a hand-typed SKU — or two same-SKU rows created concurrently — can still
@@ -292,6 +297,9 @@ export async function createItem(input: ItemInput, performedByUserId?: string) {
     data: {
       ...itemData,
       tenantId,
+      // Custom "Details & Dimensions" spec rows (label/value). Omit when empty so
+      // the column stays null rather than an empty array.
+      ...(specs && specs.length > 0 ? { specs: specs as Prisma.InputJsonValue } : {}),
       // Diamond detail lines (M1 FR#4) — booked with their own cost, separate
       // from the metal cost on Item.costPricePaise (M2 §1).
       ...(diamonds && diamonds.length > 0
@@ -358,7 +366,7 @@ export async function updateItem(id: string, patch: Partial<ItemInput>, performe
   // `publishToWebsite`, `collectionIds`, `diamonds`, `sizes` are write-only —
   // never persist them as Item columns. `publishToWebsite` creates / publishes /
   // unpublishes the linked Product; `sizes` is mirrored onto Product.sizes below.
-  const { publishToWebsite, collectionIds, diamonds, sizes, ...itemPatch } = patch;
+  const { publishToWebsite, collectionIds, diamonds, sizes, specs, ...itemPatch } = patch;
 
   // SKU is editable from the Edit dialog. When it changes, enforce the
   // (tenantId, shopId, sku) unique key with a friendly error instead of a raw
@@ -383,7 +391,17 @@ export async function updateItem(id: string, patch: Partial<ItemInput>, performe
     if (itemPatch.barcodeData === undefined) itemPatch.barcodeData = newSku;
   }
 
-  const item = await prisma.item.update({ where: { id }, data: itemPatch });
+  const item = await prisma.item.update({
+    where: { id },
+    data: {
+      ...itemPatch,
+      // Full-set semantics: the Edit form submits the complete spec list. A
+      // non-empty array replaces it; [] clears back to null (JsonNull sentinel).
+      ...(specs !== undefined
+        ? { specs: specs && specs.length > 0 ? (specs as Prisma.InputJsonValue) : Prisma.JsonNull }
+        : {}),
+    },
+  });
 
   // Replace diamond lines when the patch includes them (full-set semantics:
   // the form always submits the complete current list).
@@ -440,6 +458,10 @@ export async function updateItem(id: string, patch: Partial<ItemInput>, performe
   // Prisma's JSON null sentinel removes the value cleanly.
   if (sizes !== undefined) {
     mirrorPatch.sizes = sizes.length > 0 ? sizes : Prisma.JsonNull;
+  }
+  // Custom spec rows → keep the PDP Specification in sync.
+  if (specs !== undefined) {
+    mirrorPatch.specs = specs && specs.length > 0 ? (specs as Prisma.InputJsonValue) : Prisma.JsonNull;
   }
   if (itemPatch.name !== undefined && itemPatch.name !== null) mirrorPatch.name = itemPatch.name;
   if (itemPatch.description !== undefined && itemPatch.description !== null) {
@@ -1503,6 +1525,7 @@ function poLineCreateData(i: PurchaseOrderCreate['items'][number]) {
     gender: i.gender ?? null,
     collectionIds: (i.collectionIds ?? []) as Prisma.InputJsonValue,
     diamondsJson: (i.diamonds ?? []) as Prisma.InputJsonValue,
+    specs: (i.specs ?? []) as Prisma.InputJsonValue,
   };
 }
 
@@ -1675,11 +1698,14 @@ export async function receivePurchaseOrder(
         const itemImages = Array.isArray(line.images) ? (line.images as string[]) : [];
         const rawCollectionIds = Array.isArray(line.collectionIds) ? (line.collectionIds as string[]) : [];
         const rawDiamonds = Array.isArray(line.diamondsJson) ? line.diamondsJson : [];
+        const rawSpecs = Array.isArray(line.specs) ? line.specs : [];
         const item = await tx.item.create({
           data: {
             tenantId,
             shopId,
             categoryId: line.categoryId ?? categoryId,
+            // Custom "Details & Dimensions" spec rows captured on the PO line.
+            ...(rawSpecs.length > 0 ? { specs: rawSpecs as Prisma.InputJsonValue } : {}),
             sku,
             barcodeData: sku,
             name: line.name ?? null,

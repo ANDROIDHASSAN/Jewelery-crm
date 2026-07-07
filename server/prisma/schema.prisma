@@ -467,6 +467,11 @@ model Item {
   // unisex). Drives the storefront "Shop by Gender" filter; mirrored onto the
   // linked storefront Product.
   gender          String?
+  // Custom "Details & Dimensions" spec rows shown on the storefront PDP —
+  // free-form array of { label, value } (e.g. Closure/Hoopwire, Length/1.5 cm,
+  // Net Quantity/1 Pair). Captured at intake (Add item / PO) and mirrored onto
+  // the linked storefront Product.specs. Null = none.
+  specs           Json?
   createdAt       DateTime       @default(now())
 
   tenant            Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
@@ -883,6 +888,9 @@ model PurchaseOrderItem {
   gender           String?
   collectionIds    Json    @default("[]")
   diamondsJson     Json    @default("[]")
+  // Custom "Details & Dimensions" spec rows [{ label, value }] captured on the
+  // PO line; copied onto the Item created on receive and mirrored to the PDP.
+  specs            Json    @default("[]")
   // qty > 1 → lot item (isSerialized=false, quantityOnHand=quantity) on receive.
   quantity  Int     @default(1)
 
@@ -1547,6 +1555,10 @@ model Product {
   // ignored), since one fixed price can't express several weights. Null/empty
   // = single-weight piece priced off `weightMg` as before.
   sizes            Json?
+  // Custom "Details & Dimensions" spec rows mirrored from the linked inventory
+  // Item — array of { label, value } rendered under the PDP Specification. Null
+  // = none.
+  specs            Json?
   // BIS Hallmark Unique ID (6-char alphanumeric). Mandatory for gold
   // jewellery sold in India since 2021 under the BIS Act. Nullable for
   // silver / lab-grown diamond pieces that don't carry HUID.
