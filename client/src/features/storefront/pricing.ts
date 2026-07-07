@@ -125,7 +125,7 @@ export function storefrontTotalPaise(p: PricedProduct, rates?: StorefrontRates):
 // `type` + discount values are the per-item price cut (% / ₹). `bogo` is the
 // sale-wide Buy-1-Get-1 flag that applies to every item in the Season Sale.
 export interface SaleInfo {
-  type: 'PERCENT' | 'FLAT' | 'BOGO';
+  type: 'PERCENT' | 'FLAT' | 'BOGO' | 'FIXED_PRICE';
   discountBps: number;
   discountFlatPaise: number;
   bogo: boolean;
@@ -157,7 +157,15 @@ export function computeSalePrice(
   let hasStrike = false;
   let priceBadge: string | null = null;
 
-  if (sale.type === 'FLAT') {
+  if (sale.type === 'FIXED_PRICE') {
+    // The piece sells at exactly this (GST-inclusive) price.
+    const fixed = Math.max(0, sale.discountFlatPaise);
+    if (fixed > 0) {
+      discountedPaise = fixed;
+      hasStrike = fixed < originalPaise;
+      priceBadge = `₹${(fixed / 100).toLocaleString('en-IN')}`;
+    }
+  } else if (sale.type === 'FLAT') {
     const off = Math.min(originalPaise, Math.max(0, sale.discountFlatPaise));
     if (off > 0) {
       discountedPaise = originalPaise - off;

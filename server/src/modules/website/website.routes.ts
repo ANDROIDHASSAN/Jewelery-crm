@@ -4,6 +4,7 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import { LeadInputSchema, IndianPhoneSchema } from '@goldos/shared/schemas';
+import { applySaleToPrePaise, computeBogoDiscountPaise, type SaleOffer } from '@goldos/shared/sale';
 import { rawPrisma } from '../../lib/prisma.js';
 import { runWithTenant } from '../../lib/async-context.js';
 import { resolveCanonicalTenantId } from '../../lib/canonical-tenant.js';
@@ -240,8 +241,6 @@ const STOREFRONT_SECTION_VALUES = ['NEW_ARRIVAL', 'BEST_SELLER', 'FEATURED', 'TR
 websiteRouter.get('/products', async (req, res, next) => {
   try {
     const tenantId = await tenantFromQueryOrFirst(req);
-    // Universal Season Sale config (BOGO + the one % / ₹ discount).
-    const saleCfg = await fetchSeasonSaleConfig(tenantId);
     // Optional ?section=BEST_SELLER filters to products featured in that
     // homepage section (one product can be in several — still one record).
     const section =
@@ -274,16 +273,11 @@ websiteRouter.get('/products', async (req, res, next) => {
             diamonds: {
               select: { shape: true, caratWeightX100: true, count: true, sellingPricePaise: true },
             },
-            saleItem: {
-              select: { discountType: true, discountBps: true, discountFlatPaise: true },
-            },
+            saleItem: SALE_ITEM_CAMPAIGN_SELECT,
           },
         },
       },
     });
-    // Stamp the sale-wide universal discount onto each sale member so the
-    // `sale` payload below reflects the one tenant-level offer.
-    applyUniversalDiscount(products, saleCfg);
     // Compute a single `inStock` boolean per product. Products without a
     // linked Item (legacy, admin-created from the e-commerce tab) default to
     // in-stock — those have no inventory backing in v1, so we can't tell.
@@ -333,16 +327,20 @@ websiteRouter.get('/products', async (req, res, next) => {
             count: d.count,
             valuePaise: d.sellingPricePaise ?? 0,
           })),
-        // Season Sale offer (PERCENT / FLAT / BOGO), null when not on sale — lets
-        // the PDP + cards render the struck price + offer badge.
-        sale: linkedItem?.saleItem
-          ? {
-              type: linkedItem.saleItem.discountType,
-              discountBps: linkedItem.saleItem.discountBps,
-              discountFlatPaise: linkedItem.saleItem.discountFlatPaise,
-              bogo: saleCfg.bogo,
-            }
-          : null,
+        // Season Sale offer (PERCENT / FLAT / BOGO) resolved from the item's
+        // active campaign, null when not on sale — lets the PDP + cards render
+        // the struck price + offer badge.
+        sale: (() => {
+          const offer = resolveSaleOffer(linkedItem?.saleItem ?? null);
+          return offer
+            ? {
+                type: offer.type,
+                discountBps: offer.discountBps,
+                discountFlatPaise: offer.discountFlatPaise,
+                bogo: offer.type === 'BOGO',
+              }
+            : null;
+        })(),
       };
     });
     res.json({ data: enriched, page: { hasMore: false } });
@@ -351,26 +349,18 @@ websiteRouter.get('/products', async (req, res, next) => {
   }
 });
 
-// Public Season Sale feed — the published products whose linked inventory item
-// is in the tenant's Season Sale pool. The discount is UNIVERSAL: one % / ₹
-// value (plus the BOGO toggle) on the tenant, applied identically to every
-// item, so the storefront renders the same struck price + badge across the pool.
+// Public Season Sale feed — published products whose linked inventory item is
+// in an ACTIVE Season Sale campaign. Each item carries its own campaign's offer
+// (PERCENT / FLAT / BOGO), so multiple campaigns show side by side.
 websiteRouter.get('/sale-items', async (req, res, next) => {
   try {
     const tenantId = await tenantFromQueryOrFirst(req);
-    const cfg = await fetchSeasonSaleConfig(tenantId);
-    // The same offer is attached to every sale item.
-    const universalSale = {
-      type: cfg.discountType,
-      discountBps: cfg.discountBps,
-      discountFlatPaise: cfg.discountFlatPaise,
-      bogo: cfg.bogo,
-    };
     const products = await rawPrisma.product.findMany({
       where: {
         tenantId,
         isPublished: true,
-        linkedItem: { saleItem: { isNot: null } },
+        // Only items whose campaign is currently running.
+        linkedItem: { saleItem: { campaign: { isActive: true } } },
       },
       take: 60,
       include: {
@@ -388,6 +378,9 @@ websiteRouter.get('/sale-items', async (req, res, next) => {
               select: {
                 sortOrder: true,
                 createdAt: true,
+                campaign: {
+                  select: { id: true, discountType: true, discountBps: true, discountFlatPaise: true, isActive: true },
+                },
               },
             },
           },
@@ -404,6 +397,7 @@ websiteRouter.get('/sale-items', async (req, res, next) => {
           inStock = !(isSerializedSold || lotEmpty);
         }
         const s = linkedItem?.saleItem;
+        const offer = resolveSaleOffer(s ?? null);
         return {
           ...rest,
           categoryId: linkedItem?.categoryId ?? rest.categoryId,
@@ -412,8 +406,16 @@ websiteRouter.get('/sale-items', async (req, res, next) => {
           metalType: linkedItem?.category?.metalType ?? null,
           makingChargeMode: linkedItem?.makingChargeMode ?? null,
           makingChargePerGramPaise: linkedItem?.makingChargePerGramPaise ?? null,
-          // Universal offer — same for every item in the sale.
-          sale: s ? universalSale : null,
+          // This item's campaign offer (null if the campaign was paused between
+          // the where-filter and now).
+          sale: offer
+            ? {
+                type: offer.type,
+                discountBps: offer.discountBps,
+                discountFlatPaise: offer.discountFlatPaise,
+                bogo: offer.type === 'BOGO',
+              }
+            : null,
           _sortOrder: s?.sortOrder ?? 0,
           _addedAt: s?.createdAt ?? rest.createdAt,
         };
@@ -558,88 +560,55 @@ type PriceableProduct = {
     makingChargeMode?: string | null;
     makingChargePerGramPaise?: number | null;
     category?: { metalType?: string | null } | null;
-    saleItem?: { discountType: string; discountBps: number; discountFlatPaise: number } | null;
   } | null;
 };
 
-// The Season Sale discount is UNIVERSAL — one % / ₹ value (plus the BOGO
-// toggle) on the tenant, applied to every item in the sale pool. Fetched once
-// per request; the per-item SaleItem row is now membership-only.
-async function fetchSeasonSaleConfig(tenantId: string): Promise<{
-  bogo: boolean;
-  discountType: 'PERCENT' | 'FLAT' | 'BOGO';
-  discountBps: number;
-  discountFlatPaise: number;
-}> {
-  const t = await rawPrisma.tenant.findUnique({
-    where: { id: tenantId },
-    select: {
-      seasonSaleBogo: true,
-      seasonSaleDiscountType: true,
-      seasonSaleDiscountBps: true,
-      seasonSaleDiscountFlatPaise: true,
+// Shape of the `saleItem` include used across the storefront queries — carries
+// the item's campaign so we can resolve its effective offer.
+type SaleItemCampaign = {
+  campaign: {
+    id: string;
+    discountType: 'PERCENT' | 'FLAT' | 'BOGO' | 'FIXED_PRICE';
+    discountBps: number;
+    discountFlatPaise: number;
+    isActive: boolean;
+  } | null;
+} | null;
+
+// Prisma select fragment: the item's campaign, for resolving its live offer.
+const SALE_ITEM_CAMPAIGN_SELECT = {
+  select: {
+    campaign: {
+      select: { id: true, discountType: true, discountBps: true, discountFlatPaise: true, isActive: true },
     },
-  });
+  },
+} as const;
+
+// The effective offer for an item — its campaign's offer, or null when the item
+// isn't in a campaign or the campaign is paused. `campaignId` lets BOGO pair
+// only within the same campaign.
+function resolveSaleOffer(si: SaleItemCampaign): (SaleOffer & { campaignId: string }) | null {
+  const c = si?.campaign;
+  if (!c || !c.isActive) return null;
   return {
-    bogo: t?.seasonSaleBogo ?? false,
-    discountType: t?.seasonSaleDiscountType ?? 'PERCENT',
-    discountBps: t?.seasonSaleDiscountBps ?? 0,
-    discountFlatPaise: t?.seasonSaleDiscountFlatPaise ?? 0,
+    type: c.discountType,
+    discountBps: c.discountBps,
+    discountFlatPaise: c.discountFlatPaise,
+    campaignId: c.id,
   };
 }
 
-// Stamp the universal discount onto each fetched product's membership row, so
-// the existing per-item code (computeLinePricePaise + `sale` payloads) reads
-// the same sale-wide values for every item without further changes.
-function applyUniversalDiscount(
-  products: Array<{
-    linkedItem?: {
-      saleItem?: { discountType: 'PERCENT' | 'FLAT' | 'BOGO'; discountBps: number; discountFlatPaise: number } | null;
-    } | null;
-  }>,
-  cfg: { discountType: 'PERCENT' | 'FLAT' | 'BOGO'; discountBps: number; discountFlatPaise: number },
-): void {
-  for (const p of products) {
-    const si = p.linkedItem?.saleItem;
-    if (si) {
-      si.discountType = cfg.discountType;
-      si.discountBps = cfg.discountBps;
-      si.discountFlatPaise = cfg.discountFlatPaise;
-    }
-  }
+// Sum BOGO free-unit value across many campaigns — pair only within a campaign.
+function computeBogoAcrossCampaigns(unitsByCampaign: Map<string, number[]>): number {
+  let total = 0;
+  for (const units of unitsByCampaign.values()) total += computeBogoDiscountPaise(units);
+  return total;
 }
 
-// Apply a Season Sale offer to a PRE-GST line price. PERCENT scales the base
-// (a % off pre-GST == the same % off the GST-inclusive price). FLAT is a ₹ off
-// the GST-INCLUSIVE price, so we back the 3% GST out of it before subtracting,
-// keeping the charged total in lockstep with the struck price shown on the PDP.
-// BOGO is display-only for now (no per-unit price change at checkout).
-function applySaleToPrePaise(
-  prePaise: number,
-  sale?: { discountType: string; discountBps: number; discountFlatPaise: number } | null,
-): number {
-  if (!sale || prePaise <= 0) return prePaise;
-  if (sale.discountType === 'PERCENT') {
-    const bps = Math.max(0, Math.min(9000, sale.discountBps));
-    return Math.round(prePaise * (1 - bps / 10000));
-  }
-  if (sale.discountType === 'FLAT') {
-    const flatPre = Math.round(Math.max(0, sale.discountFlatPaise) / 1.03);
-    return Math.max(0, prePaise - flatPre);
-  }
-  return prePaise;
-}
-
-// Sale-wide Buy-1-Get-1: across every BOGO-eligible unit in the cart, the
-// cheaper of each pair is free. `unitPaise` is the (already per-item-discounted)
-// pre-GST price of each eligible unit. Returns the total value of the free
-// units — an order-level discount applied before coupon/loyalty.
-function computeBogoDiscountPaise(unitPaise: number[]): number {
-  const sorted = [...unitPaise].sort((a, b) => b - a); // most expensive first
-  let discount = 0;
-  for (let i = 1; i < sorted.length; i += 2) discount += sorted[i]!; // free the 2nd of each pair
-  return discount;
-}
+// (Sale offer math now lives in shared/sale.ts — applySaleToPrePaise +
+// computeBogoDiscountPaise are imported so the storefront and POS strike the
+// same price. The per-item offer is resolved from the item's SaleCampaign via
+// resolveSaleOffer above.)
 
 // The Product.sizes column is free-form Json; parse it defensively into a typed
 // list, dropping any malformed/zero-weight entries.
@@ -675,13 +644,18 @@ function resolveLineWeightMg(p: { weightMg: number; sizes?: unknown }, sizeLabel
 // live-rate calc. Sized fixed-price pieces scale that base linearly by the
 // selected size's weight (per-gram from base), so heavier sizes cost
 // proportionally more — matching the Add/Edit Item size preview.
-function computeLinePricePaise(p: PriceableProduct, weightMg: number, rates: RateLookup): number {
+function computeLinePricePaise(
+  p: PriceableProduct,
+  weightMg: number,
+  rates: RateLookup,
+  offer?: SaleOffer | null,
+): number {
   if (p.fixedPricePaise != null) {
     const base =
       productHasSizes(p) && p.weightMg > 0
         ? Math.round((p.fixedPricePaise * weightMg) / p.weightMg)
         : p.fixedPricePaise;
-    return applySaleToPrePaise(base, p.linkedItem?.saleItem);
+    return applySaleToPrePaise(base, offer);
   }
   const metalType = p.linkedItem?.category?.metalType;
   const isGold = metalType === 'GOLD' || metalType === 'DIAMOND' || metalType == null;
@@ -711,7 +685,7 @@ function computeLinePricePaise(p: PriceableProduct, weightMg: number, rates: Rat
   } else if (p.makingChargeBps > 0 && metalValuePaise > 0) {
     making = Math.round((metalValuePaise * p.makingChargeBps) / 10000);
   }
-  return applySaleToPrePaise(metalValuePaise + making + p.stoneChargePaise, p.linkedItem?.saleItem);
+  return applySaleToPrePaise(metalValuePaise + making + p.stoneChargePaise, offer);
 }
 
 // ============================================================================
@@ -774,9 +748,7 @@ websiteRouter.post('/checkout/pricing', async (req, res, next) => {
             makingChargeMode: true,
             makingChargePerGramPaise: true,
             category: { select: { metalType: true } },
-            saleItem: {
-              select: { discountType: true, discountBps: true, discountFlatPaise: true },
-            },
+            saleItem: SALE_ITEM_CAMPAIGN_SELECT,
           },
         },
       },
@@ -785,12 +757,6 @@ websiteRouter.post('/checkout/pricing', async (req, res, next) => {
     const byId = new Map(products.map((p) => [p.id, p]));
     const bySlug = new Map(products.map((p) => [p.slug, p]));
 
-    // Universal Season Sale config — stamp its discount onto sale members so
-    // checkout prices match the storefront's struck price.
-    const saleCfg = await fetchSeasonSaleConfig(tenantId);
-    const saleBogo = saleCfg.bogo;
-    applyUniversalDiscount(products, saleCfg);
-
     // Live rates
     const purities = [2400, 2200, 1800, 1400, 0] as const;
     const ratesArray = await Promise.all(purities.map((p) => readGoldRatePaise(p)));
@@ -798,24 +764,27 @@ websiteRouter.post('/checkout/pricing', async (req, res, next) => {
     const rates: RateLookup = { findRate, live22: findRate(2200), liveSilver: findRate(0) };
 
     // Build resolved lines for coupon service. Price each line off its selected
-    // size weight (sized pieces) so the preview matches what's charged. Also
-    // collect BOGO-eligible units (Season-Sale items when the sale-wide B1G1
-    // flag is on) so the cheaper of each pair can be made free.
+    // size weight (sized pieces) so the preview matches what's charged, applying
+    // each item's own campaign offer. Collect BOGO-eligible units grouped by
+    // campaign so the cheaper of each pair is freed within its campaign.
     const cartLines: Array<{ productId: string; qty: number; pricePaise: number; categoryId?: string }> = [];
-    const bogoUnits: number[] = [];
+    const bogoByCampaign = new Map<string, number[]>();
     for (const ci of body.cart_items) {
       const product = (ci.slug && bySlug.get(ci.slug)) || (ci.productId && byId.get(ci.productId)) || null;
       if (!product) continue;
+      const offer = resolveSaleOffer(product.linkedItem?.saleItem ?? null);
       const weightMg = resolveLineWeightMg(product, ci.sizeLabel);
-      const pricePaise = computeLinePricePaise(product, weightMg, rates);
+      const pricePaise = computeLinePricePaise(product, weightMg, rates, offer);
       cartLines.push({ productId: product.id, qty: ci.qty, pricePaise, categoryId: product.categoryId });
-      if (saleBogo && product.linkedItem?.saleItem) {
-        for (let i = 0; i < ci.qty; i += 1) bogoUnits.push(pricePaise);
+      if (offer?.type === 'BOGO') {
+        const units = bogoByCampaign.get(offer.campaignId) ?? [];
+        for (let i = 0; i < ci.qty; i += 1) units.push(pricePaise);
+        bogoByCampaign.set(offer.campaignId, units);
       }
     }
 
     const subtotalPaise = cartLines.reduce((s, l) => s + l.pricePaise * l.qty, 0);
-    const bogoDiscountPaise = computeBogoDiscountPaise(bogoUnits);
+    const bogoDiscountPaise = computeBogoAcrossCampaigns(bogoByCampaign);
     const subtotalAfterBogo = Math.max(0, subtotalPaise - bogoDiscountPaise);
 
     // Resolve customer
@@ -1025,19 +994,13 @@ websiteRouter.post('/orders', async (req, res, next) => {
             makingChargeMode: true,
             makingChargePerGramPaise: true,
             category: { select: { metalType: true } },
-            saleItem: {
-              select: { discountType: true, discountBps: true, discountFlatPaise: true },
-            },
+            saleItem: SALE_ITEM_CAMPAIGN_SELECT,
           },
         },
       },
     });
     const byId = new Map(products.map((p) => [p.id, p]));
     const bySlug = new Map(products.map((p) => [p.slug, p]));
-    // Universal Season Sale config — stamp its discount onto sale members so the
-    // order is priced at the same struck price shown on the storefront.
-    const saleCfg = await fetchSeasonSaleConfig(tenantId);
-    applyUniversalDiscount(products, saleCfg);
     // Build a resolved item list — every line carries the canonical id we'll
     // write to OrderItem, plus the selected size label (sized pieces) so we can
     // price + record the line off that size's weight.
@@ -1104,32 +1067,36 @@ websiteRouter.post('/orders', async (req, res, next) => {
     const rateLookup: RateLookup = { findRate, live22: findRate(2200), liveSilver: findRate(0) };
 
     // Price each resolved line off its selected size weight (sized pieces) or
-    // the base weight. Keyed per line, not per product — the same product can
-    // appear at two different sizes with two different prices.
-    const pricedItems = resolvedItems.map((line) => ({
-      ...line,
-      pricePaise: computeLinePricePaise(
-        line.product,
-        resolveLineWeightMg(line.product, line.sizeLabel),
-        rateLookup,
-      ),
-    }));
+    // the base weight, applying each item's own campaign offer. Keyed per line,
+    // not per product — the same product can appear at two different sizes.
+    const pricedItems = resolvedItems.map((line) => {
+      const offer = resolveSaleOffer(line.product.linkedItem?.saleItem ?? null);
+      return {
+        ...line,
+        offer,
+        pricePaise: computeLinePricePaise(
+          line.product,
+          resolveLineWeightMg(line.product, line.sizeLabel),
+          rateLookup,
+          offer,
+        ),
+      };
+    });
 
     const nameById = new Map(products.map((p) => [p.id, p.name]));
     const subtotalPaise = pricedItems.reduce((s, { pricePaise, qty }) => s + pricePaise * qty, 0);
 
-    // ── Sale-wide Buy-1-Get-1 — free the cheaper of each pair across eligible
-    // (Season-Sale) units. Applied before coupon/loyalty. ────────────────────
-    const saleBogoForOrder = saleCfg.bogo;
-    const bogoUnitsForOrder: number[] = [];
-    if (saleBogoForOrder) {
-      for (const { product, qty, pricePaise } of pricedItems) {
-        if (product.linkedItem?.saleItem) {
-          for (let i = 0; i < qty; i += 1) bogoUnitsForOrder.push(pricePaise);
-        }
+    // ── Buy-1-Get-1 — free the cheaper of each pair WITHIN each BOGO campaign.
+    // Applied before coupon/loyalty. ─────────────────────────────────────────
+    const bogoByCampaignOrder = new Map<string, number[]>();
+    for (const { offer, qty, pricePaise } of pricedItems) {
+      if (offer?.type === 'BOGO') {
+        const units = bogoByCampaignOrder.get(offer.campaignId) ?? [];
+        for (let i = 0; i < qty; i += 1) units.push(pricePaise);
+        bogoByCampaignOrder.set(offer.campaignId, units);
       }
     }
-    const bogoDiscountPaise = computeBogoDiscountPaise(bogoUnitsForOrder);
+    const bogoDiscountPaise = computeBogoAcrossCampaigns(bogoByCampaignOrder);
     const subtotalAfterBogo = Math.max(0, subtotalPaise - bogoDiscountPaise);
 
     // ── Promotions: coupon then loyalty ──────────────────────────────────────
