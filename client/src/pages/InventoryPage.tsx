@@ -3828,9 +3828,20 @@ export function AddItemDialog({
         navigate('/admin/inventory/print-labels', { state: { skus: [newSku] } });
       }
     } catch (err) {
-      const message =
-        (err as { data?: { error?: { message?: string } } }).data?.error?.message ?? 'Could not save item.';
-      toast.error(message);
+      const e = err as {
+        status?: number | string;
+        data?: { error?: { message?: string; fields?: Record<string, string> }; message?: string };
+      };
+      const baseMsg = e?.data?.error?.message ?? e?.data?.message ?? 'Could not save item.';
+      // Surface the offending field(s) — the server returns them under
+      // error.fields on a VALIDATION_ERROR, but the bare "Invalid request"
+      // message alone gives the user nothing to act on.
+      const fieldDetail = e?.data?.error?.fields
+        ? Object.entries(e.data.error.fields).map(([k, v]) => `${k}: ${v}`).join('; ')
+        : '';
+      toast.error(baseMsg, fieldDetail ? { description: fieldDetail } : undefined);
+      // eslint-disable-next-line no-console
+      console.error('[inventory] createItem failed:', err);
     }
   };
 
@@ -4536,9 +4547,17 @@ export function EditItemDialog({
       toast.success(`Updated ${form.name.trim()}`);
       onClose();
     } catch (err) {
-      const message =
-        (err as { data?: { error?: { message?: string } } }).data?.error?.message ?? 'Could not save changes.';
-      toast.error(message);
+      const e = err as {
+        status?: number | string;
+        data?: { error?: { message?: string; fields?: Record<string, string> }; message?: string };
+      };
+      const baseMsg = e?.data?.error?.message ?? e?.data?.message ?? 'Could not save changes.';
+      const fieldDetail = e?.data?.error?.fields
+        ? Object.entries(e.data.error.fields).map(([k, v]) => `${k}: ${v}`).join('; ')
+        : '';
+      toast.error(baseMsg, fieldDetail ? { description: fieldDetail } : undefined);
+      // eslint-disable-next-line no-console
+      console.error('[inventory] updateItem failed:', err);
     }
   };
 

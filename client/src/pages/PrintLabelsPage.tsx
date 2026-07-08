@@ -21,11 +21,28 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import QRCode from 'qrcode';
 import { Printer, ArrowLeft, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
+import { useAppSelector } from '@/app/hooks';
 import { Button } from '@/components/ui/button';
 import { BarcodePreview } from '@/components/ui/BarcodePreview';
 import { useGetItemsQuery, useGetCategoriesQuery } from '@/features/inventory/inventoryApi';
 import { useGetShopsQuery } from '@/features/shops/shopsApi';
 import type { Item } from '@goldos/shared/types';
+
+// Two physical label styles. 'flat' is the original single-rectangle sticker
+// (SKU + one barcode) that tiles on an A4 sheet. 'dumbbell' is the classic
+// jewellery butterfly/rat-tail tag — a strip that folds around the piece so
+// two printed panels face out: a brand panel (logo + hallmark line + serial
+// barcode) and a specs panel (category + gross/less/net weights + QR).
+type LabelTemplate = 'flat' | 'dumbbell';
+
+// Brand block shown on the dumbbell tag's brand panel. Sourced from the CMS
+// storefront content (hydrated in AdminShell), with tenant settings as the
+// fallback the caller passes in.
+interface LabelBrand {
+  name: string;
+  logo: string;
+  subTagline: string;
+}
 
 const STORAGE_KEY = 'zelora.printLabels.skus';
 // Saved custom label sizes (user-defined W×H presets), reused across sessions.
@@ -50,6 +67,18 @@ const LABEL_SIZES: LabelSize[] = [
   { key: '40x20', label: '40 × 20 mm — Small ring tag', width: 40, height: 20, cols: 5, rows: 13 },
   { key: '70x40', label: '70 × 40 mm — Display card', width: 70, height: 40, cols: 2, rows: 6 },
 ];
+
+// Default footprint for the dumbbell tag = the full printable strip (both
+// panels + the neck between them). Users can still switch to any size / custom
+// size from the same picker; this is just the sensible starting point.
+const DUMBBELL_DEFAULT: LabelSize = {
+  key: 'tag-65x13',
+  label: '65 × 13 mm — Jewellery tag (dumbbell)',
+  width: 65,
+  height: 13,
+  cols: 3,
+  rows: 20,
+};
 
 // A4 usable area (210×297mm minus the @page 5mm margins) — used to auto-derive
 // how many custom labels fit per row/page from their width/height.
@@ -112,7 +141,24 @@ interface SelectionState {
 export function PrintLabelsPage(): JSX.Element {
   const navigate = useNavigate();
   const location = useLocation();
-  const [size, setSize] = useState<LabelSize>(LABEL_SIZES[0]!);
+  // Template + print target. The dumbbell tag defaults to the roll (thermal)
+  // print path since that stock is a continuous roll, not an A4 sheet.
+  const [template, setTemplate] = useState<LabelTemplate>('dumbbell');
+  const [rollMode, setRollMode] = useState(true);
+  const [size, setSize] = useState<LabelSize>(DUMBBELL_DEFAULT);
+
+  // Brand block for the dumbbell tag — CMS content first (matches the
+  // storefront/receipt branding), tenant businessName/logo as a fallback.
+  const cmsBrand = useAppSelector((s) => s.storefrontContent.brand);
+  const cmsSubTagline = useAppSelector((s) => s.storefrontContent.invoiceLayout.brandSubTagline);
+  const brand = useMemo<LabelBrand>(
+    () => ({
+      name: cmsBrand.name || 'Your Jewellers',
+      logo: cmsBrand.logo || '',
+      subTagline: cmsSubTagline || cmsBrand.tagline || '',
+    }),
+    [cmsBrand.name, cmsBrand.logo, cmsBrand.tagline, cmsSubTagline],
+  );
   // User-defined size presets (persisted) + the inline custom-entry panel.
   const [customPresets, setCustomPresets] = useState<LabelSize[]>(() => loadCustomPresets());
   const [customMode, setCustomMode] = useState(false);
@@ -245,6 +291,39 @@ export function PrintLabelsPage(): JSX.Element {
         </button>
 
         <div className="flex flex-wrap items-center gap-3 text-sm">
+          <label className="text-ink-500 text-xs">Style</label>
+          <select
+            value={template}
+            onChange={(e) => {
+              const next = e.target.value as LabelTemplate;
+              setTemplate(next);
+              // Jump each template to its natural default size + print target.
+              if (next === 'dumbbell') {
+                setCustomMode(false);
+                setSize(DUMBBELL_DEFAULT);
+                setRollMode(true);
+              } else {
+                setCustomMode(false);
+                setSize(LABEL_SIZES[0]!);
+                setRollMode(false);
+              }
+            }}
+            className="h-8 px-2 rounded-md border border-ink-200 bg-ink-0 text-sm"
+          >
+            <option value="dumbbell">Jewellery tag (dumbbell)</option>
+            <option value="flat">Flat sticker</option>
+          </select>
+
+          <label className="text-ink-500 text-xs">Print to</label>
+          <select
+            value={rollMode ? 'roll' : 'a4'}
+            onChange={(e) => setRollMode(e.target.value === 'roll')}
+            className="h-8 px-2 rounded-md border border-ink-200 bg-ink-0 text-sm"
+          >
+            <option value="roll">Roll (thermal)</option>
+            <option value="a4">A4 sheet</option>
+          </select>
+
           <label className="text-ink-500 text-xs">Label size</label>
           <select
             value={customMode ? '__custom__' : size.key}
@@ -311,7 +390,8 @@ export function PrintLabelsPage(): JSX.Element {
                 </button>
               )}
               <span className="text-xs text-ink-500">
-                {items.length} label{items.length === 1 ? '' : 's'} · {size.cols * size.rows} per A4
+                {items.length} label{items.length === 1 ? '' : 's'}
+                {rollMode ? ' · one per feed' : ` · ${size.cols * size.rows} per A4`}
               </span>
             </>
           )}
@@ -338,6 +418,9 @@ export function PrintLabelsPage(): JSX.Element {
           <LabelSheet
             items={items}
             size={size}
+            template={template}
+            rollMode={rollMode}
+            brand={brand}
             shopName={shopName}
             categoryName={categoryName}
             categoryMetalType={categoryMetalType}
@@ -353,8 +436,9 @@ export function PrintLabelsPage(): JSX.Element {
       <style>{`
         @media print {
           @page {
-            size: A4 portrait;
-            margin: 5mm;
+            ${rollMode
+              ? `size: ${size.width}mm ${size.height}mm; margin: 0;`
+              : 'size: A4 portrait; margin: 5mm;'}
           }
           body { background: white !important; }
         }
@@ -366,21 +450,59 @@ export function PrintLabelsPage(): JSX.Element {
 function LabelSheet({
   items,
   size,
+  template,
+  rollMode,
+  brand,
   shopName,
   categoryName,
   categoryMetalType,
 }: {
   items: Item[];
   size: LabelSize;
+  template: LabelTemplate;
+  rollMode: boolean;
+  brand: LabelBrand;
   shopName: (id: string) => string;
   categoryName: (id: string) => string;
   categoryMetalType: (id: string) => string;
 }): JSX.Element {
+  const cells = items.map((item) => (
+    <LabelCell
+      key={item.id}
+      item={item}
+      size={size}
+      template={template}
+      rollMode={rollMode}
+      brand={brand}
+      shopName={shopName(item.shopId)}
+      category={categoryName(item.categoryId)}
+      metalType={categoryMetalType(item.categoryId)}
+    />
+  ));
+
+  // Roll (thermal) mode: one tag per page, stacked vertically on screen so the
+  // preview still scrolls. Each cell forces a page break so the printer feeds
+  // exactly one tag at a time.
+  if (rollMode) {
+    return (
+      <div className="mx-auto flex flex-col items-center gap-2 print:gap-0">
+        {cells.map((cell, i) => (
+          <div
+            key={cell.key}
+            className={i < cells.length - 1 ? 'print:break-after-page' : undefined}
+          >
+            {cell}
+          </div>
+        ))}
+      </div>
+    );
+  }
+
+  // A4 sheet mode: tile the tags in a grid that maps to the printer's full page.
   return (
     <div
       className="mx-auto bg-ink-0 print:bg-transparent shadow-sm print:shadow-none"
       style={{
-        // A4 with grid gap
         width: '200mm',
         display: 'grid',
         gridTemplateColumns: `repeat(${size.cols}, ${size.width}mm)`,
@@ -388,16 +510,7 @@ function LabelSheet({
         gap: '0',
       }}
     >
-      {items.map((item) => (
-        <LabelCell
-          key={item.id}
-          item={item}
-          size={size}
-          shopName={shopName(item.shopId)}
-          category={categoryName(item.categoryId)}
-          metalType={categoryMetalType(item.categoryId)}
-        />
-      ))}
+      {cells}
     </div>
   );
 }
@@ -415,7 +528,42 @@ function purityCodeForLabel(purityCaratX100: number, metalType: string): string 
   return `${Number.isInteger(k) ? k.toFixed(0) : k.toFixed(1)}K`;
 }
 
-function LabelCell({
+// Metal fineness (parts-per-thousand) for the hallmark line — 22K → 916,
+// 18K → 750, 24K → 999, silver → 925, platinum → 950. Falls back to the
+// karat-derived value (k/24×1000) for uncommon purities.
+function finenessForPurity(purityCaratX100: number, metalType: string): string {
+  if (metalType === 'STAINLESS_STEEL' || metalType === 'OTHER') return '';
+  if (purityCaratX100 === 9500) return '950';
+  if (purityCaratX100 === 0) return '925';
+  switch (purityCaratX100) {
+    case 2400: return '999';
+    case 2200: return '916';
+    case 1800: return '750';
+    case 1400: return '585';
+    default: return String(Math.round((purityCaratX100 / 100 / 24) * 1000));
+  }
+}
+
+// Weight (mg → g) formatted to 3 decimals like the reference tag (14.990).
+function toGrams3(mg: number): string {
+  return (mg / 1000).toFixed(3);
+}
+
+function LabelCell(props: {
+  item: Item;
+  size: LabelSize;
+  template: LabelTemplate;
+  rollMode: boolean;
+  brand: LabelBrand;
+  shopName: string;
+  category: string;
+  metalType: string;
+}): JSX.Element {
+  if (props.template === 'dumbbell') return <DumbbellTag {...props} />;
+  return <FlatLabel {...props} />;
+}
+
+function FlatLabel({
   item,
   size,
   shopName,
@@ -465,6 +613,81 @@ function LabelCell({
           </p>
         </div>
         {!compact && <InlineQrCode value={item.sku} sizeMm={6} />}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Jewellery "dumbbell" / butterfly tag. The printed strip carries two panels
+ * separated by a thin neck (the part that folds around the piece):
+ *   - Specs panel  — category + purity heading, gross/less/net weights, QR.
+ *   - Brand panel  — hallmark fineness line, logo + brand name, sub-tagline,
+ *                    and the item serial (SKU / barcode data).
+ * When folded at the neck both panels face out, matching the reference tag.
+ */
+function DumbbellTag({
+  item,
+  size,
+  category,
+  metalType,
+}: {
+  item: Item;
+  size: LabelSize;
+  brand: LabelBrand;
+  category: string;
+  metalType: string;
+}): JSX.Element {
+  const purityLabel = purityCodeForLabel(item.purityCaratX100, metalType);
+  const fineness = finenessForPurity(item.purityCaratX100, metalType);
+  const hallmarked = item.hallmarkStatus === 'CERTIFIED';
+  const hallmarkLine = fineness
+    ? `${fineness}${hallmarked ? ' 100% HALLMARK' : ''}`
+    : (hallmarked ? '100% HALLMARK' : '');
+
+  const gross = toGrams3(item.weightMg + (item.stoneWeightMg ?? 0));
+  const less = toGrams3(item.stoneWeightMg ?? 0);
+  const net = toGrams3(item.weightMg);
+
+  const heading = [category.toUpperCase(), purityLabel].filter(Boolean).join(' ');
+  const serial = item.barcodeData || item.sku;
+
+  // Thin fold neck between the two panels; the panels split the remaining width.
+  const neckMm = Math.max(3, Math.min(8, Math.round(size.width * 0.1)));
+  const qrMm = Math.max(5, Math.min(size.height - 3, 9));
+
+  return (
+    <div
+      className="border border-dashed border-ink-200 print:border-ink-100 flex items-stretch overflow-hidden text-ink-900 bg-ink-0 print:bg-transparent"
+      style={{ width: `${size.width}mm`, height: `${size.height}mm`, breakInside: 'avoid' }}
+    >
+      {/* Specs panel */}
+      <div className="flex-1 min-w-0 p-[1mm] flex flex-col justify-between">
+        <p className="text-[5pt] font-semibold leading-none tracking-tight truncate">{heading}</p>
+        <div className="flex items-end justify-between gap-[1mm]">
+          <div className="font-mono text-[4.5pt] leading-[1.35] tabular-nums whitespace-nowrap">
+            <div>G.Wt : {gross}</div>
+            <div>L.Wt : {less}</div>
+            <div>N.Wt : {net}</div>
+          </div>
+          <InlineQrCode value={serial} sizeMm={qrMm} />
+        </div>
+      </div>
+
+      {/* Fold neck */}
+      <div
+        className="border-l border-r border-dashed border-ink-200 print:border-ink-100 shrink-0"
+        style={{ width: `${neckMm}mm` }}
+        aria-hidden
+      />
+
+      {/* Brand panel — hallmark line at top, serial at bottom. The middle is
+          intentionally left blank (no logo / brand name / tagline). */}
+      <div className="flex-1 min-w-0 p-[1mm] flex flex-col justify-between text-center">
+        {hallmarkLine && (
+          <p className="text-[4.5pt] font-semibold leading-none tracking-wide">{hallmarkLine}</p>
+        )}
+        <p className="font-mono text-[4.5pt] leading-none tracking-wide truncate">{serial}</p>
       </div>
     </div>
   );
