@@ -95,6 +95,24 @@ function parsePurity(raw: unknown): number | null {
   if (s === '14K' || s === '14KT' || s === '1400') return 1400;
   if (s === '9K' || s === '9KT' || s === '900') return 900;
   if (s === '925' || s === 'SILVER' || s === 'STERLING' || s === '0') return 0;
+  // Non-precious "gold tone" / imitation jewellery (e.g. 18K Gold Tone plated
+  // stainless steel) has no metal purity — it's priced by a fixed cost/selling
+  // price, not weight × rate. It's stored the same way silver is (purity 0), so
+  // these labels — and a blank cell, handled by the caller — resolve to 0.
+  if (
+    s === 'NONPRECIOUS' ||
+    s === 'NON-PRECIOUS' ||
+    s === 'NONPRECIOUS(FIXED)' ||
+    s === 'NON-PRECIOUS(FIXED)' ||
+    s === 'FIXED' ||
+    s === 'IMITATION' ||
+    s === 'GOLDTONE' ||
+    s === 'GOLDPLATED' ||
+    s === 'NA' ||
+    s === 'N/A'
+  ) {
+    return 0;
+  }
   if (s === 'PT' || s === 'PLATINUM' || s === 'PT950' || s === '9500') return 9500;
   // Numeric value → match against known purities. We accept only the preset
   // set (PURITY_VALUES) — e.g. 12K stays invalid — so a typo can't silently
@@ -731,7 +749,9 @@ const PO_COLUMN_ALIASES: Record<string, string[]> = {
   costPriceRupees: ['cost', 'cost price', 'cost (₹)', 'cost price (₹)', 'purchase price', 'rate', 'rate (₹)'],
   sellingPriceRupees: ['selling price', 'sell price', 'selling price (₹)', 'mrp', 'tag price', 'retail price'],
   gstRatePercent: ['gst', 'gst rate', 'gst %', 'gst (%)', 'tax rate', 'gst rate (%)'],
-  makingPercent: ['making', 'making %', 'making (%)', 'making charge', 'mc', 'mc%', 'mc (%)'],
+  makingMode: ['making mode', 'mc mode', 'making type'],
+  makingPercent: ['making', 'making %', 'making (%)', 'making charge', 'making charges (%)', 'mc', 'mc%', 'mc (%)'],
+  makingPerGramRupees: ['making per gram', 'making/g', 'making per gram (₹)', 'making/g (₹)', 'mc per gram', 'making charges (per gram)', 'making (per gram)'],
   qty: ['qty', 'quantity', 'pieces', 'count'],
 };
 
@@ -749,7 +769,9 @@ interface ParsedPoLine {
   purity: number;
   costPaise: number;
   sellingPricePaise?: number;
+  makingChargeMode?: 'PERCENTAGE' | 'PER_GRAM';
   makingChargeBps?: number;
+  makingChargePerGramPaise?: number;
   quantity: number;
 }
 
@@ -792,12 +814,18 @@ function validatePoRow(
     errors.push({ row: rowNum, column: 'weight (g)', message: 'Weight must be a positive number in grams' });
   }
 
-  const purity = parsePurity(raw.purity);
+  // Purity is optional for PO lines: a blank cell means non-precious "gold tone"
+  // / imitation jewellery (e.g. 18K Gold Tone), which has no metal purity and is
+  // priced by a fixed cost/selling price. Blank → 0 (how non-precious is stored).
+  // A non-blank but unrecognised value is still an error.
+  const purityBlank = raw.purity == null || String(raw.purity).trim() === '';
+  const purity = purityBlank ? 0 : parsePurity(raw.purity);
   if (purity == null) {
     errors.push({
       row: rowNum,
       column: 'purity',
-      message: 'Purity must be one of 24K, 22K, 18K, 14K, 9K, 925/Silver, or PT/Platinum',
+      message:
+        'Purity must be one of 24K, 22K, 18K, 14K, 9K, 925/Silver, or PT/Platinum — or leave it blank for non-precious (18K Gold Tone) jewellery',
     });
   }
 
@@ -811,10 +839,21 @@ function validatePoRow(
     errors.push({ row: rowNum, column: 'selling price (₹)', message: 'Selling price cannot be negative' });
   }
 
+  // Making charge can be given as a percentage of metal value (default) or as a
+  // flat rupee amount per gram. The Making Mode column selects which; when it's
+  // blank we infer PER_GRAM if only the per-gram column is filled.
+  const makingPerGramRupees = parseNumber(raw.makingPerGramRupees);
+  if (makingPerGramRupees != null && makingPerGramRupees < 0) {
+    errors.push({ row: rowNum, column: 'making/g (₹)', message: 'Making per gram cannot be negative' });
+  }
   const makingPercent = parseNumber(raw.makingPercent);
   if (makingPercent != null && (makingPercent < 0 || makingPercent > 100)) {
     errors.push({ row: rowNum, column: 'making (%)', message: 'Making charge must be between 0 and 100 %' });
   }
+  const makingModeExplicit = raw.makingMode != null && String(raw.makingMode).trim() !== '';
+  const isPerGram = makingModeExplicit
+    ? parseMakingMode(raw.makingMode) === 'PER_GRAM'
+    : makingPerGramRupees != null && makingPercent == null;
 
   const hsn = parseHsn(raw.hsn);
   if (hsn.invalid) errors.push({ row: rowNum, column: 'hsn', message: 'HSN must be 4–8 digits' });
@@ -850,7 +889,10 @@ function validatePoRow(
       purity: purity as number,
       costPaise: Math.round((costPriceRupees as number) * 100),
       sellingPricePaise: sellingPriceRupees != null ? Math.round(sellingPriceRupees * 100) : undefined,
-      makingChargeBps: makingPercent != null ? Math.round(makingPercent * 100) : undefined,
+      makingChargeMode: isPerGram ? 'PER_GRAM' : undefined,
+      makingChargeBps: !isPerGram && makingPercent != null ? Math.round(makingPercent * 100) : undefined,
+      makingChargePerGramPaise:
+        isPerGram && makingPerGramRupees != null ? Math.round(makingPerGramRupees * 100) : undefined,
       quantity: qtyRaw != null ? Math.round(qtyRaw) : 1,
     },
   };
@@ -928,7 +970,9 @@ export async function bulkImportPurchaseOrders(opts: {
             purity: l.purity,
             costPaise: l.costPaise,
             sellingPricePaise: l.sellingPricePaise ?? null,
+            makingChargeMode: l.makingChargeMode ?? null,
             makingChargeBps: l.makingChargeBps ?? null,
+            makingChargePerGramPaise: l.makingChargePerGramPaise ?? null,
             hsnCode: l.hsnCode ?? null,
             gstRateBps: l.gstRateBps ?? null,
             quantity: l.quantity,
@@ -980,11 +1024,14 @@ export function bulkImportPoTemplate(): {
       'Cost Price (₹)',
       'Selling Price (₹)',
       'GST Rate (%)',
+      'Making Mode',
       'Making (%)',
+      'Making/g (₹)',
       'Qty',
     ],
     example: [
       {
+        // Gold line — making charge as a percentage of metal value.
         'PO Ref': 'INV-2201',
         Vendor: 'Rajesh Gold Suppliers',
         SKU: 'RING-22-01',
@@ -997,10 +1044,13 @@ export function bulkImportPoTemplate(): {
         'Cost Price (₹)': 26000,
         'Selling Price (₹)': '',
         'GST Rate (%)': 3,
+        'Making Mode': 'PERCENTAGE',
         'Making (%)': 10,
+        'Making/g (₹)': '',
         Qty: 1,
       },
       {
+        // Gold line — flat making charge in rupees per gram.
         'PO Ref': 'INV-2201',
         Vendor: 'Rajesh Gold Suppliers',
         SKU: 'CHAIN-22-07',
@@ -1013,8 +1063,30 @@ export function bulkImportPoTemplate(): {
         'Cost Price (₹)': 98000,
         'Selling Price (₹)': 112000,
         'GST Rate (%)': 3,
-        'Making (%)': 8,
+        'Making Mode': 'PER_GRAM',
+        'Making (%)': '',
+        'Making/g (₹)': 350,
         Qty: 2,
+      },
+      {
+        // Non-precious "18K Gold Tone" line — leave Purity blank (it has no metal
+        // purity); it's priced by the fixed cost/selling price you enter.
+        'PO Ref': 'INV-2201',
+        Vendor: 'Rajesh Gold Suppliers',
+        SKU: 'GT-RING-01',
+        Name: 'Gold Tone Ring',
+        Category: '18K Gold Tone',
+        Subcategory: 'Rings',
+        HSN: '7113',
+        'Weight (g)': 15,
+        Purity: '',
+        'Cost Price (₹)': 170,
+        'Selling Price (₹)': 1700,
+        'GST Rate (%)': 3,
+        'Making Mode': '',
+        'Making (%)': '',
+        'Making/g (₹)': '',
+        Qty: 15,
       },
     ],
   };
