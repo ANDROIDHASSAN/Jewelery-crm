@@ -6,6 +6,9 @@
   "framework": "vite",
   "rewrites": [
     { "source": "/api/:path*", "destination": "https://goldos-server.onrender.com/api/:path*" },
+    { "source": "/robots.txt", "destination": "https://goldos-server.onrender.com/api/v1/website/robots.txt" },
+    { "source": "/sitemap.xml", "destination": "https://goldos-server.onrender.com/api/v1/website/sitemap.xml" },
+    { "source": "/sitemap-:seg", "destination": "https://goldos-server.onrender.com/api/v1/website/sitemap-:seg" },
     { "source": "/:path*", "destination": "/index.html" }
   ],
   "headers": [

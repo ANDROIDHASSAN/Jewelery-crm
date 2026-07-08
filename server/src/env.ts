@@ -80,6 +80,17 @@ const EnvSchema = z.object({
   // Dev: http://localhost:3000, Prod: https://app.yourdomain.com
   APP_BASE_URL: z.string().url().optional().default('http://localhost:3000'),
 
+  // Public canonical origin of the customer-facing STOREFRONT (not the admin
+  // app). Used to build absolute <loc> URLs in sitemap.xml + the Sitemap: line
+  // in robots.txt. Must be the exact host Google should index (pick www OR
+  // apex, https, no trailing slash) — e.g. https://zelora.com. When empty we
+  // fall back to the request's X-Forwarded-Host (the host Vercel forwards when
+  // it proxies /sitemap.xml to the API), so a first deploy still emits a
+  // working sitemap; set this in production to lock the canonical host.
+  // Empty = derive from the request host (see sitemap.ts). Not `.url()` — that
+  // would reject the empty default; when set it should be a full https origin.
+  STOREFRONT_BASE_URL: z.string().optional().default(''),
+
   SENTRY_DSN: z.string().optional().default(''),
 });
 

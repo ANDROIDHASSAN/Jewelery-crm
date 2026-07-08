@@ -28,6 +28,7 @@ import {
   fetchLoyaltyConfig,
   pointsToPaise,
 } from '../promotions/loyalty.service.js';
+import { registerSitemapRoutes } from './sitemap.js';
 
 export const websiteRouter: Router = Router();
 
@@ -55,6 +56,11 @@ websiteRouter.use((req, res, next) => {
   }
   next();
 });
+
+// SEO surfaces — sitemap.xml (index + per-type children) + robots.txt.
+// Generated from live data; exposed at the clean storefront paths via
+// vercel.json rewrites. Each handler sets its own longer Cache-Control.
+registerSitemapRoutes(websiteRouter);
 
 // Day 17 wires per-tenant subdomain resolution; for now accept ?tenant=, falling
 // back to the canonical tenant (same one the admin sentinel resolves to — see
