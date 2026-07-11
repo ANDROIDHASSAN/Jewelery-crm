@@ -52,6 +52,15 @@ const SHOP_BY_FALLBACK: Array<{ label: string; href: string }> = [
   { label: 'Gifting', href: '/store/collections/gifting' },
 ];
 
+// Fallback config for the 3 homepage product showcases — used only if the CMS
+// `showcases` list is missing a slot. The live config is CMS-managed (Website
+// CMS → Homepage sections → the three "Product showcase" cards).
+const SHOWCASE_FALLBACK: Array<{ eyebrow: string; title: string; categorySlug: string }> = [
+  { eyebrow: 'Top Styles', title: '18K Gold Tone', categorySlug: '18k-gold-tone' },
+  { eyebrow: 'Deals of the week', title: '9 KT Fine Gold', categorySlug: '9-k-fine-gold' },
+  { eyebrow: 'Sterling silver', title: 'Fine Silver', categorySlug: '925-sterling-silver' },
+];
+
 // Trust-badge icon registry — keys must match TrustBadge['icon'] in the slice.
 // The CMS persists `icon: 'shield' | 'sparkles' | 'award'`; the JSX resolves
 // the actual Lucide component via this map so we never serialise React nodes
@@ -296,6 +305,7 @@ export function StorefrontHome(): JSX.Element {
     shopByOccasion,
     browseCategories,
     reels,
+    showcases,
     goldToneFeatured,
     nineKtFeatured,
     silverFeatured,
@@ -361,9 +371,14 @@ export function StorefrontHome(): JSX.Element {
     return { products: curated.length ? curated : auto, subs };
   };
 
-  const goldTone = resolveShowcase('18k-gold-tone', goldToneFeatured);
-  const nineKt = resolveShowcase('9-k-fine-gold', nineKtFeatured);
-  const silver = resolveShowcase('925-sterling-silver', silverFeatured);
+  // Each of the 3 showcase slots is CMS-configured (eyebrow / title / source
+  // category). Falls back to the original hardcoded config for any slot the CMS
+  // hasn't provided, so a legacy content blob still renders.
+  const sc = (i: number): { eyebrow: string; title: string; categorySlug: string } =>
+    showcases?.[i] ?? SHOWCASE_FALLBACK[i]!;
+  const goldTone = resolveShowcase(sc(0).categorySlug, goldToneFeatured);
+  const nineKt = resolveShowcase(sc(1).categorySlug, nineKtFeatured);
+  const silver = resolveShowcase(sc(2).categorySlug, silverFeatured);
 
   return (
     <>
@@ -475,9 +490,9 @@ export function StorefrontHome(): JSX.Element {
           from the category), filterable by sub-category, with a "View all"
           deep-link to the (optionally sub-filtered) collection. */}
       <ProductShowcase
-        eyebrow="Top Styles"
-        title="18K Gold Tone"
-        mainSlug="18k-gold-tone"
+        eyebrow={sc(0).eyebrow}
+        title={sc(0).title}
+        mainSlug={sc(0).categorySlug}
         subCategories={goldTone.subs}
         products={goldTone.products}
         liveRate={liveRate}
@@ -533,9 +548,9 @@ export function StorefrontHome(): JSX.Element {
           category), with sub-category filter pills + "View all". Replaces the
           old "Deals of the week" left-card layout. */}
       <ProductShowcase
-        eyebrow="Deals of the week"
-        title="9 KT Fine Gold"
-        mainSlug="9-k-fine-gold"
+        eyebrow={sc(1).eyebrow}
+        title={sc(1).title}
+        mainSlug={sc(1).categorySlug}
         subCategories={nineKt.subs}
         products={nineKt.products}
         liveRate={liveRate}
@@ -600,9 +615,9 @@ export function StorefrontHome(): JSX.Element {
           sub-category filter pills + "View all". Sits below the Featured
           lookbook. */}
       <ProductShowcase
-        eyebrow="Sterling silver"
-        title="Fine Silver"
-        mainSlug="925-sterling-silver"
+        eyebrow={sc(2).eyebrow}
+        title={sc(2).title}
+        mainSlug={sc(2).categorySlug}
         subCategories={silver.subs}
         products={silver.products}
         liveRate={liveRate}

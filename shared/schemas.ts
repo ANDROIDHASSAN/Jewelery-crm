@@ -1136,6 +1136,20 @@ export const StorefrontContentSchema = z.object({
   // in the Website CMS. Empty = the storefront auto-fills that showcase from the
   // category's published products (the original behaviour). Capped at 8 = the
   // 4×2 homepage grid.
+  // Homepage product-grid showcases — heading + which category feeds each grid.
+  // Optional + default [] so legacy rows validate; the slice seeds the original
+  // three when empty. Capped at 6 (three by default, room to grow).
+  showcases: z
+    .array(
+      z.object({
+        eyebrow: z.string().max(60),
+        title: z.string().max(80),
+        categorySlug: z.string().max(200),
+      }),
+    )
+    .max(6)
+    .optional()
+    .default([]),
   goldToneFeatured: z.array(z.string().min(1).max(160)).max(8).optional().default([]),
   nineKtFeatured: z.array(z.string().min(1).max(160)).max(8).optional().default([]),
   silverFeatured: z.array(z.string().min(1).max(160)).max(8).optional().default([]),

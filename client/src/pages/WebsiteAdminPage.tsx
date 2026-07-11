@@ -2926,6 +2926,7 @@ function HomepageSectionsTab({
   const { data: allProducts = [], isLoading: productsLoading } = useGetPublicProductsQuery();
   const { data: allCategories = [] } = useGetPublicCollectionsQuery();
   const candidatesFor = (mainSlug: string): PublicProduct[] => {
+    if (!mainSlug) return [];
     const main = allCategories.find((c) => c.slug === mainSlug);
     if (!main) return [];
     const ids = new Set<string>([
@@ -2935,6 +2936,77 @@ function HomepageSectionsTab({
     return allProducts.filter((p) => ids.has(p.categoryId));
   };
 
+  // Homepage showcase config — the 3 grids' headings + which category feeds
+  // each. Editors pick the source category from a dropdown of their real main
+  // categories, so a grid can point at (say) "Demifine Jewellery" instead of a
+  // demo slug that doesn't exist. mainCategories powers that dropdown.
+  const mainCategories = allCategories.filter((c) => c.parentId === null);
+  const showcaseList = content.showcases ?? [];
+  const patchShowcase = (
+    i: number,
+    patch: Partial<{ eyebrow: string; title: string; categorySlug: string }>,
+  ): void => {
+    const base = [0, 1, 2].map(
+      (idx) => showcaseList[idx] ?? { eyebrow: '', title: '', categorySlug: '' },
+    );
+    base[i] = { ...base[i]!, ...patch };
+    onPatch({ showcases: base });
+  };
+  const renderShowcaseCard = (
+    i: number,
+    featured: string[],
+    onFeaturedChange: (v: string[]) => void,
+  ): JSX.Element => {
+    const s = showcaseList[i] ?? { eyebrow: '', title: '', categorySlug: '' };
+    const matched = s.categorySlug && mainCategories.some((c) => c.slug === s.categorySlug);
+    return (
+      <Card
+        title={`Product showcase ${i + 1}${s.title ? ` — ${s.title}` : ''}`}
+        desc="A homepage product grid. Set its headings, pick which category feeds it, then optionally curate specific pieces below (empty = auto-fill from the category). Up to 8 (a 4×2 grid)."
+      >
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-4">
+          <Field label="Eyebrow">
+            <Input
+              value={s.eyebrow}
+              placeholder="Top Styles"
+              onChange={(e) => patchShowcase(i, { eyebrow: e.target.value })}
+              className="h-8 text-xs"
+            />
+          </Field>
+          <Field label="Title">
+            <Input
+              value={s.title}
+              placeholder="18K Gold Tone"
+              onChange={(e) => patchShowcase(i, { title: e.target.value })}
+              className="h-8 text-xs"
+            />
+          </Field>
+          <Field label="Source category">
+            <select
+              value={matched ? s.categorySlug : ''}
+              onChange={(e) => patchShowcase(i, { categorySlug: e.target.value })}
+              className="w-full h-8 mt-1 rounded-md border border-ink-200 px-2 text-xs bg-ink-0 focus:outline-none focus:border-brand-500"
+            >
+              <option value="">— None (hide this grid) —</option>
+              {mainCategories.map((c) => (
+                <option key={c.id} value={c.slug}>
+                  {c.name}
+                </option>
+              ))}
+            </select>
+          </Field>
+        </div>
+        <ProductPickerEditor
+          slugs={featured}
+          candidates={candidatesFor(s.categorySlug)}
+          onChange={onFeaturedChange}
+          loading={productsLoading}
+          max={8}
+        />
+      </Card>
+    );
+  };
+
   return (
     <div className="space-y-6">
       {/* Hero video moved to the Hero tab so it lives next to the title /
@@ -2942,46 +3014,12 @@ function HomepageSectionsTab({
           to update what reads as one section on the live site. */}
 
       {/* Curated product showcases — the three category grids on the homepage.
-          Pick specific pieces (drag to reorder); leave empty to auto-fill from
-          the category. The storefront prices/stock these live. */}
-      <Card
-        title="18K Gold Tone showcase (Top Styles)"
-        desc="Products shown in the homepage 18K Gold Tone grid. Empty = auto-fill from the 18k-gold-tone category. Up to 8 (a 4×2 grid)."
-      >
-        <ProductPickerEditor
-          slugs={content.goldToneFeatured ?? []}
-          candidates={candidatesFor('18k-gold-tone')}
-          onChange={(v) => onPatch({ goldToneFeatured: v })}
-          loading={productsLoading}
-          max={8}
-        />
-      </Card>
-
-      <Card
-        title="9 KT Fine Gold showcase"
-        desc="Products shown in the homepage 9 KT Fine Gold grid. Empty = auto-fill from the 9-k-fine-gold category. Up to 8 (a 4×2 grid)."
-      >
-        <ProductPickerEditor
-          slugs={content.nineKtFeatured ?? []}
-          candidates={candidatesFor('9-k-fine-gold')}
-          onChange={(v) => onPatch({ nineKtFeatured: v })}
-          loading={productsLoading}
-          max={8}
-        />
-      </Card>
-
-      <Card
-        title="Fine Silver showcase"
-        desc="Products shown in the homepage Fine Silver grid. Empty = auto-fill from the 925-sterling-silver category. Up to 8 (a 4×2 grid)."
-      >
-        <ProductPickerEditor
-          slugs={content.silverFeatured ?? []}
-          candidates={candidatesFor('925-sterling-silver')}
-          onChange={(v) => onPatch({ silverFeatured: v })}
-          loading={productsLoading}
-          max={8}
-        />
-      </Card>
+          Each grid's headings + source category are editable; pick specific
+          pieces or leave empty to auto-fill from the chosen category. Point a
+          grid at "— None —" to hide it. The storefront prices/stocks these live. */}
+      {renderShowcaseCard(0, content.goldToneFeatured ?? [], (v) => onPatch({ goldToneFeatured: v }))}
+      {renderShowcaseCard(1, content.nineKtFeatured ?? [], (v) => onPatch({ nineKtFeatured: v }))}
+      {renderShowcaseCard(2, content.silverFeatured ?? [], (v) => onPatch({ silverFeatured: v }))}
 
       <Card title="Shop by (pill row under the hero)" desc="The quiet quick-filter pills near the top of the homepage. Each pill: a label and where it links. Use ↑/↓ to reorder. Leave empty to fall back to the built-in metal/price pills.">
         <ListItemEditor

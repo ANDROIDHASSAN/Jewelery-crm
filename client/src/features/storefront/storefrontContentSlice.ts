@@ -68,6 +68,12 @@ export interface DoorCard { eyebrow: string; title: string; body: string; href: 
 // Shop-by-occasion. First card renders large with its body + CTA; the rest are
 // compact image tiles. Each links to a collection (or any route).
 export interface LookbookCard { eyebrow: string; title: string; body: string; ctaLabel: string; href: string; img: string; }
+// One homepage product-grid showcase (the "Top Styles" / "Deals of the week" /
+// "Sterling silver" blocks). `categorySlug` chooses which main category feeds
+// the grid + its "View all" link; `eyebrow`/`title` are the headings. The
+// curated product picks live in the parallel goldToneFeatured / nineKtFeatured /
+// silverFeatured arrays (indexed to the 3 showcase slots).
+export interface HomepageShowcase { eyebrow: string; title: string; categorySlug: string; }
 // One journal / blog post (CMS-managed). Shown as cards in the homepage Blogs
 // section and on the /store/blog index; each opens a detail page at
 // /store/blog/:slug. `date` is an ISO string (YYYY-MM-DD) rendered as a date
@@ -178,6 +184,9 @@ export interface StorefrontContent {
   doorCards: DoorCard[];
   /** Featured "lookbook" editorial cards (1 big + 2). Empty = hide the section. */
   lookbookCards: LookbookCard[];
+  /** The 3 homepage product-grid showcases — headings + which category feeds
+   *  each. Indexed to goldToneFeatured / nineKtFeatured / silverFeatured. */
+  showcases: HomepageShowcase[];
   /** Curated product slugs for the homepage 18K Gold Tone showcase. Empty = auto-fill from the category. */
   goldToneFeatured: string[];
   /** Curated product slugs for the homepage 9 KT Fine Gold showcase. Empty = auto-fill from the category. */
@@ -475,6 +484,14 @@ export const DEFAULT_CONTENT: StorefrontContent = {
     { eyebrow: 'Under ₹50,000', title: 'Gifts that hold value', body: '', ctaLabel: '', href: '/store/collections/gifting', img: 'https://images.unsplash.com/photo-1605100804763-247f67b3557e?auto=format&fit=crop&w=1600&q=92' },
     { eyebrow: 'New · Diamond', title: 'Solitaires, certified', body: '', ctaLabel: '', href: '/store/collections/diamond', img: 'https://images.unsplash.com/photo-1603561591411-07134e71a2a9?auto=format&fit=crop&w=1600&q=92' },
   ],
+  // Homepage showcases — headings + source category per grid. Seeded with the
+  // original three so existing storefronts render identically; an editor can
+  // repoint each grid at any of their real categories from the CMS.
+  showcases: [
+    { eyebrow: 'Top Styles',        title: '18K Gold Tone',  categorySlug: '18k-gold-tone' },
+    { eyebrow: 'Deals of the week', title: '9 KT Fine Gold', categorySlug: '9-k-fine-gold' },
+    { eyebrow: 'Sterling silver',   title: 'Fine Silver',    categorySlug: '925-sterling-silver' },
+  ],
   // Curated showcase product slugs default to empty — each homepage showcase
   // auto-fills from its category until an admin picks specific pieces in the CMS.
   goldToneFeatured: [],
@@ -658,6 +675,7 @@ const slice = createSlice({
         // banner never renders empty (same fallback the other sections use).
         heroSlides: incoming.heroSlides?.length ? incoming.heroSlides : DEFAULT_CONTENT.heroSlides,
         shopBy: incoming.shopBy?.length ? incoming.shopBy : DEFAULT_CONTENT.shopBy,
+        showcases: incoming.showcases?.length ? incoming.showcases : DEFAULT_CONTENT.showcases,
         shopByOccasion: incoming.shopByOccasion?.length ? incoming.shopByOccasion : DEFAULT_CONTENT.shopByOccasion,
         browseCategories: incoming.browseCategories?.length ? incoming.browseCategories : DEFAULT_CONTENT.browseCategories,
         reels: incoming.reels?.length ? incoming.reels : DEFAULT_CONTENT.reels,
