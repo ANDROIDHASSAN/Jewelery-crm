@@ -85,6 +85,55 @@ function tokenizeSlug(slug: string): string[] {
     .filter((t) => t.length >= 2 && !SLUG_STOP_TOKENS.has(t));
 }
 
+// Resolve EVERY category a collection slug should surface — not just one.
+// The catalogue nests jewellery-type sub-categories ("Rings", "Necklaces &
+// Chains", …) under several parent lines ("Demifine Jewellery", "9KT Fine
+// Gold", …). Because slugs derive from the name alone, the same sub-type under
+// two lines produces the same slug (both "Necklaces & Chains" → necklaces-
+// chains). A single homepage tile named "Necklaces & Chains" should therefore
+// show necklaces from ALL lines, so we return every matching category, not an
+// arbitrary first hit.
+//
+// Match order:
+//   1. Exact slug match — returns all categories whose slug equals the URL slug.
+//   2. Fuzzy token-overlap fallback (slug-rename recovery) — every candidate
+//      whose slug tokens are a subset of the URL slug tokens, keeping all
+//      categories tied for the best (longest) token match.
+// Returns [] when nothing matches, so the caller can show the empty state
+// rather than the whole catalogue.
+function matchCategoriesForSlug(
+  categories: PublicCategory[],
+  slug: string,
+): PublicCategory[] {
+  const exact = categories.filter((c) => c.slug === slug);
+  if (exact.length > 0) return exact;
+  const wanted = new Set(tokenizeSlug(slug));
+  let bestScore = 0;
+  const scored: Array<{ cat: PublicCategory; score: number }> = [];
+  for (const c of categories) {
+    const tokens = tokenizeSlug(c.slug);
+    if (tokens.length === 0) continue;
+    // Only count a match when every token of the candidate appears in the URL
+    // slug — this keeps "rings" from matching "9kt-fine-gold".
+    if (tokens.every((t) => wanted.has(t))) {
+      scored.push({ cat: c, score: tokens.length });
+      if (tokens.length > bestScore) bestScore = tokens.length;
+    }
+  }
+  return scored.filter((s) => s.score === bestScore).map((s) => s.cat);
+}
+
+// Last-resort human title from a slug when no category name resolves —
+// "necklaces-and-chains" → "Necklaces And Chains". Only used for the header;
+// a real category name always wins when one matches.
+function prettifySlug(slug: string): string {
+  return slug
+    .split(/[-_/\s]+/)
+    .filter(Boolean)
+    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+    .join(' ');
+}
+
 // Apply collection-slug rules to a product list. Real categories match by
 // slugified name (via /website/collections); pseudo-collections (22k, 18k,
 // under-50k, gifting, silver) use intrinsic product fields.
@@ -127,34 +176,24 @@ function filterBySlug(
     case 'women':
       return products.filter((p) => p.gender === 'WOMEN');
     default: {
-      let cat = categories.find((c) => c.slug === slug);
-      // Fuzzy fallback — token overlap, prefer the longest token-match.
-      if (!cat) {
-        const wanted = new Set(tokenizeSlug(slug));
-        let best: PublicCategory | undefined;
-        let bestScore = 0;
-        for (const c of categories) {
-          const tokens = tokenizeSlug(c.slug);
-          if (tokens.length === 0) continue;
-          // Only count a match when every token of the candidate appears in
-          // the URL slug — this keeps "rings" from matching "9kt-fine-gold".
-          const allHit = tokens.every((t) => wanted.has(t));
-          if (allHit && tokens.length > bestScore) {
-            best = c;
-            bestScore = tokens.length;
-          }
-        }
-        cat = best;
-      }
-      // Still nothing — return an empty list rather than every product.
+      // Every category matching the slug (exact, else best fuzzy) — plural,
+      // because the same sub-type name can live under several parent lines.
+      const matched = matchCategoriesForSlug(categories, slug);
+      // Nothing matched — return an empty list rather than every product.
       // Better UX than silently showing the full catalogue under a wrong
       // collection heading; the empty-state copy below tells the customer
       // there's nothing here yet.
-      if (!cat) return [];
-      const includedIds = new Set<string>([cat.id]);
-      if (!cat.parentId) {
-        for (const c of categories) {
-          if (c.parentId === cat.id) includedIds.add(c.id);
+      if (matched.length === 0) return [];
+      // Roll every matched category into the include set, plus the direct
+      // sub-categories of any top-level match (so a main-category slug also
+      // catches products tagged to its leaves).
+      const includedIds = new Set<string>();
+      for (const cat of matched) {
+        includedIds.add(cat.id);
+        if (!cat.parentId) {
+          for (const c of categories) {
+            if (c.parentId === cat.id) includedIds.add(c.id);
+          }
         }
       }
       return products.filter((p) => includedIds.has(p.categoryId));
@@ -195,7 +234,10 @@ export function CollectionPage(): JSX.Element {
   const baseMeta = !slug
     ? { title: 'All collections', subtitle: 'Every piece in our catalogue, ready to view.' }
     : TITLES[slug] ?? {
-        title: categories.find((c) => c.slug === slug)?.name ?? slug,
+        // Resolve the heading via the same exact-or-fuzzy match the product
+        // filter uses, so a tile slug like "necklaces-and-chains" shows the
+        // real category name ("Necklaces & Chains") instead of the raw slug.
+        title: matchCategoriesForSlug(categories, slug)[0]?.name ?? prettifySlug(slug),
         subtitle: '',
       };
   // When deep-linked to a sub-category, lead with its name and keep the parent
