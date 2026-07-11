@@ -5,6 +5,7 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { LeadInputSchema, IndianPhoneSchema } from '@goldos/shared/schemas';
 import { applySaleToPrePaise, computeBogoDiscountPaise, type SaleOffer } from '@goldos/shared/sale';
+import { slugify } from '@goldos/shared/slug';
 import { rawPrisma } from '../../lib/prisma.js';
 import { runWithTenant } from '../../lib/async-context.js';
 import { resolveCanonicalTenantId } from '../../lib/canonical-tenant.js';
@@ -118,25 +119,23 @@ websiteRouter.get('/storefront', async (req, res, next) => {
   }
 });
 
-// Slugify category names so storefront URLs (/store/collections/<slug>) can
-// resolve to a Category row. We don't store slug on the Category model yet
-// (v1.5), so derive it deterministically here.
-function slugifyName(name: string): string {
-  return name
-    .toLowerCase()
-    .trim()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '');
-}
+// Category slugs for storefront URLs (/store/collections/<slug>) are derived
+// deterministically from the name via the SHARED slugify() (see
+// @goldos/shared/slug) — the same function the CMS uses to auto-fill tile
+// slugs, so a tile link and a category slug can never drift apart.
 
 websiteRouter.get('/collections', async (req, res, next) => {
   try {
     const tenantId = await tenantFromQueryOrFirst(req);
+    // sortOrder first so the storefront honours the admin's chosen ordering
+    // (e.g. showing "Demifine Jewellery" before "9KT Fine Gold" in the mobile
+    // nav tone tabs), with name as a stable tie-breaker. Both default to 0, so
+    // untouched catalogues keep alphabetical order.
     const categories = await rawPrisma.category.findMany({
       where: { tenantId },
-      orderBy: { name: 'asc' },
+      orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }],
     });
-    const withSlugs = categories.map((c) => ({ ...c, slug: slugifyName(c.name) }));
+    const withSlugs = categories.map((c) => ({ ...c, slug: slugify(c.name) }));
     res.json({ data: withSlugs, page: { hasMore: false } });
   } catch (err) {
     next(err);

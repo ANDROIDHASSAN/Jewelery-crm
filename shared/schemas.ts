@@ -1119,6 +1119,10 @@ export const StorefrontContentSchema = z.object({
   whatsappNumber: z.string().regex(/^\d{0,15}$/, 'Digits only, up to 15'),
 
   // --- New CMS-editable sections (all optional with defaults) ---
+  // "Shop by" quick-filter pill row under the hero (label + link). Optional +
+  // default [] so legacy content rows validate; the storefront falls back to
+  // its built-in metal/price pills when empty.
+  shopBy: z.array(FooterLinkSchema).max(12).optional().default([]),
   shopByOccasion: z.array(ShopByOccasionTileSchema).max(12).optional().default([]),
   browseCategories: z.array(BrowseCategoryTileSchema).max(24).optional().default([]),
   reels: z.array(ReelTileSchema).max(12).optional().default([]),

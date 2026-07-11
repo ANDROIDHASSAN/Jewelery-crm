@@ -12,6 +12,7 @@ export default defineConfig({
       { find: /^@goldos\/shared\/types$/, replacement: resolve(__dirname, '../shared/types.ts') },
       { find: /^@goldos\/shared\/bill-math$/, replacement: resolve(__dirname, '../shared/bill-math.ts') },
       { find: /^@goldos\/shared\/sale$/, replacement: resolve(__dirname, '../shared/sale.ts') },
+      { find: /^@goldos\/shared\/slug$/, replacement: resolve(__dirname, '../shared/slug.ts') },
       { find: /^@goldos\/shared$/, replacement: resolve(__dirname, '../shared/index.ts') },
     ],
   },

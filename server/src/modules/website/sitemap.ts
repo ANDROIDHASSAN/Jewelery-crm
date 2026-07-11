@@ -23,6 +23,7 @@ import type { Request, Response, Router } from 'express';
 import { rawPrisma } from '../../lib/prisma.js';
 import { resolveCanonicalTenantId } from '../../lib/canonical-tenant.js';
 import { env } from '../../env.js';
+import { slugify } from '@goldos/shared/slug';
 
 // Tenant for a public request: explicit ?tenant= wins (multi-tenant/preview),
 // else the canonical tenant this deployment's storefront maps to. Same rule the
@@ -33,17 +34,9 @@ async function resolveTenant(req: Request): Promise<string> {
   return resolveCanonicalTenantId();
 }
 
-// Slugify a category name the same way website.routes.ts does, so the
-// /collections/<slug> URLs we emit resolve to the same page the storefront nav
-// links to. Kept in sync deliberately (a shared 6-line helper isn't worth an
-// import cycle).
-function slugifyName(name: string): string {
-  return name
-    .toLowerCase()
-    .trim()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '');
-}
+// Slugify a category name via the SHARED slugify() so the /collections/<slug>
+// URLs we emit resolve to the same page the storefront nav + CMS tiles link to.
+const slugifyName = slugify;
 
 // The canonical public origin for <loc> URLs. Prefer the explicitly-configured
 // canonical host (correct for SEO — one host, never a mix); otherwise rebuild

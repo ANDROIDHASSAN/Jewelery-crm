@@ -11,7 +11,8 @@
     "./types": "./types.ts",
     "./constants": "./constants.ts",
     "./bill-math": "./bill-math.ts",
-    "./sale": "./sale.ts"
+    "./sale": "./sale.ts",
+    "./slug": "./slug.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit"

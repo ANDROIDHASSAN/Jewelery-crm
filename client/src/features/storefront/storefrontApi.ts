@@ -97,6 +97,8 @@ export interface PublicCategory {
   slug: string;
   /** parent category id when this is a sub-category, null for main categories. */
   parentId: string | null;
+  /** Admin-controlled display order (lower = first). Optional for legacy payloads. */
+  sortOrder?: number;
 }
 
 /** A curated inventory Collection (cross-category grouping) for "Shop by Collection". */

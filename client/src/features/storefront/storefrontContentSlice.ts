@@ -166,6 +166,9 @@ export interface StorefrontContent {
   filters: StorefrontFiltersConfig;
 
   // --- New CMS-editable sections ---
+  /** Quiet "Shop by" pill row under the hero. Each pill: label + link (href).
+   *  Empty = fall back to the built-in metal/price pills. */
+  shopBy: FooterLink[];
   shopByOccasion: ShopByOccasionTile[];
   browseCategories: BrowseCategoryTile[];
   reels: ReelTile[];
@@ -399,6 +402,17 @@ export const DEFAULT_CONTENT: StorefrontContent = {
   },
 
   // --- New CMS-editable sections (defaults match the hand-tuned design) ---
+  // "Shop by" pill row — the metal / price / gifting quick-filters under the
+  // hero. Seeded with the original hardcoded set so existing storefronts look
+  // identical until an editor customises them.
+  shopBy: [
+    { label: '22K Gold',       href: '/store/collections/22k' },
+    { label: '18K Gold',       href: '/store/collections/18k' },
+    { label: 'Diamond',        href: '/store/collections/diamond' },
+    { label: 'Silver',         href: '/store/collections/silver' },
+    { label: 'Under ₹50,000',  href: '/store/collections/under-50k' },
+    { label: 'Gifting',        href: '/store/collections/gifting' },
+  ],
   shopByOccasion: [
     { name: 'Bracelets',  slug: '22k',        count: 16, img: '/categories/jewl1.jpg' },
     { name: 'Earrings',   slug: 'daily-wear', count: 16, img: '/categories/jewl2.jpg' },
@@ -643,6 +657,7 @@ const slice = createSlice({
         // Hero carousel — legacy rows pre-date this; seed the defaults so the
         // banner never renders empty (same fallback the other sections use).
         heroSlides: incoming.heroSlides?.length ? incoming.heroSlides : DEFAULT_CONTENT.heroSlides,
+        shopBy: incoming.shopBy?.length ? incoming.shopBy : DEFAULT_CONTENT.shopBy,
         shopByOccasion: incoming.shopByOccasion?.length ? incoming.shopByOccasion : DEFAULT_CONTENT.shopByOccasion,
         browseCategories: incoming.browseCategories?.length ? incoming.browseCategories : DEFAULT_CONTENT.browseCategories,
         reels: incoming.reels?.length ? incoming.reels : DEFAULT_CONTENT.reels,

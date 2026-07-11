@@ -7,6 +7,7 @@ import { useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import { ExternalLink, Plus, Trash2, RotateCcw, CloudUpload, X, Image as ImageIcon, Video as VideoIcon, FileText } from 'lucide-react';
 import { downloadPdf } from '@/lib/downloadPdf';
+import { slugify } from '@goldos/shared/slug';
 import { uploadImageToCloudinary, uploadVideoToCloudinary } from '@/lib/cloudinary';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -787,11 +788,13 @@ export function WebsiteAdminPage(): JSX.Element {
                   onBlur={notify}
                 />
               </Field>
-              <Field label="Image URL">
-                <Input
+              <Field label="Image" hint="Upload a file (≤ 5 MB) or paste an image URL. Saves to Cloudinary.">
+                <ImageFieldCell
                   value={content.story.image}
-                  onChange={(e) => dispatch(updateStory({ image: e.target.value }))}
-                  onBlur={notify}
+                  onChange={(url) => {
+                    dispatch(updateStory({ image: url }));
+                    notify();
+                  }}
                 />
               </Field>
             </Card>
@@ -2244,6 +2247,7 @@ function ListItemEditor<T extends Record<string, unknown>>({
   onChange,
   itemLabel,
   max,
+  autoSlug,
 }: {
   items: readonly T[];
   fields: ReadonlyArray<FieldDef<T>>;
@@ -2252,13 +2256,32 @@ function ListItemEditor<T extends Record<string, unknown>>({
   /** Function returning a short label for the row header — usually the title field. */
   itemLabel?: (item: T, index: number) => string;
   max?: number;
+  /**
+   * Auto-derive a slug field from a label field (via the shared slugify) so
+   * editors never hand-type a slug that mismatches the real category — the bug
+   * that left a "Necklaces & Chains" tile pointing at an empty page. Non-
+   * clobbering: only keeps the slug in sync while it still matches the previous
+   * label's slug (or is blank), so a deliberate manual override is preserved.
+   */
+  autoSlug?: { from: keyof T & string; to: keyof T & string };
 }): JSX.Element {
   function patchItem(idx: number, key: keyof T, value: unknown): void {
     // Cast through unknown: callers know the value-type match (select →
     // literal union, number → number, text → string). TS can't track this
     // narrowing through the generic, so we widen at the assignment line.
+    let extra: Record<string, unknown> = {};
+    if (autoSlug && key === autoSlug.from) {
+      const cur = items[idx];
+      const prevLabel = String((cur?.[autoSlug.from] ?? '') as string);
+      const curSlug = String((cur?.[autoSlug.to] ?? '') as string);
+      // Track the label only while the editor hasn't taken manual control of
+      // the slug (blank, or still equal to the old label's slug).
+      if (!curSlug || curSlug === slugify(prevLabel)) {
+        extra = { [autoSlug.to]: slugify(String(value ?? '')) };
+      }
+    }
     const next = items.map((it, i) =>
-      i === idx ? (({ ...it, [key]: value }) as unknown as T) : it,
+      i === idx ? (({ ...it, [key]: value, ...extra }) as unknown as T) : it,
     );
     onChange(next as T[]);
   }
@@ -2683,8 +2706,13 @@ const HERO_SLIDE_FIELDS = [
 
 const BROWSE_CATEGORY_FIELDS = [
   { key: 'label', label: 'Tile label', type: 'text', span: 2 },
-  { key: 'slug', label: 'Collection slug', type: 'text', placeholder: 'rings', span: 2 },
+  { key: 'slug', label: 'Collection slug (auto from label)', type: 'text', placeholder: 'necklaces-chains', span: 2 },
   { key: 'img', label: 'Image URL', type: 'image', span: 3 },
+] as const;
+
+const SHOP_BY_FIELDS = [
+  { key: 'label', label: 'Pill label', type: 'text', placeholder: '22K Gold', span: 3 },
+  { key: 'href', label: 'Link', type: 'url', placeholder: '/store/collections/22k', span: 3 },
 ] as const;
 
 const REEL_FIELDS = [
@@ -2955,13 +2983,25 @@ function HomepageSectionsTab({
         />
       </Card>
 
-      <Card title="Browse by category (circular marquee)" desc="Each tile: label, slug, image URL. 6–12 tiles recommended.">
+      <Card title="Shop by (pill row under the hero)" desc="The quiet quick-filter pills near the top of the homepage. Each pill: a label and where it links. Use ↑/↓ to reorder. Leave empty to fall back to the built-in metal/price pills.">
+        <ListItemEditor
+          items={content.shopBy ?? []}
+          fields={SHOP_BY_FIELDS as ReadonlyArray<FieldDef<{ label: string; href: string }>>}
+          newItem={() => ({ label: '', href: '/store/collections/' })}
+          onChange={(v) => onPatch({ shopBy: v })}
+          itemLabel={(it) => it.label || 'New pill'}
+          max={12}
+        />
+      </Card>
+
+      <Card title="Browse by category (circular marquee)" desc="Each tile: label, slug, image URL. The slug is filled in automatically from the label (type the category name exactly as it appears in Inventory) so tiles always link to the right collection. 6–12 tiles recommended.">
         <ListItemEditor
           items={content.browseCategories ?? []}
           fields={BROWSE_CATEGORY_FIELDS as ReadonlyArray<FieldDef<{ label: string; slug: string; img: string }>>}
           newItem={() => ({ label: '', slug: '', img: '' })}
           onChange={(v) => onPatch({ browseCategories: v })}
           itemLabel={(it) => it.label || it.slug || 'New tile'}
+          autoSlug={{ from: 'label', to: 'slug' }}
           max={24}
         />
       </Card>

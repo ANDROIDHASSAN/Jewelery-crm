@@ -92,12 +92,17 @@ export function StorefrontHeader(): JSX.Element {
   // active tone falls back to the first available tone on first open.
   const [mobileTone, setMobileTone] = useState<string | null>(null);
   const [categoryOpen, setCategoryOpen] = useState(true);
-  // Tones = top-level categories that actually have sub-categories to show.
+  // Tones = top-level categories that actually have sub-categories to show,
+  // ordered by the admin's Category sortOrder (lower = first) so e.g. "Demifine
+  // Jewellery" can lead "9KT Fine Gold" regardless of alphabetical name. The
+  // server already sorts by sortOrder; we re-sort defensively in case a cached
+  // payload arrives in a different order.
   const tones = useMemo(
     () =>
-      allCategories.filter(
-        (c) => c.parentId === null && allCategories.some((s) => s.parentId === c.id),
-      ),
+      allCategories
+        .filter((c) => c.parentId === null && allCategories.some((s) => s.parentId === c.id))
+        .slice()
+        .sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0)),
     [allCategories],
   );
   const activeToneId =

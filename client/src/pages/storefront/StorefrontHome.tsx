@@ -40,15 +40,16 @@ function formatLiveRate(paise: number | undefined, fallback: string): string {
     : `₹${rupees.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}/g`;
 }
 
-// Fixed "Shop by" pill row — these slugs are part of the router's collection
-// taxonomy, so they belong in code rather than the CMS.
-const SHOP_BY = [
-  { label: '22K Gold', to: '/store/collections/22k' },
-  { label: '18K Gold', to: '/store/collections/18k' },
-  { label: 'Diamond', to: '/store/collections/diamond' },
-  { label: 'Silver', to: '/store/collections/silver' },
-  { label: 'Under ₹50,000', to: '/store/collections/under-50k' },
-  { label: 'Gifting', to: '/store/collections/gifting' },
+// Fallback "Shop by" pill row — used only if the CMS `shopBy` list is somehow
+// empty. The live set is CMS-managed (Website CMS → Homepage sections → Shop by
+// pills) and hydrated into content.shopBy.
+const SHOP_BY_FALLBACK: Array<{ label: string; href: string }> = [
+  { label: '22K Gold', href: '/store/collections/22k' },
+  { label: '18K Gold', href: '/store/collections/18k' },
+  { label: 'Diamond', href: '/store/collections/diamond' },
+  { label: 'Silver', href: '/store/collections/silver' },
+  { label: 'Under ₹50,000', href: '/store/collections/under-50k' },
+  { label: 'Gifting', href: '/store/collections/gifting' },
 ];
 
 // Trust-badge icon registry — keys must match TrustBadge['icon'] in the slice.
@@ -291,6 +292,7 @@ export function StorefrontHome(): JSX.Element {
     heroSlides,
     story,
     rates: cmsRates,
+    shopBy,
     shopByOccasion,
     browseCategories,
     reels,
@@ -420,10 +422,10 @@ export function StorefrontHome(): JSX.Element {
       <section className="bg-[#FDF8F4] border-b border-[#EFE0D2]/60">
         <div className="max-w-[1280px] mx-auto px-4 sm:px-6 py-4 sm:py-6 flex flex-wrap items-center gap-2 md:gap-3">
           <span className="text-eyebrow uppercase text-ink-500 mr-2">Shop by</span>
-          {SHOP_BY.map((s) => (
+          {(shopBy?.length ? shopBy : SHOP_BY_FALLBACK).map((s) => (
             <Link
-              key={s.to}
-              to={s.to}
+              key={`${s.label}-${s.href}`}
+              to={s.href}
               className="px-4 h-9 inline-flex items-center rounded-full border border-[#E8CFC1]/70 bg-ink-0/60 text-sm text-ink-700 hover:border-brand-400 hover:text-ink-900 hover:bg-ink-0 transition-all duration-fast"
             >
               {s.label}
