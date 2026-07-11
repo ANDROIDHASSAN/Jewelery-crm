@@ -86,6 +86,18 @@ export interface PublicProduct {
   inStock: boolean;
 }
 
+/**
+ * Per-slug availability of a cart line, from POST /website/products/availability.
+ * `available` = still exists as a published product; `inStock` = orderable right
+ * now. A deleted/unpublished piece comes back `{ available: false, inStock: false }`.
+ */
+export interface CartAvailability {
+  slug: string;
+  available: boolean;
+  inStock: boolean;
+  name: string | null;
+}
+
 /** A published product on sale — a PublicProduct whose `sale` offer is set. */
 export interface PublicSaleProduct extends PublicProduct {
   sale: { type: 'PERCENT' | 'FLAT' | 'BOGO'; discountBps: number; discountFlatPaise: number; bogo: boolean };
@@ -196,6 +208,19 @@ export const storefrontApi = baseApi.injectEndpoints({
       }),
       transformResponse: (raw: { data: PublicProduct[] }) => raw.data,
       providesTags: [{ type: 'Product', id: 'PUBLIC' }],
+    }),
+    // Batch availability for the current cart slugs. Time-sensitive (stock
+    // changes), so it's never cached — keepUnusedDataFor: 0 + the cart calls it
+    // with refetchOnMountOrArgChange. Pass a SORTED slug list so the RTK cache
+    // key is stable regardless of cart order.
+    getCartAvailability: build.query<CartAvailability[], string[]>({
+      query: (slugs) => ({
+        url: '/website/products/availability',
+        method: 'POST',
+        body: { slugs },
+      }),
+      transformResponse: (raw: { data: CartAvailability[] }) => raw.data,
+      keepUnusedDataFor: 0,
     }),
     // Season Sale feed — published products on sale, each carrying its discount
     // (basis points). Drives the storefront "Season Sales" section.
@@ -511,6 +536,7 @@ export const {
   useGetAdminStorefrontQuery,
   useUpdateStorefrontMutation,
   useGetPublicProductsQuery,
+  useGetCartAvailabilityQuery,
   useGetPublicSaleItemsQuery,
   useGetPublicCollectionsQuery,
   useGetPublicCollectionsListQuery,

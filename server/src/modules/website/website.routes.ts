@@ -354,6 +354,56 @@ websiteRouter.get('/products', async (req, res, next) => {
   }
 });
 
+// Public batch availability check for the storefront cart. Given the cart's
+// slugs, returns per slug whether the piece still exists as a PUBLISHED product
+// and whether it's currently in stock. The cart uses this to drop pieces that
+// were deleted/unpublished from inventory and to badge sold-out pieces —
+// without trusting the (edge-cached, capped-at-60) /products listing, which
+// can't distinguish "deleted" from "not in the first 60". Always fresh.
+websiteRouter.post('/products/availability', async (req, res, next) => {
+  res.setHeader('Cache-Control', 'private, no-store');
+  try {
+    const tenantId = await tenantFromQueryOrFirst(req);
+    const { slugs } = z
+      .object({ slugs: z.array(z.string().min(1).max(200)).max(100) })
+      .parse(req.body);
+    if (slugs.length === 0) {
+      res.json({ data: [] });
+      return;
+    }
+    const products = await rawPrisma.product.findMany({
+      where: { tenantId, isPublished: true, slug: { in: slugs } },
+      select: {
+        slug: true,
+        name: true,
+        linkedItem: {
+          select: { status: true, isSerialized: true, quantityOnHand: true },
+        },
+      },
+    });
+    const bySlug = new Map(products.map((p) => [p.slug, p]));
+    const data = slugs.map((slug) => {
+      const p = bySlug.get(slug);
+      // Absent from the published set → deleted or unpublished. Not orderable.
+      if (!p) return { slug, available: false, inStock: false, name: null };
+      // Same in-stock rule the /products listing uses: a serialized piece must
+      // be IN_STOCK; a lot must have units left. No linked item = always in
+      // stock (marketing-only catalogue entry, no inventory backing).
+      let inStock = true;
+      const li = p.linkedItem;
+      if (li) {
+        const soldSerialized = li.isSerialized && li.status !== 'IN_STOCK';
+        const lotEmpty = !li.isSerialized && li.quantityOnHand <= 0;
+        inStock = !(soldSerialized || lotEmpty);
+      }
+      return { slug, available: true, inStock, name: p.name };
+    });
+    res.json({ data });
+  } catch (err) {
+    next(err);
+  }
+});
+
 // Public Season Sale feed — published products whose linked inventory item is
 // in an ACTIVE Season Sale campaign. Each item carries its own campaign's offer
 // (PERCENT / FLAT / BOGO), so multiple campaigns show side by side.

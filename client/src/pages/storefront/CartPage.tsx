@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import * as Dialog from '@radix-ui/react-dialog';
 import { Minus, Plus, Trash2, ShoppingBag, ShieldCheck, Truck, RotateCcw, X, BadgeCheck } from 'lucide-react';
@@ -9,6 +9,7 @@ import { updateAccount, hydrateFromServer } from '@/features/storefront/shopSlic
 import { useShopActions } from '@/features/storefront/useShopActions';
 import {
   useGetPublicProductsQuery,
+  useGetCartAvailabilityQuery,
   useCreatePublicOrderMutation,
   useVerifyRazorpayPaymentMutation,
 } from '@/features/storefront/storefrontApi';
@@ -28,16 +29,66 @@ export function CartPage(): JSX.Element {
   const [sidebarPricing, setSidebarPricing] = useState<PricingBreakdown | null>(null);
   const [computeSidebarPricing, { isLoading: isSidebarPricingLoading }] = useComputeCheckoutPricingMutation();
 
-  const subtotal = cart.reduce((sum, item) => sum + item.pricePaise * item.qty, 0);
+  // Live availability for the bag. Sorted + de-duped so the RTK cache key is
+  // stable regardless of cart order. Skipped for an empty bag.
+  const cartSlugs = useMemo(
+    () => Array.from(new Set(cart.map((c) => c.slug))).sort(),
+    [cart],
+  );
+  const { data: availability } = useGetCartAvailabilityQuery(cartSlugs, {
+    skip: cartSlugs.length === 0,
+    refetchOnMountOrArgChange: true,
+  });
+  const statusBySlug = useMemo(() => {
+    const m = new Map<string, { available: boolean; inStock: boolean }>();
+    for (const a of availability ?? []) m.set(a.slug, { available: a.available, inStock: a.inStock });
+    return m;
+  }, [availability]);
+  // A line is "sold out" when the piece still exists but has no stock. A line is
+  // "gone" (deleted/unpublished) when it's absent from the availability result.
+  // Until availability loads we treat everything as fine (optimistic) so the bag
+  // doesn't flicker.
+  const isSoldOut = useCallback(
+    (slug: string): boolean => {
+      const s = statusBySlug.get(slug);
+      return Boolean(s && s.available && !s.inStock);
+    },
+    [statusBySlug],
+  );
+  const hasSoldOut = cart.some((c) => isSoldOut(c.slug));
+
+  // Auto-remove pieces that were deleted / unpublished from inventory — they can
+  // never be ordered, so drop them from the bag (with a heads-up) instead of
+  // leaving a dead line. Sold-out pieces are KEPT (badged) so the shopper sees
+  // what happened and can remove them themselves. Depends only on `availability`
+  // so it re-runs when fresh data arrives, not on every render; after removal
+  // the refetch returns without the gone slugs, so it converges.
+  useEffect(() => {
+    if (!availability) return;
+    const gone = cart.filter((c) => statusBySlug.get(c.slug)?.available === false);
+    if (gone.length === 0) return;
+    for (const g of gone) shop.removeFromCart(g.slug, g.productId);
+    toast.message(
+      gone.length === 1
+        ? `“${gone[0]!.name}” is no longer available — removed from your bag.`
+        : `${gone.length} pieces are no longer available — removed from your bag.`,
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [availability]);
+
+  // Only in-stock, available lines count toward the total + checkout. Sold-out
+  // lines stay visible but are excluded until removed.
+  const orderableCart = useMemo(() => cart.filter((c) => !isSoldOut(c.slug)), [cart, isSoldOut]);
+  const subtotal = orderableCart.reduce((sum, item) => sum + item.pricePaise * item.qty, 0);
 
   const refreshSidebarPricing = useCallback(async (code: string | null) => {
-    const items = cart.map((c) => ({ slug: c.slug, qty: c.qty, sizeLabel: c.size }));
+    const items = orderableCart.map((c) => ({ slug: c.slug, qty: c.qty, sizeLabel: c.size }));
     if (items.length === 0) { setSidebarPricing(null); return; }
     try {
       const result = await computeSidebarPricing({ cart_items: items, coupon_code: code ?? undefined }).unwrap();
       setSidebarPricing(result);
     } catch { setSidebarPricing(null); }
-  }, [cart, computeSidebarPricing]);
+  }, [orderableCart, computeSidebarPricing]);
 
   // Compute the full breakdown (incl. sale-wide Buy-1-Get-1) on mount and on
   // every cart/coupon change, so the sidebar summary matches the checkout
@@ -81,10 +132,37 @@ export function CartPage(): JSX.Element {
 
       <div className="grid grid-cols-1 lg:grid-cols-[1fr_380px] gap-8 sm:gap-10 lg:gap-16">
         <section className="space-y-5 sm:space-y-6">
-          {cart.map((item) => (
+          {hasSoldOut && (
+            <div className="rounded-md border border-danger-500/30 bg-danger-50 px-4 py-3 text-sm text-danger-700 flex items-start justify-between gap-3">
+              <span>
+                Some pieces in your bag are <strong>sold out</strong> and won&apos;t be ordered. Remove them to check out.
+              </span>
+              <button
+                type="button"
+                onClick={() => {
+                  cart.filter((c) => isSoldOut(c.slug)).forEach((c) => shop.removeFromCart(c.slug, c.productId));
+                }}
+                className="shrink-0 underline decoration-danger-500 underline-offset-4 hover:text-danger-600"
+              >
+                Remove all
+              </button>
+            </div>
+          )}
+          {cart.map((item) => {
+            const soldOut = isSoldOut(item.slug);
+            return (
             <article key={item.slug} className="flex gap-3 sm:gap-5 pb-5 sm:pb-6 border-b border-[#EFE0D2]">
-              <Link to={`/store/products/${item.slug}`} className="shrink-0 w-20 h-24 sm:w-28 sm:h-32 md:w-32 md:h-36 bg-[#FAF3EE] rounded-sm overflow-hidden">
-                <img src={item.img} alt={item.name} className="h-full w-full object-cover" />
+              <Link to={`/store/products/${item.slug}`} className="relative shrink-0 w-20 h-24 sm:w-28 sm:h-32 md:w-32 md:h-36 bg-[#FAF3EE] rounded-sm overflow-hidden">
+                <img
+                  src={item.img}
+                  alt={item.name}
+                  className={`h-full w-full object-cover ${soldOut ? 'grayscale opacity-60' : ''}`}
+                />
+                {soldOut && (
+                  <span className="absolute top-1.5 left-1.5 bg-ink-900 text-ink-0 text-[9px] uppercase tracking-[0.14em] px-1.5 py-0.5 rounded-sm">
+                    Sold out
+                  </span>
+                )}
               </Link>
               <div className="flex-1 min-w-0 flex flex-col">
                 <Link to={`/store/products/${item.slug}`} className="font-display text-base sm:text-[20px] text-ink-900 truncate hover:text-brand-700 transition-colors">
@@ -93,13 +171,18 @@ export function CartPage(): JSX.Element {
                 <p className="text-xs text-ink-500 mt-1">
                   {item.weight}{item.size ? ` · Size ${item.size}″` : ''}
                 </p>
-                <p className="text-sm text-ink-900 font-mono tabular-nums mt-2">{item.priceLabel}</p>
+                {soldOut ? (
+                  <p className="text-sm text-danger-700 font-medium mt-2">Sold out — remove to continue</p>
+                ) : (
+                  <p className="text-sm text-ink-900 font-mono tabular-nums mt-2">{item.priceLabel}</p>
+                )}
 
                 <div className="mt-auto flex items-center justify-between flex-wrap gap-3 pt-3 sm:pt-4">
-                  <div className="inline-flex items-center h-10 rounded-full border border-[#EFE0D2] bg-ink-0 overflow-hidden">
+                  <div className={`inline-flex items-center h-10 rounded-full border border-[#EFE0D2] bg-ink-0 overflow-hidden ${soldOut ? 'opacity-40 pointer-events-none' : ''}`}>
                     <button
                       onClick={() => shop.setCartQty(item.slug, item.qty - 1, item.productId)}
-                      className="h-10 w-10 inline-flex items-center justify-center text-ink-700 hover:bg-[#FAF3EE]"
+                      disabled={soldOut}
+                      className="h-10 w-10 inline-flex items-center justify-center text-ink-700 hover:bg-[#FAF3EE] disabled:cursor-not-allowed"
                       aria-label="Decrease quantity"
                     >
                       <Minus className="h-4 w-4" />
@@ -107,7 +190,8 @@ export function CartPage(): JSX.Element {
                     <span className="w-8 text-center text-sm font-mono tabular-nums">{item.qty}</span>
                     <button
                       onClick={() => shop.setCartQty(item.slug, item.qty + 1, item.productId)}
-                      className="h-10 w-10 inline-flex items-center justify-center text-ink-700 hover:bg-ink-50"
+                      disabled={soldOut}
+                      className="h-10 w-10 inline-flex items-center justify-center text-ink-700 hover:bg-ink-50 disabled:cursor-not-allowed"
                       aria-label="Increase quantity"
                     >
                       <Plus className="h-4 w-4" />
@@ -124,7 +208,8 @@ export function CartPage(): JSX.Element {
                 </div>
               </div>
             </article>
-          ))}
+            );
+          })}
 
           <div className="flex items-center justify-between flex-wrap gap-3">
             <button
@@ -165,12 +250,15 @@ export function CartPage(): JSX.Element {
             <button
               type="button"
               onClick={() => setCheckoutOpen(true)}
-              className="w-full h-12 rounded-full bg-ink-900 text-ink-0 text-sm font-medium hover:bg-ink-800 transition-colors"
+              disabled={hasSoldOut || orderableCart.length === 0}
+              className="w-full h-12 rounded-full bg-ink-900 text-ink-0 text-sm font-medium hover:bg-ink-800 transition-colors disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-ink-900"
             >
               Place order
             </button>
             <p className="text-[11px] text-ink-500 leading-relaxed">
-              We&apos;ll confirm the day&apos;s gold rate on WhatsApp before billing. No card charged today.
+              {hasSoldOut
+                ? 'Remove the sold-out pieces above to continue to checkout.'
+                : "We'll confirm the day's gold rate on WhatsApp before billing. No card charged today."}
             </p>
           </div>
 
