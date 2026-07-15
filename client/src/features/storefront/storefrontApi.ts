@@ -119,6 +119,16 @@ export interface PublicCollection {
   name: string;
   slug: string;
   description: string | null;
+  sortOrder?: number;
+  /** Live count of PUBLISHED products in this collection, across all metals. */
+  publishedCount?: number;
+  /**
+   * Published product count per metal (from the linked item's category), e.g.
+   * `{ STAINLESS_STEEL: 3, GOLD: 1 }`. A collection is an Item↔Collection M2M
+   * with no metal of its own, so it can span lines — the homepage renders one
+   * collections row per line and each picks its own count from here.
+   */
+  countByMetal?: Record<string, number>;
 }
 
 export interface PublicGoldRate {
@@ -127,7 +137,42 @@ export interface PublicGoldRate {
   stale: boolean;
 }
 
+/**
+ * A coupon the jeweller has opted to advertise (Website → Coupons → "Show on
+ * storefront"). The server only returns codes that are genuinely redeemable
+ * right now — active, in their validity window, and not used up.
+ */
+export interface PublicCoupon {
+  code: string;
+  /** Ready-to-render offer text, e.g. "10% off" / "Buy 2 Get 1 free". */
+  offerLabel: string;
+  /** Minimum cart subtotal in paise; 0 = no minimum. */
+  minCartPaise: number;
+  validUntil: string | null;
+}
+
+/** Where a rate came from. `cms` = typed in Website → Gold rates (no API key). */
+export type PublicRateSource = 'live' | 'cms' | 'live-stale' | 'none';
+
 export interface PublicGoldRateResponse {
+  /**
+   * The published rates. The storefront quotes 9K gold ONLY — no 24K/22K/18K.
+   * With GOLDAPI_KEY attached these are live; otherwise they are the CMS rates.
+   * Platinum is CMS-only (no provider feeds it). null = unconfigured.
+   */
+  gold9kPaise: number | null;
+  silverPaise: number | null;
+  platinum950Paise: number | null;
+  goldSource: PublicRateSource;
+  silverSource: PublicRateSource;
+  platinumSource: PublicRateSource;
+  stale: boolean;
+  cmsUpdatedAt: string | null;
+  /**
+   * Per-purity rates, kept for PRODUCT PRICING only — a piece is priced at its
+   * own registered purity, which may not be 9K. Never render these as a quoted
+   * rate; the storefront shows 9K.
+   */
   rates: PublicGoldRate[];
   asOf: string;
 }
@@ -228,6 +273,14 @@ export const storefrontApi = baseApi.injectEndpoints({
       query: () => ({ url: '/website/sale-items' }),
       transformResponse: (raw: { data: PublicSaleProduct[] }) => raw.data,
       providesTags: [{ type: 'Product', id: 'SALE' }],
+    }),
+    // Coupons the jeweller opted to advertise. Polled on the same 5-min cadence
+    // as the rate, so publishing/unpublishing a code from the admin shows up in
+    // an open session without a reload.
+    getPublicCoupons: build.query<PublicCoupon[], void>({
+      query: () => ({ url: '/website/coupons' }),
+      transformResponse: (raw: { data: PublicCoupon[] }) => raw.data,
+      providesTags: [{ type: 'Coupon', id: 'PUBLIC' }],
     }),
     getPublicCollections: build.query<PublicCategory[], void>({
       query: () => ({ url: '/website/collections' }),
@@ -540,6 +593,7 @@ export const {
   useGetPublicSaleItemsQuery,
   useGetPublicCollectionsQuery,
   useGetPublicCollectionsListQuery,
+  useGetPublicCouponsQuery,
   useGetCollectionItemsQuery,
   useCreateEnquiryMutation,
   useIdentifyCustomerMutation,

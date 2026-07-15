@@ -2100,7 +2100,7 @@ function GoldRateImpactSection(): JSX.Element {
 
   const chartData = (rep?.series ?? []).map((s) => ({
     label: new Date(s.date).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' }),
-    rate: s.rate22KPaise,
+    rate: s.rate9KPaise,
     revenue: s.revenuePaise,
   }));
 
@@ -2116,11 +2116,10 @@ function GoldRateImpactSection(): JSX.Element {
       ['Observation days', rep.meta.observationCount],
       [],
       ['Daily detail'],
-      ['Date', '24K / g (₹)', '22K / g (₹)', 'Revenue (₹)', 'Bills'],
+      ['Date', '9K / g (₹)', 'Revenue (₹)', 'Bills'],
       ...rep.series.map((s) => [
         s.date,
-        paiseToRupeeString(s.rate24KPaise),
-        paiseToRupeeString(s.rate22KPaise),
+        paiseToRupeeString(s.rate9KPaise),
         paiseToRupeeString(s.revenuePaise),
         s.billCount,
       ]),
@@ -2151,7 +2150,7 @@ function GoldRateImpactSection(): JSX.Element {
         </section>
       )}
 
-      <ChartCard title="22K rate vs daily revenue" eyebrow="Macro">
+      <ChartCard title="9K rate vs daily revenue" eyebrow="Macro">
         {isLoading ? (
           <p className="text-sm text-ink-500">Loading…</p>
         ) : chartData.length === 0 ? (
@@ -2163,7 +2162,7 @@ function GoldRateImpactSection(): JSX.Element {
             data={chartData}
             series={[
               { key: 'revenue', name: 'Revenue', color: '#C99B2A' },
-              { key: 'rate', name: '22K rate / g', color: '#6E695F' },
+              { key: 'rate', name: '9K rate / g', color: '#6E695F' },
             ]}
             height={320}
           />
@@ -2176,8 +2175,7 @@ function GoldRateImpactSection(): JSX.Element {
             <thead className="text-eyebrow uppercase text-ink-500 bg-ink-25">
               <tr>
                 <th className="text-left px-4 py-2.5">Date</th>
-                <th className="text-right px-4 py-2.5">24K / g</th>
-                <th className="text-right px-4 py-2.5">22K / g</th>
+                <th className="text-right px-4 py-2.5">9K / g</th>
                 <th className="text-right px-4 py-2.5">Revenue</th>
                 <th className="text-right px-4 py-2.5">Bills</th>
               </tr>
@@ -2186,11 +2184,8 @@ function GoldRateImpactSection(): JSX.Element {
               {rep.series.map((s) => (
                 <tr key={s.date}>
                   <td className="px-4 py-2 font-mono text-xs text-ink-700">{s.date}</td>
-                  <td className="px-4 py-2 text-right text-ink-700">
-                    <Money paise={s.rate24KPaise} />
-                  </td>
                   <td className="px-4 py-2 text-right text-ink-900 font-medium">
-                    <Money paise={s.rate22KPaise} />
+                    <Money paise={s.rate9KPaise} />
                   </td>
                   <td className="px-4 py-2 text-right text-success-700">
                     <Money paise={s.revenuePaise} />

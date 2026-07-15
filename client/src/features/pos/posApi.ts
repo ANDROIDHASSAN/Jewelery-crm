@@ -34,7 +34,24 @@ export const posApi = baseApi.injectEndpoints({
       query: (body) => ({ url: '/pos/customers', method: 'POST', body }),
       invalidatesTags: ['Customer'],
     }),
-    getGoldRate: b.query<ApiOne<{ purity: number; ratePerGramPaise: number; stale: boolean; asOf: string }[]>, void>({
+    // `data` is the per-purity array bill lines price against (a piece is
+    // priced at its own registered purity). `metalRates` is the published
+    // 9K/silver/platinum quote the ticker shows — same three rates, same
+    // precedence, as the dashboard and storefront.
+    getGoldRate: b.query<
+      ApiOne<{ purity: number; ratePerGramPaise: number; stale: boolean; asOf: string }[]> & {
+        metalRates: {
+          gold9kPaise: number | null;
+          silverPaise: number | null;
+          platinum950Paise: number | null;
+          goldSource: 'live' | 'cms' | 'live-stale' | 'none';
+          silverSource: 'live' | 'cms' | 'live-stale' | 'none';
+          platinumSource: 'live' | 'cms' | 'live-stale' | 'none';
+          stale: boolean;
+        };
+      },
+      void
+    >({
       query: () => '/pos/gold-rate',
       providesTags: ['GoldRate'],
     }),

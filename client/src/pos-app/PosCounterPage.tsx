@@ -63,6 +63,7 @@ import { enqueueOffline, isReallyOnline } from '@/features/pos/offline';
 import type { Item } from '@goldos/shared/types';
 import type { PaymentMode } from '@goldos/shared/constants';
 import { computeBillTotals, taxableFromInclusivePaise } from '@goldos/shared/bill-math';
+import { metalPurityLabel, type MetalTypeLike } from '@goldos/shared/metal-rate';
 import { applySaleToPrePaise } from '@goldos/shared/sale';
 import type { ItemSaleOffer } from '@/features/inventory/inventoryApi';
 
@@ -155,14 +156,11 @@ function newPaymentRow(mode: PaymentMode, amountPaise = 0): PaymentRow {
   };
 }
 
-const PURITY_LABEL: Record<number, string> = {
-  2400: '24K',
-  2200: '22K',
-  1800: '18K',
-  1400: '14K',
-  0: 'Silver',
-  9500: 'Pt',
-};
+// Purity labels come from shared/metal-rate's metalPurityLabel(metalType, purity).
+// There used to be a PURITY_LABEL map keyed on purity alone here, which got two
+// things wrong: purity 0 rendered as "Silver" even for stainless steel (0 is a
+// shared "no carat" sentinel), and 9K gold (900) missed every key and fell
+// through to a "9c" fallback.
 
 // ---------------------------------------------------------------------------
 // Page
@@ -266,6 +264,19 @@ function PosBillingScreen(): JSX.Element {
         list.push(c.id);
         map.set(c.parentId, list);
       }
+    }
+    return map;
+  }, [categories]);
+  // Effective metal per category (a sub inherits its main's metal). Purity alone
+  // cannot name a metal — 0 means "no carat" for BOTH silver and non-precious —
+  // so every purity label on this page needs this to avoid printing "Silver" on
+  // gold-tone stainless steel.
+  const metalByCategoryId = useMemo(() => {
+    const byId = new Map(categories.map((c) => [c.id, c]));
+    const map = new Map<string, MetalTypeLike>();
+    for (const c of categories) {
+      const main = c.parentId ? byId.get(c.parentId) : c;
+      map.set(c.id, ((main ?? c).metalType ?? null) as MetalTypeLike);
     }
     return map;
   }, [categories]);
@@ -876,7 +887,13 @@ function PosBillingScreen(): JSX.Element {
             ) : (
               <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-3 sm:gap-4">
                 {filteredItems.map((it) => (
-                  <ProductCard key={it.id} item={it} rates={rates} onAdd={() => addItem(it)} />
+                  <ProductCard
+                    key={it.id}
+                    item={it}
+                    rates={rates}
+                    metalType={metalByCategoryId.get(it.categoryId) ?? null}
+                    onAdd={() => addItem(it)}
+                  />
                 ))}
               </div>
             )}
@@ -888,6 +905,7 @@ function PosBillingScreen(): JSX.Element {
             so the catalog doesn't collapse below 2 columns. */}
         <aside className="hidden lg:flex flex-col w-[420px] xl:w-[460px] 2xl:w-[500px] shrink-0 bg-ink-0">
           <BillAndPaymentColumn
+            metalByCategoryId={metalByCategoryId}
             billNumber={billNumber}
             lines={lines}
             customer={customer}
@@ -942,6 +960,7 @@ function PosBillingScreen(): JSX.Element {
       <Sheet open={billDrawerOpen} onOpenChange={(v) => { if (!v) setBillDrawerOpen(false); }}>
         <SheetContent side="right" className="w-full sm:max-w-md md:max-w-lg p-0 flex flex-col">
           <BillAndPaymentColumn
+            metalByCategoryId={metalByCategoryId}
             billNumber={billNumber}
             lines={lines}
             customer={customer}
@@ -1224,10 +1243,12 @@ function CatalogToolbar({
 function ProductCard({
   item,
   rates,
+  metalType,
   onAdd,
 }: {
   item: Item & { name?: string | null; images?: string[] };
   rates: Array<{ purity: number; ratePerGramPaise: number; stale: boolean }> | undefined;
+  metalType: MetalTypeLike;
   onAdd: () => void;
 }): JSX.Element {
   const rate = rateForPurity(rates, item.purityCaratX100);
@@ -1236,7 +1257,7 @@ function ProductCard({
   // A fixed selling price is the all-in tag price (incl. GST); show it directly.
   // Otherwise show the live indicative (metal + making, pre-GST).
   const indicative = item.sellingPricePaise != null ? item.sellingPricePaise : goldValue + making;
-  const purityLabel = PURITY_LABEL[item.purityCaratX100] ?? `${item.purityCaratX100 / 100}c`;
+  const purityLabel = metalPurityLabel(metalType, item.purityCaratX100);
   const heroImage = cloudinaryThumb(item.images?.[0] ?? null, 360);
   const displayName = item.name?.trim() || item.sku;
   return (
@@ -1361,6 +1382,9 @@ interface BillColumnProps {
   removeSplit: (id: string) => void;
   charging: boolean;
   onCharge: () => void;
+  /** categoryId → effective metal. Purity alone can't name the metal (0 is a
+   *  shared "no carat" sentinel for silver AND non-precious). */
+  metalByCategoryId: Map<string, MetalTypeLike>;
 }
 
 function BillAndPaymentColumn(props: BillColumnProps): JSX.Element {
@@ -1368,7 +1392,7 @@ function BillAndPaymentColumn(props: BillColumnProps): JSX.Element {
     billNumber, lines, customer, removeLine, clearCart, onPark, parking,
     subtotal, making, stone, exchangeValue, discountPaise, loyaltyPaise,
     cgst, sgst, igst, grandTotal,
-    tab, onTabChange,
+    tab, onTabChange, metalByCategoryId,
   } = props;
   return (
     <div className="flex flex-col h-full overflow-hidden">
@@ -1397,7 +1421,14 @@ function BillAndPaymentColumn(props: BillColumnProps): JSX.Element {
             Scan a barcode or tap an item to start the bill.
           </div>
         ) : (
-          lines.map((l) => <BillLineRow key={l.id} line={l} onRemove={() => removeLine(l.id)} />)
+          lines.map((l) => (
+            <BillLineRow
+              key={l.id}
+              line={l}
+              metalType={metalByCategoryId.get(l.categoryId) ?? null}
+              onRemove={() => removeLine(l.id)}
+            />
+          ))
         )}
       </div>
 
@@ -1444,8 +1475,16 @@ function BillAndPaymentColumn(props: BillColumnProps): JSX.Element {
   );
 }
 
-function BillLineRow({ line, onRemove }: { line: CartLine; onRemove: () => void }): JSX.Element {
-  const purityLabel = PURITY_LABEL[line.purityCaratX100] ?? `${line.purityCaratX100 / 100}c`;
+function BillLineRow({
+  line,
+  metalType,
+  onRemove,
+}: {
+  line: CartLine;
+  metalType: MetalTypeLike;
+  onRemove: () => void;
+}): JSX.Element {
+  const purityLabel = metalPurityLabel(metalType, line.purityCaratX100);
   const thumb = cloudinaryThumb(line.imageUrl, 96);
   // Season Sale badge + struck price. PERCENT/FLAT show the cut price; BOGO shows
   // just a badge (whether this exact unit is free depends on cart pairing).

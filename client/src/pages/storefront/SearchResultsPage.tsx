@@ -7,7 +7,7 @@ import {
   useGetPublicCollectionsQuery,
   useGetPublicGoldRateQuery,
 } from '@/features/storefront/storefrontApi';
-import { storefrontTotalPaise, productMetaLabel } from '@/features/storefront/pricing';
+import { productMetaLabel, productPriceView } from '@/features/storefront/pricing';
 
 export function SearchResultsPage(): JSX.Element {
   const [params] = useSearchParams();
@@ -119,19 +119,34 @@ export function SearchResultsPage(): JSX.Element {
           <h2 className="font-display text-xl sm:text-[22px] text-ink-900 mb-4 sm:mb-5">Pieces</h2>
           <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-x-3 gap-y-8 sm:gap-x-5 sm:gap-y-10">
             {productMatches.map((p) => {
-              // GST-inclusive price (same as the product page + checkout).
-              const price = storefrontTotalPaise(p, rates);
+              // GST-inclusive price INCLUDING any Season Sale offer — the same
+              // number the card, the PDP and checkout show. Rendering the raw
+              // pre-offer total here made a discounted piece look full-price in
+              // search while the Sale row showed it reduced.
+              const price = productPriceView(p, rates);
               // Material label — never fakes "Silver" for non-precious / gold-tone.
               const meta = productMetaLabel(p);
               return (
                 <Link key={p.id} to={`/store/products/${p.slug}`} className="group block">
-                  <div className="aspect-[4/5] overflow-hidden bg-ink-100">
+                  <div className="relative aspect-[4/5] overflow-hidden bg-ink-100">
                     <img src={p.images[0] ?? ''} alt={p.name} className="h-full w-full object-cover group-hover:scale-[1.03] transition-transform duration-slow" loading="lazy" />
+                    {price.badge && (
+                      <span className="absolute top-2 right-2 z-10 bg-brand-600 text-ink-0 text-[10px] font-semibold uppercase tracking-[0.12em] px-2 py-1 rounded-sm shadow-sm">
+                        {price.badge}
+                      </span>
+                    )}
                   </div>
                   <div className="mt-3 sm:mt-4">
                     <h3 className="font-display text-base sm:text-[17px] text-ink-900 leading-tight">{p.name}</h3>
                     <p className="text-[11px] sm:text-xs text-ink-500 mt-1">{(p.weightMg / 1000).toFixed(2)} g{meta ? ` · ${meta}` : ''}</p>
-                    <p className="text-sm text-ink-900 font-mono tabular-nums mt-1 sm:mt-1.5">₹{(price / 100).toLocaleString('en-IN')}</p>
+                    <p className="text-sm text-ink-900 font-mono tabular-nums mt-1 sm:mt-1.5 flex items-baseline gap-1.5">
+                      <span>₹{(price.finalPaise / 100).toLocaleString('en-IN')}</span>
+                      {price.hasStrike && (
+                        <span className="text-xs text-ink-400 line-through">
+                          ₹{(price.originalPaise / 100).toLocaleString('en-IN')}
+                        </span>
+                      )}
+                    </p>
                   </div>
                 </Link>
               );

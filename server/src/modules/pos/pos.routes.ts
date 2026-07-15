@@ -3,6 +3,8 @@ import { z } from 'zod';
 import { BillCreateSchema, IndianPhoneSchema } from '@goldos/shared/schemas';
 import * as svc from './pos.service.js';
 import { readGoldRatePaise } from '../../lib/redis.js';
+import { resolveMetalRates } from '../../lib/metal-rate.js';
+import { metalPurityLabel, type MetalTypeLike } from '@goldos/shared/metal-rate';
 import { prisma } from '../../lib/prisma.js';
 import { NotFoundError } from '../../lib/errors.js';
 import { requirePermission } from '../../middleware/require-permission.js';
@@ -211,12 +213,19 @@ posRouter.get('/bills/:id/receipt.pdf', async (req, res, next) => {
 
           return {
             description: l.item?.name ?? 'Jewellery piece',
-            details: isQtyPriced
-              ? undefined
-              : [
-                  purity ? `${(purity / 100).toFixed(0)}K Gold` : null,
-                  huid ? `HUID ${huid}` : null,
-                ].filter(Boolean).join(' · ') || undefined,
+            // Material label. This used to hardcode `${purity/100}K Gold` for
+            // every weight-priced line, which invoiced Pt 950 as "95K Gold" and
+            // dropped the label entirely for silver (purity 0 is falsy). The
+            // canonical labeller reads the metal, not the purity — and it now
+            // labels fixed-price pieces "Non-precious" instead of leaving a
+            // customer's tax invoice with no material named at all.
+            details:
+              [
+                metalPurityLabel((metalType ?? null) as MetalTypeLike, purity ?? 0),
+                huid ? `HUID ${huid}` : null,
+              ]
+                .filter(Boolean)
+                .join(' · ') || undefined,
             qty: 1,
             unitPaise: l.linePaise,
             amountPaise: l.linePaise,
@@ -307,21 +316,40 @@ posRouter.get('/customers/search', async (req, res, next) => {
   }
 });
 
+// Rates for the POS ticker. The ticker quotes 9K gold / silver / platinum —
+// the same three rates as the dashboard and the storefront, resolved through
+// the same precedence (live feed when GOLDAPI_KEY is attached, else the CMS
+// rates). Bill lines still price a piece at its OWN purity, so the per-purity
+// array stays in the payload for pos.service to resolve against.
 posRouter.get('/gold-rate', async (_req, res, next) => {
   try {
-    const purities = [2400, 2200, 1800, 1400, 0];
-    const data = await Promise.all(
-      purities.map(async (p) => {
-        const cached = await readGoldRatePaise(p);
-        return {
-          purity: p,
-          ratePerGramPaise: cached?.paise ?? 0,
-          stale: cached?.stale ?? true,
-          asOf: new Date().toISOString(),
-        };
-      }),
-    );
-    res.json({ data });
+    const purities = [900, 2400, 2200, 1800, 1400, 0];
+    const [byPurity, rates] = await Promise.all([
+      Promise.all(
+        purities.map(async (p) => {
+          const cached = await readGoldRatePaise(p);
+          return {
+            purity: p,
+            ratePerGramPaise: cached?.paise ?? 0,
+            stale: cached?.stale ?? true,
+            asOf: new Date().toISOString(),
+          };
+        }),
+      ),
+      resolveMetalRates(),
+    ]);
+    res.json({
+      data: byPurity,
+      metalRates: {
+        gold9kPaise: rates.gold9kPaise,
+        silverPaise: rates.silverPaise,
+        platinum950Paise: rates.platinum950Paise,
+        goldSource: rates.goldSource,
+        silverSource: rates.silverSource,
+        platinumSource: rates.platinumSource,
+        stale: rates.stale,
+      },
+    });
   } catch (err) {
     next(err);
   }

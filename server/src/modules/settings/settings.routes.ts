@@ -269,12 +269,15 @@ settingsRouter.get('/integrations', async (_req, res, next) => {
         envKeys: ['SHIPROCKET_EMAIL', 'SHIPROCKET_PASSWORD'],
       },
       {
+        // Key is `mcx_gold` for backwards compatibility with saved settings —
+        // the provider is GoldAPI.io, and has been for a while. The old copy
+        // here claimed a real-time 5-minute MCX feed, which was never true.
         key: 'mcx_gold',
-        name: 'MCX live gold rate',
+        name: 'Live gold & silver rate',
         description:
-          'Replace the demo rate with the real-time MCX 22K/18K/silver feed, refreshed every 5 minutes.',
+          'Attach a GoldAPI.io key to price gold and silver off the live market once a day. Without it, the rates you enter in Website → Gold rates are used instead. Platinum always comes from Website → Gold rates.',
         connected: Boolean(env.GOLDAPI_KEY),
-        link: 'https://www.mcxindia.com',
+        link: 'https://www.goldapi.io',
         envKeys: ['GOLDAPI_KEY'],
       },
     ];

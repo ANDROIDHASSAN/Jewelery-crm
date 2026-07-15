@@ -21,7 +21,7 @@ import {
 import {
   productMaterialLabel,
   productMetaLabel,
-  storefrontTotalPaise,
+  productPriceView,
   isNonPrecious,
   computeSalePrice,
 } from '@/features/storefront/pricing';
@@ -197,6 +197,10 @@ export function ProductDetailPage(): JSX.Element {
   // Season Sale offer (% off / ₹ off / BOGO) — drives the struck price + badge.
   const offer = computeSalePrice(total, product.sale);
   const salePrice = offer?.discountedPaise ?? total;
+  // What the cut is actually worth. 0 for BOGO-only offers (no per-unit price
+  // change) and when there's no offer at all. Clamped so a FIXED_PRICE offer set
+  // ABOVE the computed price can't render a negative "discount".
+  const discountPaise = Math.max(0, total - salePrice);
 
   // Human label for the pill — "22K", "18K", "Silver", "Stainless Steel", "Pt 950", or the
   // exact carat for custom alloys.
@@ -684,11 +688,49 @@ export function ProductDetailPage(): JSX.Element {
                   <Row label="GST (3%)" value={<Money paise={gst} />} />
                 </div>
 
-                {/* Grand total */}
-                <div className="border-t border-ink-100 pt-3 flex items-center justify-between">
-                  <span className="text-ink-900 font-medium">Grand Total</span>
-                  <Money paise={total} className="text-ink-900 font-medium font-mono tabular-nums" />
-                </div>
+                {/* Grand total.
+                    The Season Sale cut applies to the GST-INCLUSIVE total (that's
+                    what computeSalePrice is handed), so it lands below the tax
+                    line rather than in the charges block above.
+                    This used to end at `total` — the pre-discount price — so a
+                    piece on 30% off showed ₹1,700.00 here while the buy box
+                    charged ₹1,190.00. */}
+                {discountPaise > 0 ? (
+                  <div className="border-t border-ink-100 pt-3 space-y-2">
+                    <Row
+                      label="Sub total"
+                      value={<Money paise={total} />}
+                    />
+                    <div className="flex items-center justify-between">
+                      <span className="text-success-700">
+                        Discount{offer?.priceBadge ? ` · ${offer.priceBadge}` : ''}
+                      </span>
+                      <span className="text-success-700 font-mono tabular-nums">
+                        −<Money paise={discountPaise} withSymbol />
+                      </span>
+                    </div>
+                    <div className="border-t border-ink-100 pt-3 flex items-center justify-between">
+                      <span className="text-ink-900 font-medium">Grand Total</span>
+                      <Money paise={salePrice} className="text-ink-900 font-medium font-mono tabular-nums" />
+                    </div>
+                    <p className="text-xs text-success-700">
+                      You save <Money paise={discountPaise} withSymbol /> on this piece.
+                    </p>
+                  </div>
+                ) : (
+                  <div className="border-t border-ink-100 pt-3 flex items-center justify-between">
+                    <span className="text-ink-900 font-medium">Grand Total</span>
+                    <Money paise={salePrice} className="text-ink-900 font-medium font-mono tabular-nums" />
+                  </div>
+                )}
+                {/* BOGO carries no per-unit price cut — the second piece is free
+                    at checkout depending on cart pairing — so it gets a note
+                    rather than a discount line that would misstate this total. */}
+                {offer?.bogo && (
+                  <p className="text-xs text-brand-700">
+                    Buy 1 Get 1 free — add a pair to the bag to see it applied.
+                  </p>
+                )}
               </div>
             </Accordion>
             <Accordion
@@ -744,27 +786,42 @@ export function ProductDetailPage(): JSX.Element {
           </Link>
         </div>
         <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-x-3 gap-y-8 sm:gap-x-5 sm:gap-y-10 md:gap-x-6">
-          {related.map((p) => (
-            <Link key={p.slug} to={`/store/products/${p.slug}`} className="group block">
-              <div className="aspect-[4/5] overflow-hidden bg-ink-100">
-                <img
-                  src={p.images[0] ?? ''}
-                  alt={p.name}
-                  className="h-full w-full object-cover group-hover:scale-[1.03] transition-transform duration-slow"
-                  loading="lazy"
-                />
-              </div>
-              <div className="mt-3 sm:mt-4">
-                <h3 className="font-display text-base sm:text-[17px] leading-tight text-ink-900">{p.name}</h3>
-                <p className="text-[11px] sm:text-xs text-ink-500 mt-1">
-                  {(p.weightMg / 1000).toFixed(2)} g{productMetaLabel(p) ? ` · ${productMetaLabel(p)}` : ''}
-                </p>
-                <p className="text-sm text-ink-900 font-mono tabular-nums mt-1 sm:mt-1.5">
-                  ₹{(storefrontTotalPaise(p, liveRate?.rates) / 100).toLocaleString('en-IN')}
-                </p>
-              </div>
-            </Link>
-          ))}
+          {related.map((p) => {
+            // Same offer treatment as every other grid — a discounted piece must
+            // not read full price just because it's in the "related" strip.
+            const rp = productPriceView(p, liveRate?.rates);
+            return (
+              <Link key={p.slug} to={`/store/products/${p.slug}`} className="group block">
+                <div className="relative aspect-[4/5] overflow-hidden bg-ink-100">
+                  <img
+                    src={p.images[0] ?? ''}
+                    alt={p.name}
+                    className="h-full w-full object-cover group-hover:scale-[1.03] transition-transform duration-slow"
+                    loading="lazy"
+                  />
+                  {rp.badge && (
+                    <span className="absolute top-2 right-2 z-10 bg-brand-600 text-ink-0 text-[10px] font-semibold uppercase tracking-[0.12em] px-2 py-1 rounded-sm shadow-sm">
+                      {rp.badge}
+                    </span>
+                  )}
+                </div>
+                <div className="mt-3 sm:mt-4">
+                  <h3 className="font-display text-base sm:text-[17px] leading-tight text-ink-900">{p.name}</h3>
+                  <p className="text-[11px] sm:text-xs text-ink-500 mt-1">
+                    {(p.weightMg / 1000).toFixed(2)} g{productMetaLabel(p) ? ` · ${productMetaLabel(p)}` : ''}
+                  </p>
+                  <p className="text-sm text-ink-900 font-mono tabular-nums mt-1 sm:mt-1.5 flex items-baseline gap-1.5">
+                    <span>₹{(rp.finalPaise / 100).toLocaleString('en-IN')}</span>
+                    {rp.hasStrike && (
+                      <span className="text-xs text-ink-400 line-through">
+                        ₹{(rp.originalPaise / 100).toLocaleString('en-IN')}
+                      </span>
+                    )}
+                  </p>
+                </div>
+              </Link>
+            );
+          })}
         </div>
       </section>
 

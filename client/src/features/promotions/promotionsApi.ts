@@ -55,6 +55,12 @@ export interface AdminCoupon {
   bxgyJson: unknown | null;
   stackable: boolean;
   isActive: boolean;
+  /**
+   * Advertise this code in the storefront announcement bar. Separate from
+   * `isActive` on purpose — active only means redeemable, and private codes
+   * (goodwill, partner) are active too. Publishing is an explicit opt-in.
+   */
+  showOnStorefront: boolean;
   createdAt: string;
   _count: { usages: number };
 }
@@ -75,6 +81,7 @@ export interface CouponCreateInput {
   bxgyJson?: unknown | null;
   stackable?: boolean;
   isActive?: boolean;
+  showOnStorefront?: boolean;
 }
 
 export interface LoyaltyConfigData {

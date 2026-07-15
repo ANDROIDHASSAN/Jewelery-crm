@@ -10,6 +10,7 @@ import { rawPrisma } from '../../lib/prisma.js';
 import { runWithTenant } from '../../lib/async-context.js';
 import { resolveCanonicalTenantId } from '../../lib/canonical-tenant.js';
 import { readGoldRatePaise } from '../../lib/redis.js';
+import { resolveMetalRates } from '../../lib/metal-rate.js';
 import { bustKey } from '../../lib/cache.js';
 import {
   createRazorpayOrder,
@@ -81,21 +82,32 @@ async function tenantFromQueryOrFirst(req: { query: Record<string, unknown> }): 
   return resolveCanonicalTenantId();
 }
 
-// Public live gold/silver rate. Hydrated by the worker from GoldAPI.io once a
-// day; we just expose what's in Redis so the storefront ticker, PDP rate pill,
-// and homepage rate strip can show today's actual number instead of a stale
-// CMS string. No tenant scope — the metal rate is national.
-websiteRouter.get('/gold-rate', async (_req, res, next) => {
+// Public metal rates for the storefront ticker + PDP rate pill.
+//
+// The storefront quotes 9K gold only (plus silver, and platinum for Pt pieces).
+// With GOLDAPI_KEY attached the live feed wins; without it we serve the rates an
+// editor typed into Website → Gold rates. Platinum is CMS-only either way.
+//
+// Unlike the live feed (national), the CMS fallback is per-tenant, so this route
+// has to resolve a tenant before it can read it.
+websiteRouter.get('/gold-rate', async (req, res, next) => {
   try {
-    const purities = [2400, 2200, 1800, 1400, 0] as const;
-    const rows = await Promise.all(purities.map((p) => readGoldRatePaise(p)));
+    const tenantId = await resolveTenant(req);
+    const rates = await resolveMetalRates({ tenantId });
     res.json({
       data: {
-        rates: purities.map((p, i) => ({
-          purity: p,
-          ratePerGramPaise: rows[i]?.paise ?? 0,
-          stale: rows[i]?.stale ?? true,
-        })),
+        gold9kPaise: rates.gold9kPaise,
+        silverPaise: rates.silverPaise,
+        platinum950Paise: rates.platinum950Paise,
+        goldSource: rates.goldSource,
+        silverSource: rates.silverSource,
+        platinumSource: rates.platinumSource,
+        stale: rates.stale,
+        cmsUpdatedAt: rates.cmsUpdatedAt,
+        // Legacy shape: the per-purity array the storefront pricing helpers and
+        // PDP still resolve a piece's own purity against. 9K is the published
+        // basis; the rest stay populated for pieces registered at other purities.
+        rates: (await legacyPurityRates()).map((r) => r),
         asOf: new Date().toISOString(),
       },
     });
@@ -103,6 +115,19 @@ websiteRouter.get('/gold-rate', async (_req, res, next) => {
     next(err);
   }
 });
+
+/** The per-purity rate array kept for product pricing (which prices a piece at its own purity). */
+async function legacyPurityRates(): Promise<
+  Array<{ purity: number; ratePerGramPaise: number; stale: boolean }>
+> {
+  const purities = [900, 2400, 2200, 1800, 1400, 0] as const;
+  const rows = await Promise.all(purities.map((p) => readGoldRatePaise(p)));
+  return purities.map((p, i) => ({
+    purity: p,
+    ratePerGramPaise: rows[i]?.paise ?? 0,
+    stale: rows[i]?.stale ?? true,
+  }));
+}
 
 // Public read of the storefront content blob. Drives the entire homepage.
 websiteRouter.get('/storefront', async (req, res, next) => {
@@ -224,6 +249,99 @@ websiteRouter.get('/collections/:slug/items', async (req, res, next) => {
 // the storefront "Shop by Collection" menu. Only collections that contain at
 // least one published product are returned, so the menu never links to an
 // empty page. Items within a collection are fetched via /collections/:slug/items.
+/** Human offer text for a coupon, e.g. "10% off" / "₹500 off" / "Buy 2 Get 1 free". */
+function couponOfferLabel(c: {
+  type: string;
+  valueBps: number;
+  valuePaise: number;
+  bxgyJson: unknown;
+}): string {
+  switch (c.type) {
+    case 'PERCENT':
+      return `${Math.round(c.valueBps / 100)}% off`;
+    case 'FIXED':
+      return `₹${Math.round(c.valuePaise / 100).toLocaleString('en-IN')} off`;
+    case 'FREE_SHIPPING':
+      return 'Free shipping';
+    case 'FIRST_ORDER':
+      // FIRST_ORDER carries either a % or a flat amount — whichever is set.
+      return c.valueBps > 0
+        ? `${Math.round(c.valueBps / 100)}% off your first order`
+        : `₹${Math.round(c.valuePaise / 100).toLocaleString('en-IN')} off your first order`;
+    case 'BXGY': {
+      const b = (c.bxgyJson ?? {}) as { buyQty?: number; getQty?: number };
+      if (b.buyQty && b.getQty) return `Buy ${b.buyQty} Get ${b.getQty} free`;
+      return 'Buy X Get Y free';
+    }
+    default:
+      return 'Offer';
+  }
+}
+
+// Coupons to advertise in the storefront announcement bar.
+//
+// Gated on `showOnStorefront`, NOT on `isActive` alone: active only means
+// redeemable, and private codes (a goodwill code for one customer, a partner
+// code) are active too. Publishing is an explicit per-coupon opt-in in
+// Website → Coupons.
+//
+// We also re-check everything that would make a code fail at the till — expiry,
+// not-yet-started, exhausted usage limit — because advertising a code that
+// errors on redemption is worse than advertising nothing.
+websiteRouter.get('/coupons', async (req, res, next) => {
+  try {
+    const tenantId = await tenantFromQueryOrFirst(req);
+    const now = new Date();
+    const rows = await rawPrisma.couponCode.findMany({
+      where: {
+        tenantId,
+        showOnStorefront: true,
+        isActive: true,
+        validFrom: { lte: now },
+        OR: [{ validUntil: null }, { validUntil: { gte: now } }],
+      },
+      orderBy: [{ createdAt: 'desc' }],
+      select: {
+        code: true,
+        type: true,
+        valueBps: true,
+        valuePaise: true,
+        minCartPaise: true,
+        validUntil: true,
+        usageLimitTotal: true,
+        usageCount: true,
+        bxgyJson: true,
+      },
+      take: 8,
+    });
+    const data = rows
+      // Exhausted codes can't be redeemed — don't advertise them. Prisma can't
+      // compare two columns in `where`, so this is filtered here.
+      .filter((c) => c.usageLimitTotal == null || c.usageCount < c.usageLimitTotal)
+      .map((c) => ({
+        code: c.code,
+        offerLabel: couponOfferLabel(c),
+        minCartPaise: c.minCartPaise,
+        validUntil: c.validUntil ? c.validUntil.toISOString() : null,
+      }));
+    res.json({ data, page: { hasMore: false } });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Collections that have at least one PUBLISHED product, with a live published
+// count broken down by metal.
+//
+// The homepage renders one collections row per jewellery line (Demifine, 9KT
+// fine gold, silver), and a Collection is an Item↔Collection M2M with no metal
+// of its own — it can legitimately span lines. So we report the published count
+// per metal and let each row pick its own; a collection appears in every row it
+// actually has stock for.
+//
+// Metal comes from the linked ITEM's category, not the Product mirror, matching
+// how /products resolves it — recategorising an item moves it immediately even
+// if the mirror's own categoryId is stale.
 websiteRouter.get('/collections-list', async (req, res, next) => {
   try {
     const tenantId = await tenantFromQueryOrFirst(req);
@@ -233,9 +351,38 @@ websiteRouter.get('/collections-list', async (req, res, next) => {
         items: { some: { item: { storefrontProduct: { isPublished: true } } } },
       },
       orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }],
-      select: { id: true, name: true, slug: true, description: true },
+      select: {
+        id: true,
+        name: true,
+        slug: true,
+        description: true,
+        sortOrder: true,
+        items: {
+          where: { item: { storefrontProduct: { isPublished: true } } },
+          select: { item: { select: { category: { select: { metalType: true } } } } },
+        },
+      },
     });
-    res.json({ data: collections, page: { hasMore: false } });
+    const data = collections.map((c) => {
+      const countByMetal: Record<string, number> = {};
+      for (const ic of c.items) {
+        const metal = ic.item.category.metalType;
+        countByMetal[metal] = (countByMetal[metal] ?? 0) + 1;
+      }
+      return {
+        id: c.id,
+        name: c.name,
+        slug: c.slug,
+        description: c.description,
+        sortOrder: c.sortOrder,
+        // Live — unlike the CMS tile's stored `count`, which is a frozen
+        // snapshot from the last "Sync from Inventory" click and counts
+        // unpublished items too.
+        publishedCount: c.items.length,
+        countByMetal,
+      };
+    });
+    res.json({ data, page: { hasMore: false } });
   } catch (err) {
     next(err);
   }

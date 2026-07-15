@@ -54,7 +54,40 @@ const EMPTY_FORM: CouponCreateInput = {
   validUntil: null,
   stackable: true,
   isActive: true,
+  // Off by default — a new code is private until the jeweller chooses to
+  // advertise it.
+  showOnStorefront: false,
 };
+
+/**
+ * Whether a coupon can actually be redeemed right now, and why not.
+ *
+ * `isActive` is only ONE of the gates. A coupon can be flagged Active and still
+ * be dead — expired, not started, or used up — and the storefront feed
+ * (/website/coupons) checks all of them. Showing plain "Active" here hid that:
+ * an expired code looked healthy, and its absence from the announcement bar
+ * looked like a bug in the bar.
+ *
+ * Keep the gates in step with `websiteRouter.get('/coupons')`.
+ */
+function couponState(c: AdminCoupon): {
+  label: string;
+  tone: 'success' | 'neutral' | 'warning';
+  redeemable: boolean;
+} {
+  if (!c.isActive) return { label: 'Inactive', tone: 'neutral', redeemable: false };
+  const now = Date.now();
+  if (c.validUntil && new Date(c.validUntil).getTime() < now) {
+    return { label: 'Expired', tone: 'warning', redeemable: false };
+  }
+  if (c.validFrom && new Date(c.validFrom).getTime() > now) {
+    return { label: 'Scheduled', tone: 'warning', redeemable: false };
+  }
+  if (c.usageLimitTotal != null && c.usageCount >= c.usageLimitTotal) {
+    return { label: 'Used up', tone: 'warning', redeemable: false };
+  }
+  return { label: 'Active', tone: 'success', redeemable: true };
+}
 
 function editingToForm(c: AdminCoupon): CouponCreateInput {
   return {
@@ -70,6 +103,7 @@ function editingToForm(c: AdminCoupon): CouponCreateInput {
     validUntil: c.validUntil?.slice(0, 10) ?? null,
     stackable: c.stackable,
     isActive: c.isActive,
+    showOnStorefront: c.showOnStorefront,
   };
 }
 
@@ -151,7 +185,7 @@ export function CouponsAdminTab(): JSX.Element {
           <table className="w-full text-sm min-w-[640px]">
             <thead className="bg-ink-50 border-b border-ink-200">
               <tr>
-                {['Code', 'Type', 'Value', 'Used', 'Valid until', 'Status', ''].map((h) => (
+                {['Code', 'Type', 'Value', 'Used', 'Valid until', 'Status', 'Storefront', ''].map((h) => (
                   <th key={h} className="text-left px-4 py-2.5 font-medium text-ink-600 text-xs uppercase tracking-wide">{h}</th>
                 ))}
               </tr>
@@ -178,7 +212,31 @@ export function CouponsAdminTab(): JSX.Element {
                     {c.validUntil ? new Date(c.validUntil).toLocaleDateString('en-IN') : '—'}
                   </td>
                   <td className="px-4 py-3">
-                    <Badge tone={c.isActive ? 'success' : 'neutral'}>{c.isActive ? 'Active' : 'Inactive'}</Badge>
+                    {/* Status reflects whether the code can ACTUALLY be redeemed
+                        right now, not just the isActive flag. It used to read
+                        `isActive ? 'Active' : 'Inactive'`, so a coupon that
+                        expired weeks ago still showed "Active" — which reads as
+                        "this works" when it doesn't, and made an unadvertised
+                        code look like a storefront bug. */}
+                    {(() => {
+                      const s = couponState(c);
+                      return <Badge tone={s.tone}>{s.label}</Badge>;
+                    })()}
+                  </td>
+                  <td className="px-4 py-3">
+                    {/* Only meaningful while the code is actually redeemable — an
+                        expired / not-yet-started / exhausted / inactive code is
+                        never advertised whatever this flag says, so don't imply
+                        it's live. */}
+                    {c.showOnStorefront ? (
+                      couponState(c).redeemable ? (
+                        <Badge tone="success">On storefront</Badge>
+                      ) : (
+                        <Badge tone="neutral">On (not live)</Badge>
+                      )
+                    ) : (
+                      <span className="text-ink-400">Private</span>
+                    )}
                   </td>
                   <td className="px-4 py-3">
                     <div className="flex items-center gap-2 justify-end">
@@ -354,6 +412,25 @@ export function CouponsAdminTab(): JSX.Element {
                   />
                   Active
                 </label>
+              </div>
+              {/* Publishing is separate from Active on purpose: Active only
+                  means the code can be redeemed, and private codes (a goodwill
+                  code for one customer, a partner code) are Active too. */}
+              <div className="pt-1">
+                <label className="flex items-center gap-2 cursor-pointer text-sm select-none">
+                  <input
+                    type="checkbox"
+                    checked={fields.showOnStorefront ?? false}
+                    onChange={(e) => patch('showOnStorefront', e.target.checked)}
+                    className="h-4 w-4 rounded border-ink-300 accent-brand-500"
+                  />
+                  Show on storefront
+                </label>
+                <p className="text-xs text-ink-500 mt-1 ml-6">
+                  Advertises this code in the announcement bar at the top of the site, rotating with
+                  today&apos;s metal rate. Leave off for private codes — anyone can see and use a
+                  code once it&apos;s shown here.
+                </p>
               </div>
             </div>
 

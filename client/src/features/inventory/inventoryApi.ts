@@ -149,6 +149,19 @@ export interface ValuationRow {
   asOf: string;
   byShop: Array<{ shopId: string; totalPaise: number; itemCount: number }>;
   byCategory: Array<{ categoryId: string; totalPaise: number; itemCount: number }>;
+  /**
+   * The rate basis behind `totalPaise`. Gold is valued at the 9K rate scaled to
+   * each piece's purity, silver at the silver rate, platinum at the Pt 950 rate;
+   * everything else at cost. A null rate means unconfigured → those pieces fell
+   * back to cost.
+   */
+  rateBasis: {
+    gold9kPaise: number | null;
+    silverPaise: number | null;
+    platinum950Paise: number | null;
+    goldSource: 'live' | 'cms' | 'live-stale' | 'none';
+    stale: boolean;
+  };
 }
 
 export interface LowStockItem {

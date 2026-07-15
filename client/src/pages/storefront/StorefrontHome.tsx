@@ -9,15 +9,23 @@ import {
   useGetPublicProductsQuery,
   useGetPublicSaleItemsQuery,
   useGetPublicCollectionsQuery,
+  useGetPublicCollectionsListQuery,
 } from '@/features/storefront/storefrontApi';
 import type {
   PublicProduct,
   PublicSaleProduct,
   PublicCategory,
+  PublicCollection,
   PublicGoldRateResponse,
 } from '@/features/storefront/storefrontApi';
-import type { DoorCard, SectionLabels, TestimonialCard, TrustBadge } from '@/features/storefront/storefrontContentSlice';
-import { storefrontTotalPaise, productMetaLabel, computeSalePrice } from '@/features/storefront/pricing';
+import type {
+  DoorCard,
+  SectionLabels,
+  ShopByOccasionTile,
+  TestimonialCard,
+  TrustBadge,
+} from '@/features/storefront/storefrontContentSlice';
+import { productMetaLabel, productPriceView } from '@/features/storefront/pricing';
 import { HeroCarousel } from './HeroCarousel';
 
 // Parse a blog's ISO date (YYYY-MM-DD) into a {day, month} badge. Returns null
@@ -77,6 +85,118 @@ const TRUST_ICONS: Record<TrustBadge['icon'], React.ComponentType<{ className?: 
 // blocks. `products` is already resolved to either the admin's curated CMS
 // picks or the category auto-fill; the sub-category pills filter that set by
 // `categoryId`. Renders nothing when there are no products to show.
+// A row of collection tiles scoped to ONE jewellery line.
+//
+// A Collection is an Item↔Collection M2M with no metal of its own, so it can
+// span lines. The homepage renders this row once per line (Demifine / 9KT gold
+// / silver) and each instance keeps only the collections that actually have
+// PUBLISHED stock in its metal, with a live count for that metal.
+//
+// Images + names come from the CMS `shopByOccasion` tiles (a Collection has no
+// image field); membership and counts come from the live API, joined by slug.
+// The tile's own stored `count` is ignored — it's a frozen snapshot from the
+// last "Sync from Inventory" click and counts unpublished items too, which is
+// why tiles showed "0 PRODUCTS" next to collections that had stock.
+//
+// Renders nothing when no collection in this metal has published stock.
+function CollectionTiles({
+  eyebrow,
+  title,
+  sub,
+  metal,
+  tiles,
+  collections,
+}: {
+  // SectionLabels fields are optional in the CMS blob, so accept undefined
+  // rather than making every call site cast.
+  eyebrow: string | undefined;
+  title: string | undefined;
+  sub?: string | undefined;
+  metal: string;
+  tiles: ShopByOccasionTile[];
+  collections: PublicCollection[];
+}): JSX.Element | null {
+  const bySlug = new Map(collections.map((c) => [c.slug, c]));
+  const visible = tiles
+    .map((t) => {
+      const col = bySlug.get(t.slug);
+      const count = col?.countByMetal?.[metal] ?? 0;
+      return { tile: t, count };
+    })
+    // Published stock in THIS metal is the whole gate — it's what "if they
+    // publish on Storefront" means. A tile pointing at a deleted/empty/
+    // fully-unpublished collection drops out instead of rendering "0 products".
+    .filter((x) => x.count > 0);
+
+  if (visible.length === 0) return null;
+
+  return (
+    <section className="max-w-[1280px] mx-auto px-4 sm:px-6 py-14 sm:py-20 md:py-24">
+      <div className="flex items-end justify-between mb-8 sm:mb-12 gap-4">
+        {/* No max-w cap here: it was sized for the old long prose heading and
+            forced short titles like "Demifine Jewellery Collections" onto two
+            lines. min-w-0 lets the title shrink inside the flex row instead of
+            pushing "See all" off. */}
+        <div className="min-w-0">
+          <p className="text-eyebrow uppercase text-brand-700">{eyebrow}</p>
+          {/* Fluid size so a short title keeps one line at every width instead
+              of stepping between breakpoints.
+              nowrap is gated on length on purpose: these titles are editor-typed
+              (the Demifine row's comes straight from the CMS), and the shipped
+              default is a full sentence — "made to shine from morning coffee
+              runs to unforgettable celebrations." Forcing THAT onto one line
+              overflows the viewport rather than wrapping. ~34 chars is what fits
+              at the 20px floor on a 375px screen, so anything longer keeps
+              normal wrapping. */}
+          <h2
+            className={cn(
+              'font-display text-[clamp(20px,4.6vw,52px)] leading-[1.06] text-ink-900 mt-2',
+              title && title.length <= 34 && 'whitespace-nowrap',
+            )}
+          >
+            {title}
+          </h2>
+          {sub && <p className="mt-3 text-sm text-ink-600 max-w-xl">{sub}</p>}
+        </div>
+        <Link
+          to="/store/collections"
+          className="hidden sm:inline-flex items-center gap-1 text-sm text-ink-700 hover:text-brand-700 border-b border-ink-200 hover:border-brand-400 pb-0.5 shrink-0 transition-colors"
+        >
+          See all
+          <ArrowRight className="h-3.5 w-3.5" />
+        </Link>
+      </div>
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 sm:gap-4 md:gap-5">
+        {visible.map(({ tile, count }, i) => (
+          <Link
+            key={tile.slug}
+            // Carry the metal through so the collection page shows only this
+            // line's pieces — matching the count on the tile.
+            to={`/store/collections/${tile.slug}?metal=${metal}`}
+            className={`group relative block aspect-[3/4] overflow-hidden bg-[#FAF3EE] rounded-sm gold-shine-target animate-fade-in-up-${(i % 6) + 1}`}
+          >
+            <img
+              src={tile.img}
+              alt={tile.name}
+              className="absolute inset-0 h-full w-full object-cover group-hover:scale-[1.06] transition-transform duration-slow ease-out"
+              loading={i < 2 ? 'eager' : 'lazy'}
+            />
+            {/* Dark gradient at bottom — name + product count */}
+            <div className="absolute inset-x-0 bottom-0 pt-16 pb-4 sm:pb-5 px-3 sm:px-4 bg-gradient-to-t from-ink-900/85 via-ink-900/50 to-transparent text-on-image">
+              <h3 className="text-ink-0 font-display text-lg sm:text-[22px] leading-tight">
+                {tile.name}
+              </h3>
+              <p className="mt-1 text-[10px] sm:text-[11px] uppercase tracking-[0.18em] text-ink-100/80 font-medium">
+                {count} {count === 1 ? 'product' : 'products'}
+              </p>
+            </div>
+          </Link>
+        ))}
+      </div>
+    </section>
+  );
+}
+
 function ProductShowcase({
   eyebrow,
   title,
@@ -135,6 +255,11 @@ function ProductShowcase({
             {visible.map((p) => {
               const soldOut = p.inStock === false;
               const catLabel = categoryNameById.get(p.categoryId) ?? productMetaLabel(p);
+              // The offer belongs to the piece, not to the Season Sale row — so
+              // it shows here too. This grid used to print the raw pre-offer
+              // price, so a discounted piece read full price in its category
+              // showcase while the Sale row above showed it reduced.
+              const price = productPriceView(p, liveRate?.rates);
               return (
                 <Link to={`/store/products/${p.slug}`} key={p.id} className="group block">
                   <div className="relative aspect-[4/5] overflow-hidden bg-[#FAF3EE] rounded-sm gold-shine-target">
@@ -147,6 +272,11 @@ function ProductShowcase({
                       )}
                       loading="lazy"
                     />
+                    {price.badge && (
+                      <span className="absolute top-2 right-2 z-10 bg-brand-600 text-ink-0 text-[10px] font-semibold uppercase tracking-[0.12em] px-2 py-1 rounded-sm shadow-sm">
+                        {price.badge}
+                      </span>
+                    )}
                     {soldOut && (
                       <span className="absolute top-2 left-2 z-10 bg-ink-900 text-ink-0 text-[10px] uppercase tracking-[0.18em] px-2 py-1 rounded-sm">
                         Sold out
@@ -163,8 +293,13 @@ function ProductShowcase({
                         <Star key={k} className="h-3 w-3 fill-current" aria-hidden />
                       ))}
                     </div>
-                    <p className="text-sm text-ink-900 font-mono tabular-nums pt-0.5">
-                      ₹{(storefrontTotalPaise(p, liveRate?.rates) / 100).toLocaleString('en-IN')}
+                    <p className="text-sm text-ink-900 font-mono tabular-nums pt-0.5 flex items-baseline gap-1.5">
+                      <span>₹{(price.finalPaise / 100).toLocaleString('en-IN')}</span>
+                      {price.hasStrike && (
+                        <span className="text-xs text-ink-400 line-through">
+                          ₹{(price.originalPaise / 100).toLocaleString('en-IN')}
+                        </span>
+                      )}
                     </p>
                   </div>
                 </Link>
@@ -228,9 +363,9 @@ function SeasonSales({
           {visible.map((p: PublicSaleProduct) => {
             const soldOut = p.inStock === false;
             const catLabel = categoryNameById.get(p.categoryId) ?? productMetaLabel(p);
-            const original = storefrontTotalPaise(p, liveRate?.rates);
-            const offer = computeSalePrice(original, p.sale);
-            const discounted = offer?.discountedPaise ?? original;
+            // Same helper every other grid uses — this row and the category
+            // showcases can no longer disagree about a piece's price.
+            const price = productPriceView(p, liveRate?.rates);
             return (
               <Link to={`/store/products/${p.slug}`} key={p.id} className="group block">
                 <div className="relative aspect-[4/5] overflow-hidden bg-[#FAF3EE] rounded-sm gold-shine-target">
@@ -243,9 +378,9 @@ function SeasonSales({
                     )}
                     loading="lazy"
                   />
-                  {offer && (
+                  {price.badge && (
                     <span className="absolute top-2 right-2 z-10 bg-brand-600 text-ink-0 text-[10px] font-semibold uppercase tracking-[0.12em] px-2 py-1 rounded-sm shadow-sm">
-                      {offer.badge}
+                      {price.badge}
                     </span>
                   )}
                   {soldOut && (
@@ -266,11 +401,11 @@ function SeasonSales({
                   </div>
                   <div className="flex items-baseline gap-2 pt-0.5">
                     <p className="text-sm text-ink-900 font-mono tabular-nums font-semibold">
-                      ₹{(discounted / 100).toLocaleString('en-IN')}
+                      ₹{(price.finalPaise / 100).toLocaleString('en-IN')}
                     </p>
-                    {offer?.hasStrike && (
+                    {price.hasStrike && (
                       <p className="text-xs text-ink-400 font-mono tabular-nums line-through">
-                        ₹{(original / 100).toLocaleString('en-IN')}
+                        ₹{(price.originalPaise / 100).toLocaleString('en-IN')}
                       </p>
                     )}
                   </div>
@@ -322,21 +457,12 @@ export function StorefrontHome(): JSX.Element {
   const { data: liveRate } = useGetPublicGoldRateQuery(undefined, {
     pollingInterval: 5 * 60 * 1000,
   });
-  const rateBy = (p: number): number | undefined =>
-    liveRate?.rates.find((r) => r.purity === p)?.ratePerGramPaise;
-  // CMS-entered value wins when filled; live GoldAPI feed is the fallback for
-  // any rate (or the "updated at" label) left blank. Display ticker only —
-  // product prices always use the numeric live feed.
-  const pick = (cms: string | undefined, purity: number): string => {
-    const manual = (cms ?? '').trim();
-    return manual || formatLiveRate(rateBy(purity), '—');
-  };
+  // 9K gold + silver — the only rates the storefront quotes. The server already
+  // applied the source precedence (live GoldAPI feed when a key is attached,
+  // otherwise the CMS-entered rate), so there's no CMS-vs-live pick to redo here.
   const rates = {
-    ...cmsRates,
-    g24: pick(cmsRates.g24, 2400),
-    g22: pick(cmsRates.g22, 2200),
-    g18: pick(cmsRates.g18, 1800),
-    silver: pick(cmsRates.silver, 0),
+    g9: formatLiveRate(liveRate?.gold9kPaise ?? undefined, '—'),
+    silver: formatLiveRate(liveRate?.silverPaise ?? undefined, '—'),
     updatedAt:
       (cmsRates.updatedAt ?? '').trim() ||
       (liveRate
@@ -351,6 +477,9 @@ export function StorefrontHome(): JSX.Element {
   // adds the title, sub-category filter pills and "View all" deep-link.
   const { data: allProducts = [] } = useGetPublicProductsQuery();
   const { data: allCategories = [] } = useGetPublicCollectionsQuery();
+  // Curated inventory collections + their live per-metal published counts.
+  // Drives the three metal-scoped collection rows.
+  const { data: collectionsList = [] } = useGetPublicCollectionsListQuery();
   const categoryNameById = new Map(allCategories.map((c) => [c.id, c.name]));
   const productBySlug = new Map(allProducts.map((p) => [p.slug, p]));
 
@@ -423,11 +552,11 @@ export function StorefrontHome(): JSX.Element {
           </div>
           {/* Live rate strip — gold accents, centered under the CTAs */}
           <div className="mt-9 flex flex-wrap items-center justify-center gap-x-5 sm:gap-x-6 gap-y-2 text-xs text-ink-600 font-mono tabular-nums border-t border-ink-100 pt-5 animate-fade-in-up-5">
-            <span><span className="text-ink-400">Today 24K</span> <span className="text-brand-700 font-semibold">{rates.g24}</span></span>
-            <span><span className="text-ink-400">22K</span> <span className="text-brand-700 font-semibold">{rates.g22}</span></span>
-            <span className="hidden sm:inline"><span className="text-ink-400">18K</span> {rates.g18}</span>
-            <span className="hidden md:inline"><span className="text-ink-400">Silver</span> {rates.silver}</span>
-            <span className="hidden lg:inline text-ink-400">· Updated {rates.updatedAt}</span>
+            <span><span className="text-ink-400">Today 9K</span> <span className="text-brand-700 font-semibold">{rates.g9}</span></span>
+            <span className="hidden sm:inline"><span className="text-ink-400">Silver</span> {rates.silver}</span>
+            {rates.updatedAt && (
+              <span className="hidden lg:inline text-ink-400">· Updated {rates.updatedAt}</span>
+            )}
           </div>
         </div>
       </section>
@@ -462,10 +591,22 @@ export function StorefrontHome(): JSX.Element {
           {/* Marquee */}
           <div className="group">
             <div className="flex w-max gap-6 sm:gap-8 md:gap-10 animate-marquee-left marquee-pause pr-6 sm:pr-8 md:pr-10">
-              {[...browseCategories, ...browseCategories].map((c, i) => (
+              {[...browseCategories, ...browseCategories].map((c, i) => {
+                // Carry the tile's metal scope to the collection page. Sub-category
+                // slugs collide across metal lines ("rings" exists under Demifine,
+                // 9KT gold AND silver, and all three slugify the same), so without
+                // a scope one tile shows all three lines at once.
+                //
+                // UNSET (undefined) falls back to Demifine — this marquee is the
+                // Demifine browser, and every tile stored before this field existed
+                // has no value. An editor who genuinely wants every metal picks
+                // "All metals", which stores '' and is preserved here (?? only
+                // catches null/undefined, not '').
+                const scope = c.metalScope ?? 'STAINLESS_STEEL';
+                return (
                 <Link
                   key={`${c.label}-${i}`}
-                  to={`/store/collections/${c.slug}`}
+                  to={`/store/collections/${c.slug}${scope ? `?metal=${scope}` : ''}`}
                   className="group/tile flex flex-col items-center text-center shrink-0 w-[120px] sm:w-[140px] md:w-[160px]"
                 >
                   <div className="relative w-full aspect-square overflow-hidden rounded-full bg-[#FAF3EE] ring-1 ring-[#EFE0D2] group-hover/tile:ring-brand-400 transition-all duration-200 gold-shine-target">
@@ -480,7 +621,8 @@ export function StorefrontHome(): JSX.Element {
                     {c.label}
                   </span>
                 </Link>
-              ))}
+                );
+              })}
             </div>
           </div>
         </div>
@@ -503,46 +645,16 @@ export function StorefrontHome(): JSX.Element {
           Renders nothing when the sale pool is empty. Sits below Top Styles. */}
       <SeasonSales liveRate={liveRate} categoryNameById={categoryNameById} labels={L} />
 
-      {/* Shop by occasion — 6 tall body-shot tiles with dark gradient overlay
-          showing category name + product count. Replaces the older 4-card TOC. */}
-      <section className="max-w-[1280px] mx-auto px-4 sm:px-6 py-14 sm:py-20 md:py-24">
-        <div className="flex items-end justify-between mb-8 sm:mb-12 gap-4">
-          <div className="max-w-2xl">
-            <p className="text-eyebrow uppercase text-brand-700">{L.occasionEyebrow}</p>
-            <h2 className="font-display text-3xl sm:text-[40px] md:text-[52px] leading-[1.06] text-ink-900 mt-2">{L.occasionTitle}</h2>
-            <p className="mt-3 text-sm text-ink-600 max-w-xl">{L.occasionSub}</p>
-          </div>
-          <Link to="/store/collections" className="hidden sm:inline-flex items-center gap-1 text-sm text-ink-700 hover:text-brand-700 border-b border-ink-200 hover:border-brand-400 pb-0.5 shrink-0 transition-colors">
-            See all
-            <ArrowRight className="h-3.5 w-3.5" />
-          </Link>
-        </div>
-        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 sm:gap-4 md:gap-5">
-          {shopByOccasion.map((c, i) => (
-            <Link
-              key={c.slug}
-              to={`/store/collections/${c.slug}`}
-              className={`group relative block aspect-[3/4] overflow-hidden bg-[#FAF3EE] rounded-sm gold-shine-target animate-fade-in-up-${(i % 6) + 1}`}
-            >
-              <img
-                src={c.img}
-                alt={c.name}
-                className="absolute inset-0 h-full w-full object-cover group-hover:scale-[1.06] transition-transform duration-slow ease-out"
-                loading={i < 2 ? 'eager' : 'lazy'}
-              />
-              {/* Dark gradient at bottom — name + product count */}
-              <div className="absolute inset-x-0 bottom-0 pt-16 pb-4 sm:pb-5 px-3 sm:px-4 bg-gradient-to-t from-ink-900/85 via-ink-900/50 to-transparent text-on-image">
-                <h3 className="text-ink-0 font-display text-lg sm:text-[22px] leading-tight">
-                  {c.name}
-                </h3>
-                <p className="mt-1 text-[10px] sm:text-[11px] uppercase tracking-[0.18em] text-ink-100/80 font-medium">
-                  {c.count} products
-                </p>
-              </div>
-            </Link>
-          ))}
-        </div>
-      </section>
+      {/* Demifine collections — sits in its original slot, now scoped to the
+          gold-tone line. */}
+      <CollectionTiles
+        eyebrow={L.occasionEyebrow}
+        title={L.occasionTitle}
+        sub={L.occasionSub}
+        metal="STAINLESS_STEEL"
+        tiles={shopByOccasion}
+        collections={collectionsList}
+      />
 
       {/* 9 KT Fine Gold showcase — curated CMS picks (or auto-fill from the
           category), with sub-category filter pills + "View all". Replaces the
@@ -555,6 +667,18 @@ export function StorefrontHome(): JSX.Element {
         products={nineKt.products}
         liveRate={liveRate}
         categoryNameById={categoryNameById}
+      />
+
+      {/* 9KT fine gold collections — same tiles, scoped to the gold line, so a
+          collection with gold stock appears here as well as (or instead of) the
+          Demifine row above. */}
+      <CollectionTiles
+        eyebrow={sc(1).eyebrow}
+        title={`${sc(1).title} Collections`}
+        sub=""
+        metal="GOLD"
+        tiles={shopByOccasion}
+        collections={collectionsList}
       />
 
       {/* Featured lookbook — 1 big editorial + up to 2 stacked, CMS-managed
@@ -622,6 +746,16 @@ export function StorefrontHome(): JSX.Element {
         products={silver.products}
         liveRate={liveRate}
         categoryNameById={categoryNameById}
+      />
+
+      {/* Silver collections — same tiles, scoped to the silver line. */}
+      <CollectionTiles
+        eyebrow={sc(2).eyebrow}
+        title={`${sc(2).title} Collections`}
+        sub=""
+        metal="SILVER"
+        tiles={shopByOccasion}
+        collections={collectionsList}
       />
 
       {/* Business story — CMS-editable (Website CMS → Story). Image + editorial
@@ -801,15 +935,18 @@ export function StorefrontHome(): JSX.Element {
                     to={`/store/blog/${b.slug}`}
                     className={`group flex flex-col animate-fade-in-up-${(i % 4) + 1}`}
                   >
+                    {/* Same treatment as BlogCard on /store/blog — object-top so
+                        an infographic cover shows its headline rather than an
+                        anonymous middle slice. The post page renders it uncropped. */}
                     <div className="relative aspect-[4/5] overflow-hidden rounded-md bg-[#FAF3EE] gold-shine-target">
                       <img
                         src={b.image}
                         alt={b.title}
-                        className="absolute inset-0 h-full w-full object-cover group-hover:scale-[1.05] transition-transform duration-slow"
+                        className="absolute inset-0 h-full w-full object-cover object-top group-hover:scale-[1.05] transition-transform duration-slow"
                         loading="lazy"
                       />
                       {badge && (
-                        <div className="absolute top-3 right-3 h-14 w-14 rounded-full bg-ink-0 shadow-sm flex flex-col items-center justify-center text-center leading-none">
+                        <div className="absolute top-3 right-3 h-14 w-14 rounded-full bg-ink-0/95 backdrop-blur-sm shadow-sm flex flex-col items-center justify-center text-center leading-none">
                           <span className="font-display text-lg text-ink-900">{badge.day}</span>
                           <span className="text-[9px] uppercase tracking-[0.12em] text-ink-500 mt-0.5">{badge.month}</span>
                         </div>

@@ -15,6 +15,7 @@ import type { FilterGroup } from '@/features/storefront/storefrontContentSlice';
 import {
   storefrontTotalPaise,
   productMetaLabel,
+  productPriceView,
   type StorefrontRates,
 } from '@/features/storefront/pricing';
 
@@ -42,34 +43,112 @@ function priceOf(p: PublicProduct, rates?: StorefrontRates): number {
   return storefrontTotalPaise(p, rates);
 }
 
-// Predicate registry — keyed by the option label inside each FilterGroup
-// (see DEFAULT_CONTENT.filters in storefrontContentSlice). The admin can
-// add/remove option *labels*, but if a label has no matching predicate here
-// the filter is a no-op (all products pass). Add the predicate alongside the
-// option label whenever a new built-in filter ships.
-const FILTER_PREDICATES: Record<string, (p: PublicProduct) => boolean> = {
-  // metal
-  '22K Gold': (p) => p.purityCaratX100 === 2200,
-  '18K Gold': (p) => p.purityCaratX100 === 1800,
+// Filter option labels are CMS free-text (Website → Filters), so they CANNOT be
+// matched against a hardcoded label→predicate registry — that's exactly what
+// broke here. An admin renamed the price buckets to "Under ₹2,000" / "Under
+// ₹10,000" / "Under ₹25,000" / "₹25,000-₹1,00,000"; none of those strings were
+// registry keys, so checking any of them matched nothing and emptied the grid.
+//
+// Instead we PARSE the label. Anything an editor can reasonably type for a
+// numeric range is understood, so new buckets need no code change:
+//   "Under ₹2,000" / "Below 2000"      → max
+//   "Over ₹1,00,000" / "Above 1 lakh"  → min
+//   "₹25,000-₹1,00,000" / "₹25k – ₹1L" → range   (-, –, —, "to" all work)
+//   "₹2,000+"                          → min
+//
+// Returns null when the label carries no numbers — the caller then falls
+// through to the category / product-name paths.
+interface NumericRange {
+  min?: number;
+  max?: number;
+}
+
+// Indian shorthand: 2k = 2,000; 1L / 1 lakh = 1,00,000; 1cr = 1,00,00,000.
+function parseMagnitude(raw: string, suffix: string): number {
+  const n = Number(raw.replace(/,/g, ''));
+  if (!Number.isFinite(n)) return NaN;
+  const s = suffix.toLowerCase();
+  if (s.startsWith('k')) return n * 1_000;
+  if (s.startsWith('l')) return n * 1_00_000;
+  if (s.startsWith('cr')) return n * 1_00_00_000;
+  return n;
+}
+
+/** Pull every number (with optional k/L/cr suffix) out of a label, in order. */
+function numbersIn(label: string): number[] {
+  const out: number[] = [];
+  const re = /(\d[\d,]*(?:\.\d+)?)\s*(cr|crore|lakhs?|l|k)?\b/gi;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(label)) !== null) {
+    const v = parseMagnitude(m[1]!, m[2] ?? '');
+    if (Number.isFinite(v)) out.push(v);
+  }
+  return out;
+}
+
+/**
+ * Interpret a filter label as a numeric range. Unit-agnostic — the caller
+ * scales the result (rupees → paise, grams → mg), so one parser serves both the
+ * price and weight groups.
+ */
+export function parseRangeLabel(label: string): NumericRange | null {
+  const nums = numbersIn(label);
+  if (nums.length === 0) return null;
+  const l = label.toLowerCase();
+
+  // Explicit two-number range wins, whatever the wording.
+  if (nums.length >= 2) {
+    const [a, b] = [nums[0]!, nums[1]!];
+    return { min: Math.min(a, b), max: Math.max(a, b) };
+  }
+
+  const n = nums[0]!;
+  if (/\b(under|below|less than|upto|up to|<)\b/.test(l) || l.includes('under')) return { max: n };
+  if (/\b(over|above|more than|greater than|>)\b/.test(l) || l.endsWith('+')) return { min: n };
+  // A bare number with no qualifier ("₹25,000") reads as a ceiling — the most
+  // common intent for a lone price chip.
+  return { max: n };
+}
+
+function inRange(value: number, r: NumericRange): boolean {
+  // max is exclusive so adjacent buckets ("Under ₹10,000", "₹10,000-₹25,000")
+  // don't both claim a piece priced at exactly ₹10,000.
+  if (r.min != null && value < r.min) return false;
+  if (r.max != null && value >= r.max) return false;
+  return true;
+}
+
+// Metal/purity labels are matched by meaning rather than exact string, so
+// "Silver", "silver", "Sterling Silver" all land. Checked before the numeric
+// parser, since "22K Gold" contains a number but isn't a range.
+export function matchMetalLabel(
+  label: string,
+  p: Pick<PublicProduct, 'metalType' | 'purityCaratX100'>,
+): boolean | null {
+  const l = label.toLowerCase().trim();
   // Silver = metal type SILVER, NOT purity 0 — stainless-steel "gold tone" and
   // other non-precious pieces also carry purity 0. The null fallback keeps
   // legacy products (no metalType) that are genuinely purity-0 silver.
-  Silver: (p) => p.metalType === 'SILVER' || (p.metalType == null && p.purityCaratX100 === 0),
-  Platinum: (p) => p.metalType === 'PLATINUM' || p.purityCaratX100 === 9500,
-  // weight
-  'Under 10 g': (p) => p.weightMg < 10_000,
-  '10 – 20 g': (p) => p.weightMg >= 10_000 && p.weightMg < 20_000,
-  '20 – 40 g': (p) => p.weightMg >= 20_000 && p.weightMg < 40_000,
-  'Over 40 g': (p) => p.weightMg >= 40_000,
-  // price
-  'Under ₹50,000': (p) => priceOf(p) < 50_00_000,
-  '₹50,000 – ₹1,00,000': (p) => priceOf(p) >= 50_00_000 && priceOf(p) < 1_00_00_000,
-  'Over ₹1,00,000': (p) => priceOf(p) >= 1_00_00_000,
-  // purity
-  '22K': (p) => p.purityCaratX100 === 2200,
-  '18K': (p) => p.purityCaratX100 === 1800,
-  '14K': (p) => p.purityCaratX100 === 1400,
-};
+  if (/\bsilver\b/.test(l)) {
+    return p.metalType === 'SILVER' || (p.metalType == null && p.purityCaratX100 === 0);
+  }
+  if (/\bplatinum\b|\bpt\s*9\d0\b/.test(l)) {
+    return p.metalType === 'PLATINUM' || p.purityCaratX100 === 9500;
+  }
+  if (/gold tone|non[- ]precious|stainless|fashion/.test(l)) {
+    return p.metalType === 'STAINLESS_STEEL' || p.metalType === 'OTHER';
+  }
+  // "22K", "22K Gold", "9 K Fine Gold" → carat match.
+  const k = /(\d+(?:\.\d+)?)\s*k\b/.exec(l);
+  if (k) {
+    const wanted = Math.round(Number(k[1]) * 100);
+    return p.purityCaratX100 === wanted;
+  }
+  if (/\bgold\b/.test(l)) {
+    return p.metalType === 'GOLD' || p.metalType === 'DIAMOND';
+  }
+  return null;
+}
 
 // Token-split a slug for fuzzy matching. "9kt-fine-gold" → ["9kt", "gold"]
 // (the "fine" stop-word and 1-char tokens are dropped). Used to recover
@@ -154,6 +233,7 @@ function filterBySlug(
   products: PublicProduct[],
   categories: PublicCategory[],
   slug: string | undefined,
+  rates?: StorefrontRates,
 ): PublicProduct[] {
   if (!slug) return products;
   switch (slug) {
@@ -168,9 +248,9 @@ function filterBySlug(
         (p) => p.metalType === 'SILVER' || (p.metalType == null && p.purityCaratX100 === 0),
       );
     case 'under-50k':
-      return products.filter((p) => priceOf(p) < 50_00_000);
+      return products.filter((p) => priceOf(p, rates) < 50_00_000);
     case 'gifting':
-      return products.filter((p) => priceOf(p) <= 1_00_000_00);
+      return products.filter((p) => priceOf(p, rates) <= 1_00_000_00);
     case 'men':
       return products.filter((p) => p.gender === 'MEN');
     case 'women':
@@ -208,6 +288,14 @@ export function CollectionPage(): JSX.Element {
   // sub-category slugs collide across metals ("bracelets" exists under each).
   const [searchParams] = useSearchParams();
   const subId = searchParams.get('sub');
+  // Optional ?metal=<MetalType> scope. Sub-category slugs collide across metal
+  // lines — "Rings" exists under Demifine Jewellery, 9KT Fine Gold AND 925
+  // Sterling Silver, and all three slugify to "rings" — so a bare
+  // /store/collections/rings deliberately shows rings from every line. The
+  // homepage "Browse by category" tiles are a Demifine browser, so they pin the
+  // metal here. Unlike ?sub (one category id) this scopes by material, which is
+  // what "show only Demifine" actually means.
+  const metalScope = searchParams.get('metal');
 
   const [sort, setSort] = useState<Sort>('Featured');
   const [sortOpen, setSortOpen] = useState(false);
@@ -260,7 +348,16 @@ export function CollectionPage(): JSX.Element {
   const filtered = useMemo(() => {
     // If this is an inventory collection and items were loaded, use them directly.
     // Otherwise, fall back to category-based filtering.
-    const baseProducts = !collectionItemsError && collectionItems.length > 0 ? collectionItems : filterBySlug(products, categories, slug);
+    const baseProductsRaw =
+      !collectionItemsError && collectionItems.length > 0
+        ? collectionItems
+        : filterBySlug(products, categories, slug, rates);
+    // ?metal= narrows to one material. Applied to BOTH branches so it scopes a
+    // real inventory Collection too — a collection can span metal lines, and
+    // the homepage renders one collections row per line.
+    const baseProducts = metalScope
+      ? baseProductsRaw.filter((p) => p.metalType === metalScope)
+      : baseProductsRaw;
 
     // Token-AND match on name + slug only — descriptionMd is excluded because
     // every gold-jewellery description repeats "gold/BIS/hallmarked" and would
@@ -319,37 +416,74 @@ export function CollectionPage(): JSX.Element {
       if (ids.size > 0) categoryIdsByOptionLabel.set(opt, ids);
     }
 
-    // For each visible group, the product passes if either nothing is
-    // selected in that group OR at least one selected option matches. An
-    // option matches via FOUR independent paths, in order of precision:
-    //   1. Hardcoded predicate (22K Gold / Under 10 g / Under ₹50,000 / …)
-    //   2. Category-id match (exact tag like Rings sub of 9kt Fine Gold)
-    //   3. Product-name token match — "Rings" chip catches "Rose Ring"
-    //      even when the product was tagged to the parent main rather
-    //      than the Rings sub. This is the fallback that makes the
-    //      jewellery-vocab filters (Rings / Earrings / Bracelets /
-    //      Necklaces / Pendants etc.) work without forcing admins to
-    //      re-tag every product to a leaf sub-category.
-    // Options with NO mapping at all stay as no-op so the page still
-    // renders if admin types something nobody mapped.
+    // Resolve ONE option label to a matcher. Paths in order:
+    //   1. Numeric range parsed from the label — price/weight groups only. Price
+    //      compares against the GST-inclusive price at LIVE rates, i.e. the same
+    //      number the card renders; weight against grams.
+    //   2. Metal/purity by meaning — "Silver", "22K Gold", "Gold tone"
+    //   3. Category-id match (exact tag like Rings sub of 9kt Fine Gold)
+    //   4. Product-name token match — a "Rings" chip catches "Rose Ring" even
+    //      when the product was tagged to the parent main rather than the Rings
+    //      sub, so jewellery-vocab filters work without re-tagging everything.
+    const matcherFor = (opt: string, groupKey: string): ((p: PublicProduct) => boolean) => {
+      const catSet = categoryIdsByOptionLabel.get(opt);
+      const optStem = stem(opt);
+      const key = groupKey.toLowerCase();
+      const isPriceGroup = key.includes('price');
+      const isWeightGroup = key.includes('weight');
+
+      // Only the price/weight groups get the numeric parser — otherwise a
+      // "22K Gold" metal chip would be read as "max 22".
+      const range = isPriceGroup || isWeightGroup ? parseRangeLabel(opt) : null;
+
+      return (p: PublicProduct): boolean => {
+        // Range FIRST for price/weight groups. `range` is only non-null for
+        // those, and the ordering matters: a price label like "Under ₹2k" would
+        // otherwise hit matchMetalLabel's carat regex and be read as "2 carat".
+        if (range) {
+          // Rupees → paise for price; grams → milligrams for weight. Price uses
+          // the LIVE rates so the bucket agrees with the price on the card.
+          const value = isPriceGroup ? priceOf(p, rates) : p.weightMg;
+          const scale = isPriceGroup ? 100 : 1000;
+          return inRange(value, {
+            ...(range.min != null ? { min: range.min * scale } : {}),
+            ...(range.max != null ? { max: range.max * scale } : {}),
+          });
+        }
+        const byMetal = matchMetalLabel(opt, p);
+        if (byMetal != null) return byMetal;
+        if (catSet && catSet.has(p.categoryId)) return true;
+        if (optStem.length >= 3) {
+          const nameTokens = p.name.toLowerCase().split(/\s+/).map(stem);
+          if (nameTokens.includes(optStem)) return true;
+        }
+        return false;
+      };
+    };
+
+    // A product passes a group when nothing is selected, or when at least one
+    // selected option matches.
+    //
+    // Uninterpretable options are DROPPED, not failed. Previously an option we
+    // couldn't map fell through to a `optStem.length < 3` escape hatch that was
+    // effectively never true, so one unrecognised label rejected every product
+    // and the grid went empty. Ignoring what we can't read means a typo'd or
+    // unmapped CMS label degrades to "no filtering" instead of "no products".
     const passGroup = (p: PublicProduct, group: FilterGroup): boolean => {
       const sel = selections[group.key];
       if (!sel || sel.size === 0) return true;
-      return Array.from(sel).some((opt) => {
-        const pred = FILTER_PREDICATES[opt];
-        if (pred && pred(p)) return true;
-        const catSet = categoryIdsByOptionLabel.get(opt);
-        if (catSet && catSet.has(p.categoryId)) return true;
-        // Name-token fallback. Split product name into stem tokens, and
-        // see if the option's stem is in there. So "Rose Ring" → tokens
-        // ["rose", "ring"], stems same; "Rings" → stem "ring"; match.
-        const optStem = stem(opt);
-        const nameTokens = p.name.toLowerCase().split(/\s+/).map(stem);
-        if (optStem.length >= 3 && nameTokens.includes(optStem)) return true;
-        // Nothing matched and there's no mapping registered → no-op (don't
-        // block every product just because admin typed a freeform label).
-        return !pred && !catSet && optStem.length < 3;
+      const opts = Array.from(sel);
+      const usable = opts.filter((opt) => {
+        const key = group.key.toLowerCase();
+        if (key.includes('price') || key.includes('weight')) {
+          if (parseRangeLabel(opt)) return true;
+        }
+        if (matchMetalLabel(opt, p) != null) return true;
+        if (categoryIdsByOptionLabel.has(opt)) return true;
+        return stem(opt).length >= 3;
       });
+      if (usable.length === 0) return true;
+      return usable.some((opt) => matcherFor(opt, group.key)!(p));
     };
     // Sub-category deep-link narrows the base set to one category id before the
     // search / sidebar filters apply.
@@ -357,7 +491,21 @@ export function CollectionPage(): JSX.Element {
     return scoped.filter(
       (p) => passQ(p) && visibleGroups.every((g) => passGroup(p, g)),
     );
-  }, [products, categories, slug, subId, q, selections, visibleGroups, collectionItems, collectionItemsError]);
+  }, [
+    products,
+    categories,
+    slug,
+    subId,
+    metalScope,
+    q,
+    selections,
+    visibleGroups,
+    collectionItems,
+    collectionItemsError,
+    // Price buckets compare against the live-rate price, so a rate refresh must
+    // re-run the filter — otherwise the bucket and the card disagree.
+    rates,
+  ]);
 
   function toggleOption(groupKey: string, value: string): void {
     setSelections((curr) => {
@@ -527,6 +675,9 @@ export function CollectionPage(): JSX.Element {
             // Item. Sold-out cards stay visible (per the admin's choice) but
             // get a desaturated thumbnail + an unmistakable corner badge.
             const soldOut = p.inStock === false;
+            // Offer travels with the piece, so it renders here too — not only on
+            // the Season Sale row.
+            const price = productPriceView(p, rates);
             return (
               <Link to={`/store/products/${p.slug}`} key={p.id} className="group block">
                 <div className="relative aspect-[4/5] overflow-hidden bg-[#FAF3EE] rounded-sm">
@@ -547,6 +698,11 @@ export function CollectionPage(): JSX.Element {
                     loading="lazy"
                     aria-hidden
                   />
+                  {price.badge && (
+                    <span className="absolute top-2 right-2 z-10 bg-brand-600 text-ink-0 text-[10px] font-semibold uppercase tracking-[0.12em] px-2 py-1 rounded-sm shadow-sm">
+                      {price.badge}
+                    </span>
+                  )}
                   {soldOut && (
                     <span className="absolute top-2 left-2 z-10 bg-ink-900 text-ink-0 text-[10px] uppercase tracking-[0.18em] px-2 py-1 rounded-sm">
                       Sold out
@@ -562,8 +718,13 @@ export function CollectionPage(): JSX.Element {
                   <p className="text-[11px] sm:text-xs text-ink-500">
                     {weightG.toFixed(2)} g{meta ? ` · ${meta}` : ''}
                   </p>
-                  <p className="text-sm text-ink-900 font-mono tabular-nums pt-0.5">
-                    ₹{(priceOf(p, rates) / 100).toLocaleString('en-IN')}
+                  <p className="text-sm text-ink-900 font-mono tabular-nums pt-0.5 flex items-baseline gap-1.5">
+                    <span>₹{(price.finalPaise / 100).toLocaleString('en-IN')}</span>
+                    {price.hasStrike && (
+                      <span className="text-xs text-ink-400 line-through">
+                        ₹{(price.originalPaise / 100).toLocaleString('en-IN')}
+                      </span>
+                    )}
                   </p>
                 </div>
               </Link>

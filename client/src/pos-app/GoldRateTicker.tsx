@@ -13,28 +13,9 @@ import { MapPin, RefreshCw } from 'lucide-react';
 import { cn } from '@/lib/cn';
 import { GST_STATE_CODES } from '@goldos/shared/constants';
 
-interface RateRow {
-  purity: number;
-  ratePerGramPaise: number;
-  stale: boolean;
-  asOf: string;
-}
-
-// Labels in the order they should render on the ticker. We use 22K/18K/Silver
-// because that's what 95%+ of bills touch — 24K and 14K are folded into
-// "more" or hidden on narrow screens.
-const PRIMARY = [
-  { purity: 2200, label: '22K' },
-  { purity: 1800, label: '18K' },
-  { purity: 0, label: 'Silver' },
-] as const;
-const SECONDARY = [
-  { purity: 2400, label: '24K' },
-  { purity: 1400, label: '14K' },
-] as const;
-
-function formatRate(paise: number): string {
-  // ₹6,420/g — Indian-locale thousand separators, no decimal on per-gram.
+function formatRate(paise: number | null | undefined): string {
+  // ₹4,710/g — Indian-locale thousand separators, no decimal on per-gram.
+  if (!paise) return '—';
   const rupees = Math.round(paise / 100);
   return `₹${rupees.toLocaleString('en-IN')}/g`;
 }
@@ -43,8 +24,12 @@ export function GoldRateTicker(): JSX.Element {
   const { data, isFetching, refetch } = useGetGoldRateQuery(undefined, {
     pollingInterval: 60_000,
   });
-  const rates = (data?.data ?? []) as RateRow[];
-  const stale = rates.some((r) => r.stale);
+  // 9K gold / silver / platinum — the same three rates the dashboard and the
+  // storefront quote, resolved server-side through the same precedence. Bill
+  // lines still price each piece at its own registered purity; this ticker is
+  // the published rate, not the billing rate.
+  const metalRates = data?.metalRates;
+  const stale = metalRates?.stale ?? false;
 
   // Resolve the cashier's shop → state for the "Haryana" / "Maharashtra"
   // badge next to the rates. The underlying MCX-INR rate is national, but
@@ -54,10 +39,6 @@ export function GoldRateTicker(): JSX.Element {
   const { data: shopsData } = useGetShopsQuery();
   const shop = shopsData?.data.find((s) => s.id === user?.shopId) ?? shopsData?.data?.[0];
   const stateName = shop ? GST_STATE_CODES[shop.gstStateCode as keyof typeof GST_STATE_CODES] : null;
-
-  function rateFor(purity: number): RateRow | undefined {
-    return rates.find((r) => r.purity === purity);
-  }
 
   return (
     <div
@@ -73,14 +54,15 @@ export function GoldRateTicker(): JSX.Element {
           <MapPin className="h-3 w-3" />
           {stateName ?? 'Live rate'}
         </span>
-        {PRIMARY.map(({ purity, label }) => (
-          <Quote key={purity} label={label} rate={rateFor(purity)} />
-        ))}
-        <span className="hidden sm:inline-flex items-center gap-3">
-          {SECONDARY.map(({ purity, label }) => (
-            <Quote key={purity} label={label} rate={rateFor(purity)} muted />
-          ))}
-        </span>
+        <Quote label="9K" paise={metalRates?.gold9kPaise} />
+        <Quote label="Silver" paise={metalRates?.silverPaise} />
+        {/* Platinum only when a rate is configured — most tenants carry none,
+            and an empty "Pt —" chip is noise on a 36px bar. */}
+        {metalRates?.platinum950Paise ? (
+          <span className="hidden sm:inline-flex items-center gap-3">
+            <Quote label="Pt 950" paise={metalRates.platinum950Paise} muted />
+          </span>
+        ) : null}
         {stale && (
           <span className="ml-auto text-[10px] text-warning-100 inline-flex items-center gap-1 shrink-0">
             ⚠ Rates haven't refreshed in a while
@@ -103,7 +85,15 @@ export function GoldRateTicker(): JSX.Element {
   );
 }
 
-function Quote({ label, rate, muted }: { label: string; rate: RateRow | undefined; muted?: boolean }): JSX.Element {
+function Quote({
+  label,
+  paise,
+  muted,
+}: {
+  label: string;
+  paise: number | null | undefined;
+  muted?: boolean;
+}): JSX.Element {
   return (
     <span
       className={cn(
@@ -114,9 +104,7 @@ function Quote({ label, rate, muted }: { label: string; rate: RateRow | undefine
       <span className={cn('text-[10px] uppercase tracking-wider', muted ? 'text-ink-400' : 'text-ink-300')}>
         {label}
       </span>
-      <span className={muted ? 'text-ink-200' : 'text-brand-100'}>
-        {rate ? formatRate(rate.ratePerGramPaise) : '—'}
-      </span>
+      <span className={muted ? 'text-ink-200' : 'text-brand-100'}>{formatRate(paise)}</span>
     </span>
   );
 }

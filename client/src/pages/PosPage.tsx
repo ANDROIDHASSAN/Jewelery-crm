@@ -742,8 +742,10 @@ function RateStrip({
   stale: boolean;
   onRefresh: () => void;
 }): JSX.Element {
-  const g22 = rates?.find((r) => r.purity === 2200);
-  const g18 = rates?.find((r) => r.purity === 1800);
+  // 9K is the published gold rate everywhere — dashboard, storefront, POS.
+  // Bill lines still price each piece at its own registered purity; this strip
+  // is the quoted rate, not the billing rate.
+  const g9 = rates?.find((r) => r.purity === 900);
   const silver = rates?.find((r) => r.purity === 0);
   const fmt = (paise: number | undefined): string =>
     paise && paise > 0 ? `₹${(paise / 100).toLocaleString('en-IN', { maximumFractionDigits: 0 })}/g` : '—';
@@ -753,9 +755,7 @@ function RateStrip({
       stale ? 'bg-warning-50 border-warning-200 text-warning-800' : 'bg-ink-900 border-ink-900 text-ink-0',
     )}>
       <div className="flex items-center gap-2 sm:gap-4 font-mono tabular-nums whitespace-nowrap">
-        <span>22K <strong className={stale ? 'text-warning-800' : 'text-brand-300'}>{fmt(g22?.ratePerGramPaise)}</strong></span>
-        <span className={stale ? 'opacity-70' : 'text-ink-300'}>·</span>
-        <span>18K {fmt(g18?.ratePerGramPaise)}</span>
+        <span>9K <strong className={stale ? 'text-warning-800' : 'text-brand-300'}>{fmt(g9?.ratePerGramPaise)}</strong></span>
         <span className={stale ? 'opacity-70' : 'text-ink-300'}>·</span>
         <span>Silver {fmt(silver?.ratePerGramPaise)}</span>
       </div>

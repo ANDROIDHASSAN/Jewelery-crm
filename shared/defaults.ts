@@ -25,9 +25,14 @@ export const DEFAULT_STOREFRONT_CONTENT = {
     image:
       'https://images.unsplash.com/photo-1599643477877-530eb83abc8e?auto=format&fit=crop&w=1920&q=85',
   },
-  // Blank by default so a fresh storefront shows the live GoldAPI feed; an
-  // editor can type a manual rate in the CMS to override the feed per purity.
+  // Blank by default so a fresh storefront shows the live GoldAPI feed. These
+  // are the fallback when no GOLDAPI_KEY is attached — an editor fills them in
+  // and they drive both the displayed rate and stock valuation. `platinum` has
+  // no feed behind it, so it is the only platinum source either way.
+  // g24/g22/g18 are retired (9K-only storefront) and read by nothing.
   rates: {
+    g9: '',
+    platinum: '',
     g24: '',
     g22: '',
     g18: '',

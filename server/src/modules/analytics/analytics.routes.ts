@@ -23,8 +23,13 @@ import { z } from 'zod';
 import { Prisma, OrderStatus, PaymentStatus } from '@prisma/client';
 import { prisma } from '../../lib/prisma.js';
 import { sumPaise } from '../../lib/money.js';
-import { readGoldRatePaise } from '../../lib/redis.js';
-import { computeGoldValuePaise } from '../../lib/money.js';
+import { resolveMetalRates } from '../../lib/metal-rate.js';
+import {
+  derive9kFrom24k,
+  metalValueOrCostPaise,
+  resolveMetalValuePaise,
+} from '@goldos/shared/metal-rate';
+import { computeValuation } from '../inventory/inventory.service.js';
 import { getTenantId } from '../../lib/async-context.js';
 import { withCache } from '../../lib/cache.js';
 
@@ -97,9 +102,8 @@ async function buildDashboardSummary(shopId: string | undefined): Promise<unknow
     sevenDayOrders,
     openLeads,
     leadsToday,
-    itemAgg,
-    lotItems,
-    purities,
+    valuation,
+    rates,
   ] = await Promise.all([
     prisma.bill.aggregate({
       where: { ...shopWhere, createdAt: { gte: startOfToday, lte: now } },
@@ -133,29 +137,13 @@ async function buildDashboardSummary(shopId: string | undefined): Promise<unknow
     }),
     prisma.lead.count({ where: { status: { in: ['NEW', 'CONTACTED', 'INTERESTED', 'NEGOTIATION'] } } }),
     prisma.lead.count({ where: { createdAt: { gte: startOfToday } } }),
-    // Stock valuation: split serialized vs lot rows so the unit count and
-    // total weight stay correct under the hybrid model. Lot rows track N
-    // interchangeable pieces in `quantityOnHand`, so unit count needs
-    // SUM(quantityOnHand) and total weight needs SUM(weightMg * quantityOnHand).
-    // Prisma's groupBy can't do conditional aggregates, so we run two
-    // queries and merge in JS. Still O(k) where k = number of purities,
-    // bounded by ~5 purity values in practice.
-    prisma.item.groupBy({
-      by: ['purityCaratX100'],
-      where: { status: 'IN_STOCK', isSerialized: true, ...(shopId ? { shopId } : {}) },
-      _sum: { weightMg: true },
-      _count: { _all: true },
-    }),
-    prisma.item.findMany({
-      where: { status: 'IN_STOCK', isSerialized: false, ...(shopId ? { shopId } : {}) },
-      select: { purityCaratX100: true, weightMg: true, quantityOnHand: true },
-    }),
-    Promise.all(
-      [2400, 2200, 1800, 0].map(async (p) => ({
-        purity: p,
-        cached: await readGoldRatePaise(p),
-      })),
-    ),
+    // Stock valuation: delegate to the ONE valuation function rather than
+    // re-deriving it here. This used to be its own purity-only groupBy that
+    // ignored metalType and diamond cost, so the dashboard card could disagree
+    // with the Inventory → Valuation tab and Analytics → Inventory value, which
+    // were already reconciled with each other. Now all three share a formula.
+    computeValuation({ ...(shopId ? { shopId } : {}) }),
+    resolveMetalRates(),
   ]);
 
   const buckets = new Map<string, number>();
@@ -179,30 +167,6 @@ async function buildDashboardSummary(shopId: string | undefined): Promise<unknow
     revenuePaise,
   }));
 
-  const rateByPurity = new Map<number, number>();
-  for (const p of purities) {
-    rateByPurity.set(p.purity, p.cached?.paise ?? 642_000);
-  }
-  let stockValuationPaise = 0;
-  let itemCount = 0;
-  // Serialized rows: 1 unit per row, weight is the per-piece weight.
-  for (const grp of itemAgg) {
-    const ratePerGramPaise = rateByPurity.get(grp.purityCaratX100) ?? 642_000;
-    const totalWeightMg = grp._sum.weightMg ?? 0;
-    stockValuationPaise += computeGoldValuePaise(totalWeightMg, grp.purityCaratX100, ratePerGramPaise);
-    itemCount += grp._count._all;
-  }
-  // Lot rows: each row holds N interchangeable pieces. Value + unit count
-  // both scale by quantityOnHand. Bug fix: previously these rows counted as
-  // 1 unit each and contributed only a single piece's weight, so a "Gold
-  // Bar 1g × 23" surfaced as "1 in stock" worth one gram.
-  for (const it of lotItems) {
-    const ratePerGramPaise = rateByPurity.get(it.purityCaratX100) ?? 642_000;
-    const totalWeightMg = it.weightMg * it.quantityOnHand;
-    stockValuationPaise += computeGoldValuePaise(totalWeightMg, it.purityCaratX100, ratePerGramPaise);
-    itemCount += it.quantityOnHand;
-  }
-
   return {
     today: {
       revenuePaise: (todayAgg._sum.totalPaise ?? 0) + (todayOrderAgg._sum.totalPaise ?? 0),
@@ -213,13 +177,21 @@ async function buildDashboardSummary(shopId: string | undefined): Promise<unknow
       billCount: yesterdayAgg._count._all + yesterdayOrderAgg._count._all,
     },
     leads: { open: openLeads, today: leadsToday },
-    stock: { valuationPaise: stockValuationPaise, itemCount },
+    stock: { valuationPaise: valuation.totalPaise, itemCount: valuation.itemCount },
     sevenDay: sevenDaySeries,
-    goldRate: purities.map((p) => ({
-      purity: p.purity,
-      ratePerGramPaise: p.cached?.paise ?? 0,
-      stale: p.cached?.stale ?? true,
-    })),
+    // 9K gold + silver + platinum are the only rates any surface quotes now.
+    // `source` tells the UI whether this is the live feed, a CMS-entered rate,
+    // or a stale cache, so the dashboard can label it honestly.
+    metalRates: {
+      gold9kPaise: rates.gold9kPaise,
+      silverPaise: rates.silverPaise,
+      platinum950Paise: rates.platinum950Paise,
+      goldSource: rates.goldSource,
+      silverSource: rates.silverSource,
+      platinumSource: rates.platinumSource,
+      stale: rates.stale,
+      cmsUpdatedAt: rates.cmsUpdatedAt,
+    },
     asOf: now.toISOString(),
   };
 }
@@ -1094,7 +1066,7 @@ analyticsRouter.get('/inventory-valuation', async (req, res, next) => {
   try {
     const q = z.object({ shopId: z.string().optional() }).parse(req.query);
 
-    const [items, purities] = await Promise.all([
+    const [items, rates] = await Promise.all([
       prisma.item.findMany({
         where: { status: 'IN_STOCK', ...(q.shopId ? { shopId: q.shopId } : {}) },
         select: {
@@ -1131,18 +1103,8 @@ analyticsRouter.get('/inventory-valuation', async (req, res, next) => {
           shop: { select: { id: true, name: true } },
         },
       }),
-      Promise.all(
-        [2400, 2200, 1800, 1400, 9500, 0].map(async (p) => ({
-          purity: p,
-          cached: await readGoldRatePaise(p),
-        })),
-      ),
+      resolveMetalRates(),
     ]);
-
-    const rateByPurity = new Map<number, number>();
-    for (const p of purities) {
-      rateByPurity.set(p.purity, p.cached?.paise ?? 642_000);
-    }
 
     type Agg = { count: number; weightMg: number; costPaise: number; marketPaise: number };
     const byShop = new Map<string, Agg & { shopName: string }>();
@@ -1174,11 +1136,6 @@ analyticsRouter.get('/inventory-valuation', async (req, res, next) => {
     let total: Agg = { count: 0, weightMg: 0, costPaise: 0, marketPaise: 0 };
 
     for (const it of items) {
-      const rate = rateByPurity.get(it.purityCaratX100) ?? 642_000;
-      // Non-precious metals (gold-tone stainless steel, etc.) have no spot-metal
-      // basis, so market value equals cost — unrealized P&L stays zero for them.
-      const itemMetalType = it.category.metalType;
-      const isNonPreciousMetal = itemMetalType === 'STAINLESS_STEEL' || itemMetalType === 'OTHER';
       // Per-piece market value at today's rate; we scale by `units` below so
       // a lot row of 23 gold bars contributes 23× the value, not 1×.
       // Diamond cost is booked separately from the metal (M2 §1). Fold it into
@@ -1187,9 +1144,19 @@ analyticsRouter.get('/inventory-valuation', async (req, res, next) => {
       // they add equally to cost and market and net to zero in unrealized P&L —
       // which then reflects metal-rate movement only.
       const diamondCostPerPiece = it.diamonds.reduce((sum, d) => sum + d.costPaise, 0);
-      const metalPerPiece = isNonPreciousMetal
-        ? it.costPricePaise
-        : computeGoldValuePaise(it.weightMg, it.purityCaratX100, rate);
+      // Metals with no rate basis (gold-tone stainless steel, OTHER, or a metal
+      // whose rate is unconfigured) fall back to cost, so market equals cost and
+      // unrealized P&L stays zero for them. Identical call to the one in
+      // computeValuation — that is what keeps the two surfaces equal.
+      const metalPerPiece = metalValueOrCostPaise(
+        {
+          metalType: it.category.metalType,
+          weightMg: it.weightMg,
+          purityCaratX100: it.purityCaratX100,
+          costPricePaise: it.costPricePaise,
+        },
+        rates,
+      );
       const marketPerPiece = metalPerPiece + diamondCostPerPiece;
       const units = it.isSerialized ? 1 : it.quantityOnHand;
       const weightTotal = it.weightMg * units;
@@ -1373,11 +1340,17 @@ analyticsRouter.get('/inventory-valuation', async (req, res, next) => {
               .sort((a, b) => b.marketPaise - a.marketPaise),
           }))
           .sort((a, b) => b.marketPaise - a.marketPaise),
-        goldRates: purities.map((p) => ({
-          purity: p.purity,
-          ratePerGramPaise: p.cached?.paise ?? 0,
-          stale: p.cached?.stale ?? true,
-        })),
+        // The basis this valuation ran on — 9K gold, silver, platinum.
+        metalRates: {
+          gold9kPaise: rates.gold9kPaise,
+          silverPaise: rates.silverPaise,
+          platinum950Paise: rates.platinum950Paise,
+          goldSource: rates.goldSource,
+          silverSource: rates.silverSource,
+          platinumSource: rates.platinumSource,
+          stale: rates.stale,
+          cmsUpdatedAt: rates.cmsUpdatedAt,
+        },
       },
     });
   } catch (err) {
@@ -1629,8 +1602,8 @@ analyticsRouter.get('/low-margin', async (req, res, next) => {
 
     // For each in-stock item, compare cost vs market value at today's rate.
     // Margin% = (market - cost) / market * 100. Anything below the threshold
-    // is flagged.
-    const [items, purities] = await Promise.all([
+    // is flagged. Same rate basis as every other valuation surface.
+    const [items, rates] = await Promise.all([
       prisma.item.findMany({
         where: { status: 'IN_STOCK' },
         select: {
@@ -1639,24 +1612,28 @@ analyticsRouter.get('/low-margin', async (req, res, next) => {
           weightMg: true,
           purityCaratX100: true,
           costPricePaise: true,
-          category: { select: { name: true } },
+          category: { select: { name: true, metalType: true } },
           shop: { select: { name: true } },
         },
       }),
-      Promise.all(
-        [2400, 2200, 1800, 1400, 9500, 0].map(async (p) => ({
-          purity: p,
-          cached: await readGoldRatePaise(p),
-        })),
-      ),
+      resolveMetalRates(),
     ]);
-    const rateByPurity = new Map<number, number>();
-    for (const p of purities) rateByPurity.set(p.purity, p.cached?.paise ?? 642_000);
 
     const flagged = items
       .map((it) => {
-        const rate = rateByPurity.get(it.purityCaratX100) ?? 642_000;
-        const market = computeGoldValuePaise(it.weightMg, it.purityCaratX100, rate);
+        // Cost-basis metals (non-precious, or any metal with no configured rate)
+        // resolve to null. For those, market IS cost by definition, so a 0%
+        // margin would be an artifact of having no rate rather than a real
+        // pricing signal — skip them instead of flagging every gold-tone piece.
+        const market = resolveMetalValuePaise(
+          {
+            metalType: it.category.metalType,
+            weightMg: it.weightMg,
+            purityCaratX100: it.purityCaratX100,
+          },
+          rates,
+        );
+        if (market == null) return null;
         const marginPaise = market - it.costPricePaise;
         const marginPct = market > 0 ? (marginPaise / market) * 100 : 0;
         return {
@@ -1672,6 +1649,7 @@ analyticsRouter.get('/low-margin', async (req, res, next) => {
           marginPct,
         };
       })
+      .filter((r): r is NonNullable<typeof r> => r !== null)
       .filter((r) => r.marginPct < q.thresholdPct)
       .sort((a, b) => a.marginPct - b.marginPct)
       .slice(0, q.limit);
@@ -1841,13 +1819,16 @@ analyticsRouter.get('/gold-rate-impact', async (req, res, next) => {
       });
     }
 
+    // 9K is the rate we publish, so the rate-vs-revenue series is quoted at 9K
+    // too. GoldRateDaily stores no 9K column — derive it from 24K, same as the
+    // poller does. (Rate movement is proportional across karats, so this changes
+    // the axis labels, not the shape of the correlation.)
     const series = rates.map((r) => {
       const key = r.date.toISOString().slice(0, 10);
       const today = revByDay.get(key);
       return {
         date: key,
-        rate22KPaise: r.rate22KPaise,
-        rate24KPaise: r.rate24KPaise,
+        rate9KPaise: derive9kFrom24k(r.rate24KPaise),
         revenuePaise: today?.revenue ?? 0,
         billCount: today?.bills ?? 0,
       };
@@ -1856,9 +1837,9 @@ analyticsRouter.get('/gold-rate-impact', async (req, res, next) => {
     // Basic correlation: pct change in rate vs revenue. Output the
     // 7-day moving rate change and the 7-day revenue total for context.
     const rateChange =
-      series.length >= 2 && series[0]!.rate22KPaise > 0
-        ? ((series[series.length - 1]!.rate22KPaise - series[0]!.rate22KPaise) /
-            series[0]!.rate22KPaise) *
+      series.length >= 2 && series[0]!.rate9KPaise > 0
+        ? ((series[series.length - 1]!.rate9KPaise - series[0]!.rate9KPaise) /
+            series[0]!.rate9KPaise) *
           100
         : 0;
     const totalRevenue = series.reduce((a, s) => a + s.revenuePaise, 0);

@@ -4,6 +4,7 @@ import { ProductInputSchema } from '@goldos/shared/schemas';
 import { prisma } from '../../lib/prisma.js';
 import { ORDER_STATUSES } from '@goldos/shared/constants';
 import { resolveStateCode, splitTaxByPlaceOfSupply } from '@goldos/shared/bill-math';
+import { isCostBasisMetal, metalPurityLabel, type MetalTypeLike } from '@goldos/shared/metal-rate';
 import { readGoldRatePaise } from '../../lib/redis.js';
 import { applyBps, computeGoldValuePaise } from '../../lib/money.js';
 import { getTenantId } from '../../lib/async-context.js';
@@ -356,6 +357,10 @@ ecommerceRouter.get('/orders/:id/invoice.pdf', async (req, res, next) => {
                 weightMg: true,
                 purityCaratX100: true,
                 makingChargeBps: true,
+                // Needed to label the line's material. Purity alone can't name a
+                // metal — 0 is a shared "no carat" sentinel for silver AND
+                // non-precious.
+                category: { select: { metalType: true } },
               },
             },
           },
@@ -434,12 +439,23 @@ ecommerceRouter.get('/orders/:id/invoice.pdf', async (req, res, next) => {
         lines: order.items.map((l) => {
           const purity = l.product?.purityCaratX100 ?? null;
           const weightMg = l.product?.weightMg ?? null;
+          const metalType = (l.product?.category?.metalType ?? null) as MetalTypeLike;
+          const isPrecious = !isCostBasisMetal(metalType);
           // E-commerce products are sold at a fixed storefront price — there
           // is no live-rate snapshot on the order line, so we always show the
           // unit price in the RATE column rather than a per-gram rate.
           return {
             description: l.product?.name ?? 'Jewellery piece',
-            details: purity ? `${(purity / 100).toFixed(0)}K · BIS Hallmarked` : undefined,
+            // This used to read `${purity/100}K · BIS Hallmarked` for anything
+            // with a truthy purity, which invoiced Pt 950 as "95K" and, worse,
+            // would assert "BIS Hallmarked" on a non-precious piece carrying a
+            // stray carat — a false hallmark claim on a customer's tax invoice.
+            // Non-precious jewellery is never hallmarked, so the claim is now
+            // gated on the metal actually being precious.
+            details:
+              [metalPurityLabel(metalType, purity ?? 0), isPrecious ? 'BIS Hallmarked' : null]
+                .filter(Boolean)
+                .join(' · ') || undefined,
             qty: l.qty,
             unitPaise: l.pricePaise,
             amountPaise: l.pricePaise * l.qty,
@@ -701,6 +717,10 @@ const CouponCreateSchema = z.object({
   bxgyJson: z.record(z.unknown()).optional().nullable(),
   stackable: z.boolean().default(false),
   isActive: z.boolean().default(true),
+  // Advertise in the storefront announcement bar. Defaults FALSE — `isActive`
+  // only means redeemable, and private codes are active too, so publishing is a
+  // deliberate second step rather than a side-effect of creating a coupon.
+  showOnStorefront: z.boolean().default(false),
 });
 
 // GET /ecommerce/coupons — list all coupons for this tenant

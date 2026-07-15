@@ -59,7 +59,9 @@ export interface StorefrontFiltersConfig {
 
 // New CMS-editable sub-types (match shared/schemas.ts)
 export interface ShopByOccasionTile { name: string; slug: string; count: number; img: string; }
-export interface BrowseCategoryTile { label: string; slug: string; img: string; }
+/** '' = every metal. See MetalScopeSchema in shared/schemas.ts for why tiles need this. */
+export type MetalScope = '' | 'GOLD' | 'SILVER' | 'DIAMOND' | 'PLATINUM' | 'STAINLESS_STEEL' | 'OTHER';
+export interface BrowseCategoryTile { label: string; slug: string; img: string; metalScope?: MetalScope; }
 export interface ReelTile { handle: string; caption: string; poster: string; slug: string; }
 export interface DealCard { slug: string; name: string; category: string; priceLabel: string; badge: 'NEW' | 'SALE' | 'OUT'; img: string; }
 export interface TestimonialCard { quote: string; author: string; city: string; occasion: string; }
@@ -147,14 +149,20 @@ export interface StorefrontContent {
   /** CMS-managed hero carousel slides. Empty = fall back to the single `hero` block. */
   heroSlides: HeroSlide[];
   rates: {
-    // Free-text display strings for the "Today's rate" ticker. Each one, when
-    // filled, overrides the live GoldAPI feed for that purity; blank falls back
-    // to the live feed. (Product prices always use the numeric live feed.)
+    // Per-gram rates the jeweller maintains. These are the FALLBACK used when no
+    // GOLDAPI_KEY is attached — when one is, the live feed wins. They are no
+    // longer display-only: they drive stock valuation too, so they must parse as
+    // numbers (see shared/metal-rate parseRateStringToPaise). Blank = use the feed.
+    g9: string;
+    /** Platinum (Pt 950). No provider feeds platinum, so this is its only source. */
+    platinum: string;
+    silver: string;
+    updatedAt: string;
+    // Retired: the storefront quotes 9K only. Kept so stored content round-trips
+    // without dropping data. Nothing reads these.
     g24: string;
     g22: string;
     g18: string;
-    silver: string;
-    updatedAt: string;
   };
   collections: CollectionTile[];
   story: {
@@ -321,13 +329,16 @@ export const DEFAULT_CONTENT: StorefrontContent = {
     },
   ],
   rates: {
-    // Default to blank so a fresh storefront shows the live GoldAPI feed until
-    // an editor types a manual rate in the CMS (which then overrides the feed).
+    // Blank means "use the live feed". These only take effect when no
+    // GOLDAPI_KEY is attached — except `platinum`, which has no feed behind it
+    // and is therefore always the platinum source.
+    g9: '',
+    platinum: '',
+    silver: '',
+    updatedAt: '',
     g24: '',
     g22: '',
     g18: '',
-    silver: '',
-    updatedAt: '',
   },
   collections: [
     { slug: 'bridal', name: 'Bridal', tagline: 'For the day that matters', img: 'https://images.unsplash.com/photo-1602173574767-37ac01994b2a?auto=format&fit=crop&w=1600&q=92' },

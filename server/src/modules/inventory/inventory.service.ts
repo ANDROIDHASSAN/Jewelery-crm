@@ -4,8 +4,8 @@ import crypto from 'node:crypto';
 import { Prisma } from '@prisma/client';
 import { prisma } from '../../lib/prisma.js';
 import { NotFoundError, BusinessRuleError } from '../../lib/errors.js';
-import { readGoldRatePaise } from '../../lib/redis.js';
-import { computeGoldValuePaise } from '../../lib/money.js';
+import { resolveMetalRates } from '../../lib/metal-rate.js';
+import { metalValueOrCostPaise } from '@goldos/shared/metal-rate';
 import { taxableFromInclusivePaise } from '@goldos/shared/bill-math';
 import { getTenantId } from '../../lib/async-context.js';
 import type {
@@ -1260,30 +1260,30 @@ export async function computeValuation(opts: { shopId?: string }) {
       diamonds: { select: { costPaise: true } },
     },
   });
-  // Resolve each distinct purity's rate once, in parallel. Previously this
-  // hit Redis inside the per-item loop — for a tenant with thousands of
-  // items, that was thousands of sequential round-trips per request.
-  const purities = Array.from(new Set(items.map((i) => i.purityCaratX100)));
-  const rateEntries = await Promise.all(
-    purities.map(async (p) => [p, (await readGoldRatePaise(p))?.paise ?? 642_000] as const),
-  );
-  const rateByPurity = new Map<number, number>(rateEntries);
+  // One rate resolution per request, not one per purity. Gold is quoted at 9K
+  // and every gold piece scales off that basis, so there is nothing to look up
+  // per-purity any more. Silver uses the silver rate; platinum uses the CMS
+  // platinum rate; non-precious uses cost. See shared/metal-rate.
+  const rates = await resolveMetalRates();
 
   let totalPaise = 0;
   let totalItemCount = 0;
   const byShop = new Map<string, { totalPaise: number; itemCount: number }>();
   const byCategory = new Map<string, { totalPaise: number; itemCount: number }>();
   for (const it of items) {
-    const ratePerGramPaise = rateByPurity.get(it.purityCaratX100) ?? 642_000;
-    // Per-piece value (weight is recorded per piece for both modes). Non-precious
-    // metals (stainless steel, OTHER) have no live spot rate, so we value them at
-    // their recorded cost price instead of recomputing off the gold rate. Kept in
-    // lockstep with the Analytics → Inventory value surface.
-    const isNonPreciousMetal =
-      it.category.metalType === 'STAINLESS_STEEL' || it.category.metalType === 'OTHER';
-    const metalPerPiece = isNonPreciousMetal
-      ? it.costPricePaise
-      : computeGoldValuePaise(it.weightMg, it.purityCaratX100, ratePerGramPaise);
+    // Per-piece value (weight is recorded per piece for both modes). Metals with
+    // no rate basis — stainless steel, OTHER, and anything whose rate is
+    // unconfigured — fall back to recorded cost. Kept in lockstep with the
+    // Analytics → Inventory value surface.
+    const metalPerPiece = metalValueOrCostPaise(
+      {
+        metalType: it.category.metalType,
+        weightMg: it.weightMg,
+        purityCaratX100: it.purityCaratX100,
+        costPricePaise: it.costPricePaise,
+      },
+      rates,
+    );
     // Diamond cost is booked separately from the metal (M2 §1) and added on top
     // of the metal value so a diamond ring is valued at gold + Σ diamond cost.
     const diamondCost = it.diamonds.reduce((sum, d) => sum + d.costPaise, 0);
@@ -1307,6 +1307,15 @@ export async function computeValuation(opts: { shopId?: string }) {
     itemCount: totalItemCount,
     byShop: Array.from(byShop.entries()).map(([shopId, v]) => ({ shopId, ...v })),
     byCategory: Array.from(byCategory.entries()).map(([categoryId, v]) => ({ categoryId, ...v })),
+    // The basis this total was computed on, so the UI can label it ("Live · 9K
+    // ₹4,710/g" vs "CMS rate") instead of implying a live feed that isn't there.
+    rateBasis: {
+      gold9kPaise: rates.gold9kPaise,
+      silverPaise: rates.silverPaise,
+      platinum950Paise: rates.platinum950Paise,
+      goldSource: rates.goldSource,
+      stale: rates.stale,
+    },
     asOf: new Date().toISOString(),
   };
 }

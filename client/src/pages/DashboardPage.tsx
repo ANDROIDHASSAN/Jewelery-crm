@@ -33,7 +33,7 @@ import {
   RankedBarChart,
   RevenueAreaChart,
 } from '@/components/ui/charts';
-import { useGetDashboardSummaryQuery } from '@/features/dashboard/dashboardApi';
+import { useGetDashboardSummaryQuery, type RateSource } from '@/features/dashboard/dashboardApi';
 import { useSelectedShopId } from '@/features/ui/shopFilterSlice';
 import { useAppSelector } from '@/app/hooks';
 import { useGetPlQuery, useGetExpensesByCategoryQuery } from '@/features/finance/financeApi';
@@ -77,9 +77,24 @@ function deltaCount(curr: number, prev: number, suffix: string): {
   return { value: `Flat vs ${suffix}`, direction: 'flat' };
 }
 
-function formatRate(paise: number, stale: boolean): string {
+function formatRate(paise: number | null | undefined, stale: boolean): string {
   if (!paise) return stale ? 'No data' : '—';
   return `₹${(paise / 100).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}/g`;
+}
+
+// Sub-label under each rate chip — says where the number came from, so a CMS
+// rate is never mistaken for a live one (and vice versa).
+function rateSourceLabel(source: RateSource | undefined): string | null {
+  switch (source) {
+    case 'live':
+      return null; // The default, and the section already says "Live".
+    case 'cms':
+      return 'CMS rate';
+    case 'live-stale':
+      return 'stale';
+    default:
+      return 'not set';
+  }
 }
 
 // Range for MTD finance queries. CRITICAL: do not include `Date.now()` in the
@@ -211,10 +226,11 @@ export function DashboardPage(): JSX.Element {
   const topProducts = topProductsRes?.data ?? [];
   const expenseCats = expensesByCatRes?.data ?? [];
 
-  const rate24 = summary?.goldRate.find((r) => r.purity === 2400);
-  const rate22 = summary?.goldRate.find((r) => r.purity === 2200);
-  const rate18 = summary?.goldRate.find((r) => r.purity === 1800);
-  const rateSilver = summary?.goldRate.find((r) => r.purity === 0);
+  // 9K gold + silver + platinum are the only rates we quote. 24K/22K/18K are
+  // deliberately gone: 9K is the published basis every gold valuation scales
+  // off, and showing four karats invited the question of which one the stock
+  // valuation actually used.
+  const metalRates = summary?.metalRates;
 
   const chartData = useMemo(
     () =>
@@ -345,43 +361,60 @@ export function DashboardPage(): JSX.Element {
         }
       />
 
-      {/* ---- 1a. Gold rate hero ticker ----
-       *  Linear-style command bar: a single row showing the 4 metal rates the
-       *  jeweller checks compulsively, with a "stale" flag if MCX feed missed
-       *  its 5-minute beat. This is the highest-anxiety number in the building.
+      {/* ---- 1a. Metal rate hero ticker ----
+       *  Linear-style command bar: the rates the jeweller checks compulsively.
+       *  Gold is quoted at 9K ONLY — it is the basis stock valuation scales
+       *  every gold piece off, so the number here and the number behind the
+       *  valuation card are the same number.
+       *
+       *  Each chip says where its rate came from: the live GoldAPI feed (when
+       *  GOLDAPI_KEY is attached), the rate typed into Website → Gold rates, or
+       *  a stale cache. Platinum is CMS-only — no provider feeds it.
        */}
       <section className="relative overflow-hidden rounded-md border border-brand-200/60 bg-gradient-to-br from-brand-50/60 via-ink-0 to-ink-0">
         <div aria-hidden className="absolute inset-0 bg-hairlines opacity-30 pointer-events-none" />
-        <div className="relative grid grid-cols-2 sm:grid-cols-4 divide-x divide-ink-100">
+        <div className="relative grid grid-cols-1 sm:grid-cols-3 divide-y sm:divide-y-0 sm:divide-x divide-ink-100">
           {[
-            { label: '24K', rate: rate24 },
-            { label: '22K', rate: rate22 },
-            { label: '18K', rate: rate18 },
-            { label: 'Silver', rate: rateSilver },
-          ].map(({ label, rate }, i) => (
-            <div
-              key={label}
-              className={cn(
-                'px-4 py-3.5 flex items-center justify-between gap-2',
-                i >= 2 && 'border-t sm:border-t-0 border-ink-100',
-              )}
-            >
-              <div className="flex items-center gap-2">
-                <Coins className={cn('h-3.5 w-3.5', label === 'Silver' ? 'text-ink-400' : 'text-brand-500')} />
-                <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-ink-500">
-                  {label}
-                </span>
+            { label: '9K Gold', paise: metalRates?.gold9kPaise, source: metalRates?.goldSource },
+            { label: 'Silver', paise: metalRates?.silverPaise, source: metalRates?.silverSource },
+            {
+              label: 'Platinum',
+              paise: metalRates?.platinum950Paise,
+              source: metalRates?.platinumSource,
+            },
+          ].map(({ label, paise, source }) => {
+            const note = rateSourceLabel(source);
+            return (
+              <div key={label} className="px-4 py-3.5 flex items-center justify-between gap-2">
+                <div className="flex items-center gap-2">
+                  <Coins
+                    className={cn(
+                      'h-3.5 w-3.5',
+                      label === '9K Gold' ? 'text-brand-500' : 'text-ink-400',
+                    )}
+                  />
+                  <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-ink-500">
+                    {label}
+                  </span>
+                </div>
+                <div className="text-right">
+                  <p className="font-mono text-sm text-ink-900 font-medium tabular-nums">
+                    {formatRate(paise, source === 'live-stale')}
+                  </p>
+                  {note && (
+                    <p
+                      className={cn(
+                        'text-[10px] font-medium leading-none mt-0.5',
+                        source === 'live-stale' ? 'text-warning-700' : 'text-ink-400',
+                      )}
+                    >
+                      {note}
+                    </p>
+                  )}
+                </div>
               </div>
-              <div className="text-right">
-                <p className="font-mono text-sm text-ink-900 font-medium tabular-nums">
-                  {rate ? formatRate(rate.ratePerGramPaise, rate.stale) : '—'}
-                </p>
-                {rate?.stale && (
-                  <p className="text-[10px] text-warning-700 font-medium leading-none mt-0.5">stale</p>
-                )}
-              </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       </section>
 
@@ -413,7 +446,14 @@ export function DashboardPage(): JSX.Element {
           label="Stock valuation"
           value={summary ? <Money paise={summary.stock.valuationPaise} /> : isLoading ? '…' : '—'}
           delta={{
-            value: rate22 ? `Live · 22K ${formatRate(rate22.ratePerGramPaise, rate22.stale)}` : 'Live rate pending',
+            // Name the exact basis the total was computed on. 9K gold + silver
+            // at rate, everything else at cost.
+            value: metalRates?.gold9kPaise
+              ? `${metalRates.goldSource === 'cms' ? 'CMS' : 'Live'} · 9K ${formatRate(
+                  metalRates.gold9kPaise,
+                  metalRates.goldSource === 'live-stale',
+                )}`
+              : 'Rate not configured',
             direction: 'flat',
           }}
         />

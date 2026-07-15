@@ -11,6 +11,8 @@
 //   bill starts). The popup snapshots the data so the cashier can re-print
 //   without re-entering anything.
 
+import { metalPurityLabel, type MetalTypeLike } from '@goldos/shared/metal-rate';
+
 export interface PrintReceiptInput {
   billNumber: string;
   createdAt: string | Date;
@@ -21,6 +23,9 @@ export interface PrintReceiptInput {
     sku: string;
     weightMg: number;
     purityCaratX100: number;
+    /** Needed to label the line: purity 0 means "no carat" for silver AND
+     *  non-precious, so purity alone can't name the metal. */
+    metalType?: MetalTypeLike;
     ratePerGramPaise: number;
     makingChargeBps: number;
     stoneChargePaise: number;
@@ -55,9 +60,12 @@ function rupees(paise: number): string {
   return `₹${(paise / 100).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
-function purityLabel(x100: number): string {
-  if (x100 < 1000) return x100 === 0 ? 'Silver' : `${x100 / 10}`;
-  return `${x100 / 100}K`;
+// Was: `x100 < 1000 ? (x100 === 0 ? 'Silver' : x100/10) : `${x100/100}K``.
+// That printed "90" for 9K gold (900 fell into the millesimal branch), "95K"
+// for Pt 950, and "Silver" for stainless steel. Delegates to the one canonical
+// labeller now.
+function purityLabel(x100: number, metalType: MetalTypeLike): string {
+  return metalPurityLabel(metalType, x100);
 }
 
 // Shared CSS for the receipt. Kept separate so we can stamp it into a same-
@@ -108,7 +116,7 @@ export function renderReceiptHtml(input: PrintReceiptInput): string {
           <td class="num">${i + 1}</td>
           <td>${escapeHtml(l.sku)}</td>
           <td class="num">${(l.weightMg / 1000).toFixed(3)} g</td>
-          <td class="num">${escapeHtml(purityLabel(l.purityCaratX100))}</td>
+          <td class="num">${escapeHtml(purityLabel(l.purityCaratX100, l.metalType ?? null))}</td>
           <td class="num">${rupees(l.ratePerGramPaise)}/g</td>
           <td class="num">${rupees(l.goldValuePaise)}</td>
           <td class="num">${(l.makingChargeBps / 100).toFixed(2)}%</td>

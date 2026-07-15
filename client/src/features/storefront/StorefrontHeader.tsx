@@ -4,6 +4,7 @@ import { Search, Heart, User, ShoppingBag, MapPin, Menu, X, Gem, ChevronRight, P
 import { cn } from '@/lib/cn';
 import { useAppSelector } from '@/app/hooks';
 import {
+  useGetPublicCouponsQuery,
   useGetPublicGoldRateQuery,
   useGetPublicCollectionsQuery,
   useGetPublicCollectionsListQuery,
@@ -51,8 +52,10 @@ export function StorefrontHeader(): JSX.Element {
           end: n.end,
         }))
       : DEFAULT_NAV;
-  // Live gold rate — overrides the CMS string when the worker has cached
-  // today's value. Polls every 5 min so a daily refresh shows up in-session.
+  // Metal rates. The server has already applied the precedence — live GoldAPI
+  // feed when a key is attached, otherwise the CMS-entered rate — so we just
+  // render what it sends. Polls every 5 min so a daily refresh shows up
+  // in-session.
   const { data: liveRate } = useGetPublicGoldRateQuery(undefined, {
     pollingInterval: 5 * 60 * 1000,
   });
@@ -60,24 +63,26 @@ export function StorefrontHeader(): JSX.Element {
   // Silver") become the mobile drawer's "tone" toggle; the selected tone's
   // sub-categories fill the Palmonas-style "Shop by Category" grid below it.
   const { data: allCategories = [] } = useGetPublicCollectionsQuery();
-  const rates = useMemo(() => {
-    const find = (p: number): number | undefined =>
-      liveRate?.rates.find((r) => r.purity === p)?.ratePerGramPaise;
-    // CMS-entered value wins when an editor has filled it in; the live GoldAPI
-    // feed is the fallback for any rate left blank. Only the displayed ticker
-    // is affected — product prices always use the numeric live feed.
-    const pick = (cms: string | undefined, purity: number): string => {
-      const manual = (cms ?? '').trim();
-      return manual || formatLiveRate(find(purity), '—');
-    };
-    return {
-      ...cmsRates,
-      g24: pick(cmsRates.g24, 2400),
-      g22: pick(cmsRates.g22, 2200),
-      g18: pick(cmsRates.g18, 1800),
-      silver: pick(cmsRates.silver, 0),
-    };
-  }, [cmsRates, liveRate]);
+  // The storefront quotes 9K gold and silver only. The server resolved the
+  // source already (live feed if GOLDAPI_KEY is attached, else the CMS rate),
+  // so there is no CMS-vs-live pick to make here any more — that inversion used
+  // to live in this component and let a stale CMS string mask a live feed.
+  const rates = useMemo(
+    () => ({
+      g9: formatLiveRate(liveRate?.gold9kPaise ?? undefined, '—'),
+      silver: formatLiveRate(liveRate?.silverPaise ?? undefined, '—'),
+      // Editor-typed "as of" label wins; otherwise fall back to nothing rather
+      // than implying a freshness we can't vouch for.
+      updatedAt: (cmsRates.updatedAt ?? '').trim(),
+    }),
+    [cmsRates.updatedAt, liveRate],
+  );
+  // Coupons the jeweller opted to advertise (Website → Coupons → "Show on
+  // storefront"). Same 5-min poll as the rate, so publishing a code lands in an
+  // open session. Empty array = nothing opted in → the bar just shows the rate.
+  const { data: coupons = [] } = useGetPublicCouponsQuery(undefined, {
+    pollingInterval: 5 * 60 * 1000,
+  });
   const locationCount = useAppSelector((s) => s.storefrontContent.locations.length);
   const cartCount = useAppSelector((s) => s.shop.cart.reduce((n, c) => n + c.qty, 0));
   const wishlistCount = useAppSelector((s) => s.shop.wishlist.length);
@@ -140,17 +145,59 @@ export function StorefrontHeader(): JSX.Element {
     };
   }, [mobileOpen]);
 
+  // Announcement bar rotation: slot 0 is always today's rate, then one slot per
+  // advertised coupon. With no coupons there is a single slot and the interval
+  // never starts, so the bar behaves exactly as it did before this feature.
+  const slotCount = 1 + coupons.length;
+  const [slot, setSlot] = useState(0);
+  useEffect(() => {
+    if (slotCount <= 1) {
+      setSlot(0);
+      return;
+    }
+    const id = window.setInterval(() => setSlot((s) => (s + 1) % slotCount), 4000);
+    return () => window.clearInterval(id);
+  }, [slotCount]);
+  // A coupon being unpublished mid-rotation shrinks the list; clamp so we never
+  // index past the end for a frame.
+  const activeSlot = slot % slotCount;
+  const activeCoupon = activeSlot === 0 ? null : coupons[activeSlot - 1];
+
   return (
     <header className="sticky top-0 z-40">
       {/* Announcement bar — faint blush + champagne, premium tonal. */}
       <div className="bg-[#F5E5DC] border-b border-[#E8CFC1]/60 text-ink-700">
         <div className="max-w-[1280px] mx-auto px-4 sm:px-6 h-9 flex items-center justify-between text-[11px] tracking-wide">
-          <span className="font-mono tabular-nums truncate">
-            <span className="text-ink-500">Today&apos;s rate ·</span> <span className="text-brand-700 font-semibold">24K {rates.g24}</span>
-            <span className="text-ink-300 mx-2 hidden sm:inline">·</span>
-            <span className="text-brand-700 font-semibold hidden sm:inline">22K {rates.g22}</span>
-            <span className="text-ink-300 mx-2 hidden sm:inline">·</span>
-            <span className="hidden md:inline text-ink-600">18K {rates.g18} · Silver {rates.silver}</span>
+          {/* Rotates rate ↔ each advertised coupon every 4s. `key` on the slot
+              re-triggers the fade so consecutive messages read as a change
+              rather than a silent swap. */}
+          <span key={activeSlot} className="font-mono tabular-nums truncate animate-fade-in">
+            {activeCoupon ? (
+              <>
+                <span className="text-ink-500">Use code</span>{' '}
+                <span className="text-brand-700 font-semibold tracking-[0.08em]">
+                  {activeCoupon.code}
+                </span>{' '}
+                <span className="text-ink-600">— {activeCoupon.offerLabel}</span>
+                {activeCoupon.minCartPaise > 0 && (
+                  <span className="hidden sm:inline text-ink-500">
+                    {' '}
+                    on orders over ₹
+                    {Math.round(activeCoupon.minCartPaise / 100).toLocaleString('en-IN')}
+                  </span>
+                )}
+              </>
+            ) : (
+              <>
+                <span className="text-ink-500">Today&apos;s rate ·</span>{' '}
+                <span className="text-brand-700 font-semibold">9K {rates.g9}</span>
+                <span className="text-ink-300 mx-2 hidden sm:inline">·</span>
+                <span className="hidden sm:inline text-ink-600">Silver {rates.silver}</span>
+                {rates.updatedAt && (
+                  <span className="hidden md:inline text-ink-500"> · {rates.updatedAt}</span>
+                )}
+              </>
+            )}
           </span>
           <span className="hidden md:flex items-center gap-5 text-ink-600">
             <Link to="/store/locations" className="inline-flex items-center gap-1 hover:text-ink-900 transition-colors">
@@ -556,7 +603,7 @@ export function StorefrontHeader(): JSX.Element {
               </div>
             </nav>
             <div className="border-t border-ink-100 px-5 sm:px-6 py-4 bg-ink-25 text-xs font-mono tabular-nums text-ink-600">
-              22K <span className="text-brand-700">{rates.g22}</span> · 18K {rates.g18}
+              9K <span className="text-brand-700">{rates.g9}</span> · Silver {rates.silver}
             </div>
           </div>
         </div>

@@ -115,8 +115,12 @@ export function computeStorefrontPrice(p: PricedProduct, rates: StorefrontRates)
   };
 }
 
-// GST-inclusive price the customer pays, in paise. Convenience wrapper over
-// computeStorefrontPrice().totalPaise for cards, sorting and price filters.
+// GST-inclusive price the customer pays BEFORE any Season Sale offer, in paise.
+//
+// Prefer `productPriceView()` for anything customer-facing — this is the
+// pre-discount number, and rendering it directly is what made the same piece
+// show ₹1,700 in one grid and ₹1,190 in another. Keep using this for sorting
+// and price filters, where the pre-offer price is the intended basis.
 export function storefrontTotalPaise(p: PricedProduct, rates?: StorefrontRates): number {
   return computeStorefrontPrice(p, rates).totalPaise;
 }
@@ -188,6 +192,50 @@ export function computeSalePrice(
     priceBadge,
     bogo,
     badge: bogo ? 'BUY 1 GET 1 FREE' : priceBadge!,
+  };
+}
+
+/**
+ * Everything a product card needs to price a piece — offer included.
+ *
+ * ONE call, so a Season Sale can't be silently dropped by a grid that forgot to
+ * apply it. The offer lives on the product (`p.sale`), NOT on the section
+ * rendering it, so a discounted piece must look discounted in every grid: the
+ * Season Sale row, the category showcase, the collection page, search results
+ * and the "you may also like" strip. It previously only did so in the two
+ * surfaces built for sales, so `hoops` read ₹1,190 in the Sale row and ₹1,700
+ * in the Demifine showcase — the same piece, the same page.
+ */
+export interface ProductPriceView {
+  /** Pre-offer, GST-inclusive. Render struck through when `hasStrike`. */
+  originalPaise: number;
+  /** What the customer actually pays — always render THIS as the price. */
+  finalPaise: number;
+  hasStrike: boolean;
+  /** Corner badge ("FLAT 30% OFF" / "BUY 1 GET 1 FREE"); null when no offer. */
+  badge: string | null;
+  /** True for a sale-wide Buy-1-Get-1 (carries no per-unit price cut). */
+  bogo: boolean;
+  /** Offer value in paise; 0 when there's no price cut (e.g. BOGO-only). */
+  discountPaise: number;
+}
+
+export function productPriceView(
+  p: PricedProduct & { sale?: SaleInfo | null },
+  rates?: StorefrontRates,
+): ProductPriceView {
+  const originalPaise = computeStorefrontPrice(p, rates).totalPaise;
+  const offer = computeSalePrice(originalPaise, p.sale);
+  const finalPaise = offer?.discountedPaise ?? originalPaise;
+  return {
+    originalPaise,
+    finalPaise,
+    hasStrike: offer?.hasStrike ?? false,
+    badge: offer?.badge ?? null,
+    bogo: offer?.bogo ?? false,
+    // Clamped: a FIXED_PRICE offer set above the computed price must not
+    // render as a negative discount.
+    discountPaise: Math.max(0, originalPaise - finalPaise),
   };
 }
 

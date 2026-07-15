@@ -32,6 +32,7 @@ import {
 import { toast } from 'sonner';
 import { uploadImageToCloudinary, isCloudinaryConfigured, cloudinaryThumb } from '@/lib/cloudinary';
 import type { Item, Collection } from '@goldos/shared/types';
+import { metalPurityLabel, type MetalTypeLike } from '@goldos/shared/metal-rate';
 import {
   DIAMOND_SHAPES,
   DIAMOND_CUTS,
@@ -1056,16 +1057,33 @@ function ValuationTab(): JSX.Element {
               <Money paise={v.totalPaise} />
             </p>
             <p className="text-xs text-ink-500 mt-2 max-w-md">
-              Live metal at today’s MCX rate + diamond cost; making charges excluded. This matches the
-              “Market value” on Analytics → Inventory value, which also shows cost basis and unrealised
-              profit.
+              Gold at today’s 9K rate scaled to each piece’s purity, silver at the silver rate,
+              platinum at the Pt 950 rate, and non-precious pieces at cost — plus diamond cost.
+              Making charges excluded. This matches the “Market value” on Analytics → Inventory
+              value, which also shows cost basis and unrealised profit.
             </p>
           </div>
           <div className="sm:text-right text-sm">
             <p className="text-ink-800 font-medium">{v.itemCount} items in stock</p>
             <p className="text-xs text-ink-500 mt-1 font-mono">
-              As of {new Date(v.asOf).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })} · MCX
+              As of{' '}
+              {new Date(v.asOf).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}
             </p>
+            {/* Name the basis rather than a feed that may not be attached. */}
+            {v.rateBasis?.gold9kPaise ? (
+              <p className="text-xs text-ink-500 mt-0.5 font-mono tabular-nums">
+                9K ₹{(v.rateBasis.gold9kPaise / 100).toLocaleString('en-IN')}/g
+                {v.rateBasis.goldSource === 'cms'
+                  ? ' · CMS rate'
+                  : v.rateBasis.goldSource === 'live-stale'
+                    ? ' · stale'
+                    : ' · live'}
+              </p>
+            ) : (
+              <p className="text-xs text-warning-700 mt-0.5">
+                No gold rate configured — gold valued at cost.
+              </p>
+            )}
           </div>
         </div>
       </section>
@@ -7811,24 +7829,28 @@ function ShopWiseInventoryTab(): JSX.Element {
     return Object.entries(m).map(([status, value]) => ({ name: labels[status] ?? status, value, status }));
   }, [shopItems]);
 
-  // --- Chart: purity distribution ---
-  const purityChartData = useMemo(() => {
-    const m = new Map<number, number>();
-    for (const i of shopItems) m.set(i.purityCaratX100, (m.get(i.purityCaratX100) ?? 0) + 1);
-    const label = (x100: number) => {
-      if (x100 === 2400) return '24K';
-      if (x100 === 2200) return '22K';
-      if (x100 === 1800) return '18K';
-      if (x100 === 1400) return '14K';
-      if (x100 === 0) return 'Silver';
-      if (x100 >= 9000) return `Pt ${x100 / 10}`;
-      return `${(x100 / 100).toFixed(1)}K`;
-    };
+  // --- Chart: material distribution ---
+  // Buckets by METAL + purity, not purity alone. purityCaratX100 === 0 is a
+  // shared sentinel meaning "no carat" — silver AND non-precious both store it —
+  // so grouping on purity merged gold-tone stainless steel into a bucket
+  // labelled "Silver". Keying on the resolved material label keeps them apart
+  // and names each one correctly.
+  const materialChartData = useMemo(() => {
+    const m = new Map<string, { count: number; sort: number }>();
+    for (const i of shopItems) {
+      const cat = byId.get(i.categoryId);
+      const main = cat?.parentId ? byId.get(cat.parentId) : cat;
+      const metalType = (main ?? cat)?.metalType ?? null;
+      const name = metalPurityLabel(metalType as MetalTypeLike, i.purityCaratX100);
+      const prev = m.get(name) ?? { count: 0, sort: i.purityCaratX100 };
+      prev.count += 1;
+      m.set(name, prev);
+    }
     return Array.from(m.entries())
-      .map(([purity, count]) => ({ name: label(purity), count, purity }))
-      .sort((a, b) => b.purity - a.purity)
+      .map(([name, v]) => ({ name, count: v.count, sort: v.sort }))
+      .sort((a, b) => b.count - a.count)
       .slice(0, 6);
-  }, [shopItems]);
+  }, [shopItems, byId]);
 
   // --- Chart: weight per main category ---
   const weightChartData = useMemo(() => {
@@ -8044,14 +8066,14 @@ function ShopWiseInventoryTab(): JSX.Element {
             )}
           </div>
 
-          {/* Charts row 2: purity + weight by category */}
-          {(purityChartData.length > 1 || weightChartData.length > 1) && (
+          {/* Charts row 2: material + weight by category */}
+          {(materialChartData.length > 1 || weightChartData.length > 1) && (
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {purityChartData.length > 1 && (
+              {materialChartData.length > 1 && (
                 <div className="border border-ink-100 rounded-lg p-4 bg-white">
-                  <p className="text-xs text-ink-500 uppercase tracking-wide font-semibold mb-3">Items by Purity</p>
+                  <p className="text-xs text-ink-500 uppercase tracking-wide font-semibold mb-3">Items by Material</p>
                   <ResponsiveContainer width="100%" height={140}>
-                    <BarChart data={purityChartData} margin={{ left: 0, right: 16, top: 0, bottom: 0 }}>
+                    <BarChart data={materialChartData} margin={{ left: 0, right: 16, top: 0, bottom: 0 }}>
                       <XAxis dataKey="name" tick={{ fontSize: 11 }} axisLine={false} tickLine={false} />
                       <YAxis tick={{ fontSize: 11 }} axisLine={false} tickLine={false} allowDecimals={false} />
                       <Tooltip
@@ -8059,7 +8081,7 @@ function ShopWiseInventoryTab(): JSX.Element {
                         formatter={(v: number) => [v, 'Items']}
                       />
                       <Bar dataKey="count" radius={[4, 4, 0, 0]} maxBarSize={36}>
-                        {purityChartData.map((_, idx) => (
+                        {materialChartData.map((_, idx) => (
                           <Cell key={idx} fill={SW_CAT_COLORS[idx % SW_CAT_COLORS.length]} />
                         ))}
                       </Bar>

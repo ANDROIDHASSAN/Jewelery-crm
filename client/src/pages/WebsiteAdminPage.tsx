@@ -8,6 +8,7 @@ import { toast } from 'sonner';
 import { ExternalLink, Plus, Trash2, RotateCcw, CloudUpload, X, Image as ImageIcon, Video as VideoIcon, FileText } from 'lucide-react';
 import { downloadPdf } from '@/lib/downloadPdf';
 import { slugify } from '@goldos/shared/slug';
+import { parseRateStringToPaise } from '@goldos/shared/metal-rate';
 import { uploadImageToCloudinary, uploadVideoToCloudinary } from '@/lib/cloudinary';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -32,6 +33,7 @@ import {
   setDefaultFilterKeys,
   setFiltersForCollection,
   setNavMenu,
+  type MetalScope,
   type StorefrontContent,
   updateBrand,
   updateFilterGroup,
@@ -494,41 +496,38 @@ export function WebsiteAdminPage(): JSX.Element {
           )}
 
           {tab === 'rates' && (
-            <Card title="Today's gold rates" desc="Shown in the announcement bar, hero strip, and PDP. A value entered here overrides the live market feed — leave a field blank to fall back to today's live rate.">
+            <Card
+              title="Metal rates"
+              desc="The per-gram rates your storefront quotes and your stock is valued at. When a live-rate API key is attached these are ignored for gold and silver — the live feed wins. With no key attached, these are used everywhere. Platinum has no live feed, so it always comes from here."
+            >
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <Field label="24K" hint="Blank = use live feed.">
-                  <Input
-                    value={content.rates.g24 ?? ''}
-                    onChange={(e) => dispatch(updateRates({ g24: e.target.value }))}
-                    onBlur={notify}
-                  />
-                </Field>
-                <Field label="22K" hint="Blank = use live feed.">
-                  <Input
-                    value={content.rates.g22}
-                    onChange={(e) => dispatch(updateRates({ g22: e.target.value }))}
-                    onBlur={notify}
-                  />
-                </Field>
+                <RateField
+                  label="9K Gold"
+                  value={content.rates.g9 ?? ''}
+                  onChange={(v) => dispatch(updateRates({ g9: v }))}
+                  onBlur={notify}
+                  hint="The only gold rate shown on the site. Blank = use live feed."
+                />
+                <RateField
+                  label="Silver"
+                  value={content.rates.silver ?? ''}
+                  onChange={(v) => dispatch(updateRates({ silver: v }))}
+                  onBlur={notify}
+                  hint="Blank = use live feed."
+                />
               </div>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <Field label="18K" hint="Blank = use live feed.">
-                  <Input
-                    value={content.rates.g18}
-                    onChange={(e) => dispatch(updateRates({ g18: e.target.value }))}
-                    onBlur={notify}
-                  />
-                </Field>
-                <Field label="Silver" hint="Blank = use live feed.">
-                  <Input
-                    value={content.rates.silver}
-                    onChange={(e) => dispatch(updateRates({ silver: e.target.value }))}
-                    onBlur={notify}
-                  />
-                </Field>
-              </div>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <Field label="Updated at" hint="Free text — e.g. '14 May, 11:02 AM IST'. Blank = show the live feed's timestamp.">
+                <RateField
+                  label="Platinum (Pt 950)"
+                  value={content.rates.platinum ?? ''}
+                  onChange={(v) => dispatch(updateRates({ platinum: v }))}
+                  onBlur={notify}
+                  hint="No live feed exists for platinum — this is always the rate used. Blank = platinum stock is valued at cost."
+                />
+                <Field
+                  label="Updated at"
+                  hint="Free text — e.g. '14 May, 11:02 AM IST'. Shown next to the rate on the storefront."
+                >
                   <Input
                     value={content.rates.updatedAt}
                     onChange={(e) => dispatch(updateRates({ updatedAt: e.target.value }))}
@@ -536,9 +535,19 @@ export function WebsiteAdminPage(): JSX.Element {
                   />
                 </Field>
               </div>
-              <p className="text-xs text-ink-500">
-                Any field left blank is filled from the live GoldAPI feed (see <code className="text-ink-700">server/src/lib/gold-rate.ts</code>). Product prices always use the live feed, never these display values.
-              </p>
+              <div className="rounded-md bg-ink-25 border border-ink-100 px-3 py-2.5 space-y-1.5">
+                <p className="text-xs text-ink-600">
+                  <span className="font-semibold text-ink-700">How stock is valued.</span> Gold is
+                  valued at the 9K rate, scaled to each piece&apos;s own purity. Silver is valued at
+                  the silver rate. Platinum is valued at the Pt 950 rate above. Everything else
+                  (gold-tone, fashion) is valued at its recorded cost price.
+                </p>
+                <p className="text-xs text-ink-500">
+                  These are real numbers, not display text — if a field can&apos;t be read as a rate
+                  it is treated as blank. Live feed: <code className="text-ink-700">GOLDAPI_KEY</code>{' '}
+                  (see <code className="text-ink-700">server/src/lib/gold-rate.ts</code>).
+                </p>
+              </div>
             </Card>
           )}
 
@@ -1487,6 +1496,55 @@ function Field({
   );
 }
 
+// A metal-rate input that echoes back the number we actually parsed.
+//
+// These fields spent their whole life as free-text display strings, so stored
+// values look like "14500/g" and "₹10760/g". They now drive stock valuation,
+// which makes a typo expensive and silent: "145OO/g" (letter O) would read as
+// blank and quietly fall back to the live feed or cost. Showing the parsed
+// rupee value turns that into something an editor can see immediately.
+function RateField({
+  label,
+  value,
+  hint,
+  onChange,
+  onBlur,
+}: {
+  label: string;
+  value: string;
+  hint: string;
+  onChange: (v: string) => void;
+  onBlur: () => void;
+}): JSX.Element {
+  const trimmed = value.trim();
+  const parsed = parseRateStringToPaise(trimmed);
+  const unreadable = trimmed.length > 0 && parsed == null;
+  return (
+    <div className="space-y-1.5">
+      <Label className="text-xs text-ink-600">{label}</Label>
+      <Input
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        onBlur={onBlur}
+        placeholder="e.g. 4710/g"
+        aria-invalid={unreadable}
+      />
+      {unreadable ? (
+        <p className="text-xs text-danger-600">
+          Can&apos;t read a rate from this — it will be ignored. Use a number like{' '}
+          <span className="font-mono">4710/g</span>.
+        </p>
+      ) : parsed != null ? (
+        <p className="text-xs text-success-700 font-mono tabular-nums">
+          = ₹{(parsed / 100).toLocaleString('en-IN', { minimumFractionDigits: 2 })} per gram
+        </p>
+      ) : (
+        <p className="text-xs text-ink-500">{hint}</p>
+      )}
+    </div>
+  );
+}
+
 // Top-nav editor + auto-seed shortcuts. Two onboarding affordances when the
 // list is empty so editors don't have to type the seven default items by
 // hand:
@@ -2145,8 +2203,10 @@ interface FieldDef<T> {
   label: string;
   type: FieldType;
   placeholder?: string;
-  /** Required for 'select'. */
+  /** Required for 'select'. The option string IS the stored value. */
   options?: ReadonlyArray<string>;
+  /** Optional human labels for 'select' values, e.g. STAINLESS_STEEL → "Demifine (gold tone)". */
+  optionLabels?: Readonly<Record<string, string>>;
   /** Rough relative width in the row (1..3). Defaults to 1. */
   span?: 1 | 2 | 3;
 }
@@ -2378,7 +2438,7 @@ function ListItemEditor<T extends Record<string, unknown>>({
                   >
                     {(f.options ?? []).map((o) => (
                       <option key={o} value={o}>
-                        {o}
+                        {f.optionLabels?.[o] ?? o}
                       </option>
                     ))}
                   </select>
@@ -2704,9 +2764,34 @@ const HERO_SLIDE_FIELDS = [
   { key: 'ctaHref', label: 'Button link', type: 'url', placeholder: '/store/collections/bridal', span: 2 },
 ] as const;
 
+// Metal scope options + human labels, shared by every tile editor that scopes a
+// section to one jewellery line.
+const METAL_SCOPE_OPTIONS = [
+  '',
+  'STAINLESS_STEEL',
+  'GOLD',
+  'SILVER',
+  'DIAMOND',
+  'PLATINUM',
+  'OTHER',
+] as const;
+const METAL_SCOPE_LABELS: Readonly<Record<string, string>> = {
+  '': 'All metals',
+  STAINLESS_STEEL: 'Demifine / gold tone',
+  GOLD: 'Gold (9KT fine gold)',
+  SILVER: 'Silver',
+  DIAMOND: 'Diamond',
+  PLATINUM: 'Platinum',
+  OTHER: 'Fashion / other',
+};
+
 const BROWSE_CATEGORY_FIELDS = [
   { key: 'label', label: 'Tile label', type: 'text', span: 2 },
   { key: 'slug', label: 'Collection slug (auto from label)', type: 'text', placeholder: 'necklaces-chains', span: 2 },
+  // Sub-category names repeat across metal lines ("Rings" exists under every
+  // one) and slugs come from the name alone, so a tile must say which line it
+  // browses or it shows all three.
+  { key: 'metalScope', label: 'Show only', type: 'select', options: METAL_SCOPE_OPTIONS, optionLabels: METAL_SCOPE_LABELS, span: 2 },
   { key: 'img', label: 'Image URL', type: 'image', span: 3 },
 ] as const;
 
@@ -3032,11 +3117,21 @@ function HomepageSectionsTab({
         />
       </Card>
 
-      <Card title="Browse by category (circular marquee)" desc="Each tile: label, slug, image URL. The slug is filled in automatically from the label (type the category name exactly as it appears in Inventory) so tiles always link to the right collection. 6–12 tiles recommended.">
+      <Card title="Browse by category (circular marquee)" desc="Each tile: label, slug, metal scope, image URL. The slug is filled in automatically from the label (type the category name exactly as it appears in Inventory) so tiles always link to the right collection. “Show only” matters: sub-category names like “Rings” exist under every jewellery line, so leaving it on “All metals” shows rings from Demifine, 9KT gold and silver together. 6–12 tiles recommended.">
         <ListItemEditor
           items={content.browseCategories ?? []}
-          fields={BROWSE_CATEGORY_FIELDS as ReadonlyArray<FieldDef<{ label: string; slug: string; img: string }>>}
-          newItem={() => ({ label: '', slug: '', img: '' })}
+          // Inline type literal, not the BrowseCategoryTile interface —
+          // ListItemEditor's T is constrained to Record<string, unknown>, and
+          // interfaces get no implicit index signature, so passing the interface
+          // makes inference silently fall back to Record<string, unknown>.
+          fields={
+            BROWSE_CATEGORY_FIELDS as ReadonlyArray<
+              FieldDef<{ label: string; slug: string; img: string; metalScope?: MetalScope }>
+            >
+          }
+          // New tiles default to the Demifine line — that's what this marquee
+          // browses. Editors can widen it to "All metals" per tile.
+          newItem={() => ({ label: '', slug: '', img: '', metalScope: 'STAINLESS_STEEL' as const })}
           onChange={(v) => onPatch({ browseCategories: v })}
           itemLabel={(it) => it.label || it.slug || 'New tile'}
           autoSlug={{ from: 'label', to: 'slug' }}

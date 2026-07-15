@@ -10,7 +10,9 @@
     "./schemas": "./schemas.ts",
     "./types": "./types.ts",
     "./constants": "./constants.ts",
+    "./defaults": "./defaults.ts",
     "./bill-math": "./bill-math.ts",
+    "./metal-rate": "./metal-rate.ts",
     "./sale": "./sale.ts",
     "./slug": "./slug.ts"
   },

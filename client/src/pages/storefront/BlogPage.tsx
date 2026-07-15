@@ -32,15 +32,22 @@ function BlogCard({ post }: { post: BlogPost }): JSX.Element {
   const badge = dateParts(post.date);
   return (
     <Link to={`/store/blog/${post.slug}`} className="group flex flex-col">
+      {/* Thumbnails keep a uniform 4/5 crop so the grid stays even. `object-top`
+          anchors to the head of the image: these covers are infographics, so a
+          centre crop showed an anonymous middle slice, while the top carries the
+          headline that tells you what the piece is. The detail page renders the
+          image uncropped. */}
       <div className="relative aspect-[4/5] overflow-hidden rounded-md bg-[#FAF3EE] gold-shine-target">
         <img
           src={post.image}
           alt={post.title}
-          className="absolute inset-0 h-full w-full object-cover group-hover:scale-[1.05] transition-transform duration-slow"
+          className="absolute inset-0 h-full w-full object-cover object-top group-hover:scale-[1.05] transition-transform duration-slow"
           loading="lazy"
         />
+        {/* Date badge sits over the artwork, so it gets a soft scrim rather than
+            landing straight on the infographic's headline. */}
         {badge && (
-          <div className="absolute top-3 right-3 h-14 w-14 rounded-full bg-ink-0 shadow-sm flex flex-col items-center justify-center text-center leading-none">
+          <div className="absolute top-3 right-3 h-14 w-14 rounded-full bg-ink-0/95 backdrop-blur-sm shadow-sm flex flex-col items-center justify-center text-center leading-none">
             <span className="font-display text-lg text-ink-900">{badge.day}</span>
             <span className="text-[9px] uppercase tracking-[0.12em] text-ink-500 mt-0.5">{badge.month}</span>
           </div>
@@ -150,12 +157,22 @@ export function BlogDetailPage(): JSX.Element {
         </div>
       </div>
 
-      {/* Cover image */}
-      <div className="max-w-4xl w-full mx-auto px-4 sm:px-6 mt-8 sm:mt-10">
-        <div className="relative aspect-[16/9] overflow-hidden rounded-lg bg-[#FAF3EE]">
-          <img src={post.image} alt={post.title} className="absolute inset-0 h-full w-full object-cover" />
-        </div>
-      </div>
+      {/* Cover image.
+          NO forced aspect ratio here. These covers are tall portrait
+          infographics (comparison tables, hallmark guides), and a 16/9 +
+          object-cover crop showed only a middle slice — the headline and the
+          bottom rows were cut off, which is the whole point of the graphic.
+          Natural aspect (`h-auto`) renders the image complete at any shape:
+          a portrait infographic stays readable, a landscape photo still fills
+          the column. Capped to the body's max-w-3xl so a very tall graphic
+          doesn't run away, and aligned with the article column. */}
+      <figure className="max-w-3xl w-full mx-auto px-4 sm:px-6 mt-8 sm:mt-10">
+        <img
+          src={post.image}
+          alt={post.title}
+          className="w-full h-auto rounded-lg border border-ink-100 bg-[#FAF3EE]"
+        />
+      </figure>
 
       {/* Body */}
       <div className="max-w-3xl w-full mx-auto px-4 sm:px-6 py-10 sm:py-12 md:py-14">

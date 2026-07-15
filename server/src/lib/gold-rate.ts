@@ -20,6 +20,7 @@
 // flag `stale: true` in meta. No silent dev fallback — staleness must be visible.
 
 import type { GoldRateDaily } from '@prisma/client';
+import { derive9kFrom24k, GOLD_RATE_BASIS_PURITY } from '@goldos/shared/metal-rate';
 import { rawPrisma } from './prisma.js';
 import { redis } from './redis.js';
 import { env } from '../env.js';
@@ -74,6 +75,14 @@ function toPaise(inrPerGram: number): number {
 
 async function writeRatesToRedis(row: GoldRateDaily, stale: boolean): Promise<void> {
   const writes: Array<[number, number]> = [
+    // 9K is the ONLY rate the product surfaces quote, and the basis stock
+    // valuation scales every gold piece off. GoldAPI publishes no 9K series, so
+    // we derive it from 24K — see shared/metal-rate. Persisted like any other
+    // purity so `readGoldRatePaise(900)` is a plain cache hit.
+    [GOLD_RATE_BASIS_PURITY, derive9kFrom24k(row.rate24KPaise)],
+    // 24K/22K/18K/14K are no longer displayed anywhere, but POS bill lines and
+    // old-gold exchange still resolve a bill line's own purity against these
+    // keys, so they stay populated.
     [2400, row.rate24KPaise],
     [2200, row.rate22KPaise],
     [1800, row.rate18KPaise],

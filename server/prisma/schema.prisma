@@ -2008,6 +2008,11 @@ model CouponCode {
   // When true, the customer may also redeem loyalty points on the same order.
   stackable             Boolean    @default(false)
   isActive              Boolean    @default(true)
+  // Advertise this code in the storefront announcement bar. Defaults to FALSE
+  // on purpose: `isActive` only means "redeemable", and plenty of live codes are
+  // private (a goodwill code for one customer, a partner code). Broadcasting
+  // every active code would leak those, so publishing is an explicit opt-in.
+  showOnStorefront      Boolean    @default(false)
   createdAt             DateTime   @default(now())
 
   tenant Tenant        @relation(fields: [tenantId], references: [id], onDelete: Cascade)

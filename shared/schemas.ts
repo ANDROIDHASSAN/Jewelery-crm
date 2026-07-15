@@ -958,10 +958,24 @@ export const ShopByOccasionTileSchema = z.object({
   img: z.string().min(1).max(2048),
 });
 
+// Metal a storefront section is scoped to. '' = every metal.
+// Sub-category names repeat across metal lines ("Rings" exists under Demifine
+// Jewellery, 9KT Fine Gold and 925 Sterling Silver) and slugs derive from the
+// name alone, so all three slugify to "rings". A tile therefore needs to say
+// which line it browses; without it, /store/collections/rings shows all three.
+// `.optional()` with NO `.default('')` on purpose: a default would make the
+// inferred output type required, which would be a lie about the tiles already
+// stored without this field. Undefined and '' both mean "all metals".
+export const MetalScopeSchema = z
+  .enum(['', 'GOLD', 'SILVER', 'DIAMOND', 'PLATINUM', 'STAINLESS_STEEL', 'OTHER'])
+  .optional();
+
 export const BrowseCategoryTileSchema = z.object({
   label: z.string().min(1).max(60),
   slug: z.string().min(1).max(80),
   img: z.string().min(1).max(2048),
+  // Optional + default '' so stored rows that pre-date it keep validating.
+  metalScope: MetalScopeSchema,
 });
 
 export const ReelTileSchema = z.object({
@@ -1096,11 +1110,20 @@ export const StorefrontContentSchema = z.object({
   // validating; the storefront falls back to the single `hero` block when empty.
   heroSlides: z.array(HeroSlideSchema).max(8).optional().default([]),
   rates: z.object({
-    // 24K added later than the rest — optional + default '' so stored content
-    // rows that pre-date it keep validating. Blank = fall back to the live feed.
+    // The storefront quotes 9K only. `g9` + `silver` + `platinum` are the live
+    // fields; they are also the VALUATION fallback when GOLDAPI_KEY is absent,
+    // so they must parse as numbers (see shared/metal-rate parseRateStringToPaise).
+    // Blank = use the live feed.
+    g9: z.string().max(40).optional().default(''),
+    // Platinum has no live feed on any provider we use — this field is the only
+    // source for platinum valuation, whether or not an API key is attached.
+    platinum: z.string().max(40).optional().default(''),
+    // g24/g22/g18 are retired from every display surface but kept in the schema
+    // so stored content rows keep validating and the values survive a round-trip
+    // through the CMS editor. Nothing reads them.
     g24: z.string().max(40).optional().default(''),
-    g22: z.string().max(40),
-    g18: z.string().max(40),
+    g22: z.string().max(40).optional().default(''),
+    g18: z.string().max(40).optional().default(''),
     silver: z.string().max(40),
     updatedAt: z.string().max(80),
   }),

@@ -2,6 +2,7 @@
 
 import { baseApi } from '@/app/store';
 import type { ApiList, ApiOne } from '@goldos/shared/types';
+import type { MetalRatesPayload } from '@/features/dashboard/dashboardApi';
 
 // ---------------------------------------------------------------------
 // Response shapes
@@ -161,7 +162,8 @@ export interface InventoryValuation {
   }>;
   /** Hierarchical Main → Sub → Items breakdown. */
   categoryTree: InventoryValuationMain[];
-  goldRates: Array<{ purity: number; ratePerGramPaise: number; stale: boolean }>;
+  /** The rate basis this valuation ran on — 9K gold, silver, Pt 950. */
+  metalRates: MetalRatesPayload;
 }
 
 export interface CustomerAcquisition {
@@ -269,8 +271,8 @@ export interface AdRoiReport {
 
 export interface GoldRateImpactPoint {
   date: string;
-  rate22KPaise: number;
-  rate24KPaise: number;
+  /** Derived from the stored 24K rate — 9K is the rate we publish. */
+  rate9KPaise: number;
   revenuePaise: number;
   billCount: number;
 }

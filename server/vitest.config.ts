@@ -22,7 +22,12 @@ export default defineConfig({
       '@goldos/shared/types': resolve(here, '../shared/types.ts'),
       '@goldos/shared/defaults': resolve(here, '../shared/defaults.ts'),
       '@goldos/shared/bill-math': resolve(here, '../shared/bill-math.ts'),
+      '@goldos/shared/metal-rate': resolve(here, '../shared/metal-rate.ts'),
       '@goldos/shared/sale': resolve(here, '../shared/sale.ts'),
+      // Missing until now, which made every test that transitively imports
+      // website.routes (smoke, security, pos-e2e, login-flow) die at collection
+      // with ERR_MODULE_NOT_FOUND rather than run.
+      '@goldos/shared/slug': resolve(here, '../shared/slug.ts'),
       '@goldos/shared': resolve(here, '../shared/index.ts'),
     },
   },
